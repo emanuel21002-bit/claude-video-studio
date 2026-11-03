@@ -491,11 +491,11 @@ button.perigo { background: transparent; }
 .tl-barra .tl-tocar, .tl-cursor { color: var(--acento); }
 .msg.claude { border-left: 3px solid var(--roxo); }
 .painel-chat, .tl { background: var(--painel); }
-.item-imagem { background: #6a5486; }
-.item-bloco { background: #80587f; }
-.item-video { background: #7a5a48; }
-.item-audio { background: #5a5033; }
-.item-legenda { background: #6a5a37; }
+.item-imagem { background: #52406b; }
+.item-bloco { background: #62445f; }
+.item-video { background: #5e4636; }
+.item-audio { background: #463d27; }
+.item-legenda { background: #54462b; }
 .status-dot.trabalhando { background: var(--roxo); }
 
 /* Gragas sem fundo, só como cenário atrás da interface (não captura cliques nem cobre nada) */
