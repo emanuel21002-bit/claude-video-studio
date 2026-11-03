@@ -528,3 +528,7 @@ main::before {
 .vista:not(.editor) .rodape-passo { gap: 12px; }
 .vista:not(.editor) .grade-materiais, .vista:not(.editor) .grade-estilos { justify-content: center; }
 main::before { right: 2%; }
+
+/* Um Gragas diferente por aba, sempre bem fraco para não poluir */
+main:has(#v-setup.ativa)::before { background-image: url("img/gragas-barril.png"); opacity: 0.1; width: min(30vw, 380px); height: 80%; }
+main:has(#v-transcode.ativa)::before { background-image: url("img/gragas-motoqueiro.png"); opacity: 0.09; width: min(30vw, 400px); }
