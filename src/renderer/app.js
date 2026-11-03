@@ -42,6 +42,7 @@ function segmentado(el, valor, aoMudar) {
 
 async function verificarAmbiente() {
   estado.ambiente = await api.ambiente();
+  rotularBotoesGpu();
   const a = estado.ambiente;
   const pill = $('#pill-claude');
   pill.textContent = a.claude.conectado ? `Claude: ${a.claude.metodo}` : 'Claude: entrar';
@@ -49,12 +50,21 @@ async function verificarAmbiente() {
   return a.workspacePronto && a.claude.conectado && a.node && a.ffmpeg;
 }
 
+const nomeEncoderGpu = () => ({ nvenc: 'NVENC', amf: 'AMF' })[estado.ambiente?.encoderGpu];
+
+function rotularBotoesGpu() {
+  const nome = nomeEncoderGpu();
+  document.querySelectorAll('#seg-modo [data-v="gpu"], #seg-tc-modo [data-v="gpu"]').forEach((b) => {
+    b.textContent = nome ? `GPU (${nome})` : 'GPU';
+  });
+}
+
 function renderChecklist() {
   const a = estado.ambiente;
   const itens = [
     { ok: a.claude.conectado, t: 'Conta do Claude', d: a.claude.conectado ? a.claude.metodo : 'Entre com sua conta Claude (Pro/Max) ou coloque uma chave de API nas configurações.', acao: a.claude.conectado ? null : ['Entrar no Claude', entrarClaude] },
     { ok: a.node, t: 'Node.js', d: 'Usado para rodar o Remotion e o HyperFrames.' },
-    { ok: a.ffmpeg, t: 'FFmpeg', d: a.nvenc ? 'Com NVENC: render por GPU disponível.' : 'Sem NVENC: só render por CPU.' },
+    { ok: a.ffmpeg, t: 'FFmpeg', d: a.encoderGpu ? `Com ${nomeEncoderGpu()}: render por GPU disponível.` : 'Sem encoder de GPU (NVENC ou AMF): só render por CPU.' },
     { ok: a.whisper, t: 'Whisper (transcrição)', d: a.whisper ? 'Pronto para transcrever narrações.' : 'Opcional. Sem ele o Claude monta sem legendas sincronizadas.', opcional: true },
     { ok: a.workspacePronto, t: 'Remotion + HyperFrames', d: a.workspacePronto ? a.workspace : `Instala as engines em ${a.workspace}`, acao: a.workspacePronto ? null : ['Instalar', instalarWorkspace] },
   ];
@@ -521,8 +531,8 @@ function abrirTranscode() {
   TL.fechar();
   estado.projetoId = null;
   carregarProjetos();
-  // Sem NVENC o ffmpeg cai para CPU sozinho; aqui só refletimos isso quando já sabemos.
-  if (!tc.modoEscolhido) tc.modo = estado.ambiente && !estado.ambiente.nvenc ? 'cpu' : 'gpu';
+  // Sem encoder de GPU o ffmpeg cai para CPU sozinho; aqui só refletimos isso quando já sabemos.
+  if (!tc.modoEscolhido) tc.modo = estado.ambiente && !estado.ambiente.encoderGpu ? 'cpu' : 'gpu';
   segmentado($('#seg-tc-formato'), tc.formato, (v) => (tc.formato = v));
   segmentado($('#seg-tc-modo'), tc.modo, (v) => {
     tc.modo = v;
@@ -673,7 +683,7 @@ async function iniciar() {
     mostrarVista('setup');
     return;
   }
-  if (!estado.ambiente.nvenc && estado.config.renderModo === 'gpu') {
+  if (!estado.ambiente.encoderGpu && estado.config.renderModo === 'gpu') {
     estado.config = await api.salvarConfig({ renderModo: 'cpu' });
   }
   if (estado.projetoId) abrirProjeto(estado.projetoId);

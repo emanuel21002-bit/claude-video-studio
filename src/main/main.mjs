@@ -14,7 +14,8 @@ import { whisperDisponivel, transcrever } from './transcricao.mjs';
 import { renderizar } from './render.mjs';
 import { conversar, cancelar, primeiraMensagem, claudeExe } from './agente.mjs';
 import { rodar } from './proc.mjs';
-import { nvencDisponivel, infoVideo, transcodificar } from './transcodificar.mjs';
+import { abrirNoFilmcraft, trazerDoFilmcraft, filmcraftDisponivel } from './filmcraft.mjs';
+import { encoderGpu, infoVideo, transcodificar } from './transcodificar.mjs';
 import { lerTimeline, gravarTimeline, gerarLegendas, prepararPrevia, midiaDoArquivo, importarParaProjeto } from './timeline.mjs';
 
 const aqui = path.dirname(fileURLToPath(import.meta.url));
@@ -91,10 +92,10 @@ async function statusClaude() {
 }
 
 ipcMain.handle('ambiente', async () => {
-  const [node, ffmpeg, nvenc, claude] = await Promise.all([
+  const [node, ffmpeg, encoder, claude] = await Promise.all([
     existeComando(carregar().nodePath, ['--version']),
     existeComando(carregar().ffmpegPath),
-    nvencDisponivel(),
+    encoderGpu(),
     statusClaude(),
   ]);
   return {
@@ -102,7 +103,8 @@ ipcMain.handle('ambiente', async () => {
     workspacePronto: workspacePronto(),
     node,
     ffmpeg,
-    nvenc,
+    encoderGpu: encoder,
+    filmcraft: filmcraftDisponivel(),
     whisper: whisperDisponivel(),
     claude,
   };
@@ -321,6 +323,8 @@ ipcMain.handle('render', async (_e, { id, modo, formato }) => {
 // ---------- timeline ----------
 
 ipcMain.handle('timeline:ler', (_e, id) => lerTimeline(id));
+ipcMain.handle('filmcraft:abrir', (_e, { id, descartar }) => abrirNoFilmcraft(id, { descartar }, (l) => enviar('log', l)));
+ipcMain.handle('filmcraft:trazer', (_e, id) => trazerDoFilmcraft(id, (l) => enviar('log', l)));
 ipcMain.handle('timeline:salvar', (_e, { id, timeline }) => gravarTimeline(id, timeline));
 ipcMain.handle('timeline:previa', (_e, id) => prepararPrevia(id));
 ipcMain.handle('timeline:midia', (_e, { id, arquivo }) => midiaDoArquivo(id, arquivo));

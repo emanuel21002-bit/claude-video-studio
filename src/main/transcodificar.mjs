@@ -8,14 +8,40 @@ function ffprobePath() {
   return ff === 'ffmpeg' ? 'ffprobe' : path.join(path.dirname(ff), 'ffprobe.exe');
 }
 
-let nvencCache = null;
-export async function nvencDisponivel() {
-  if (nvencCache != null) return nvencCache;
-  let saida = '';
+// Encoders de GPU, na ordem de preferência.
+export const ENCODERS_GPU = {
+  nvenc: {
+    nome: 'NVENC',
+    hwaccel: 'cuda',
+    args: ['-c:v', 'h264_nvenc', '-preset', 'p5', '-rc', 'vbr', '-cq', '19', '-b:v', '0', '-profile:v', 'high'],
+  },
+  amf: {
+    nome: 'AMF',
+    hwaccel: 'd3d11va',
+    // QP constante: no AMF da RX 570 o nível do QVBR não muda nada e a qualidade fica presa ao bitrate.
+    args: ['-c:v', 'h264_amf', '-usage', 'transcoding', '-quality', 'quality', '-rc', 'cqp', '-qp_i', '19', '-qp_p', '19', '-qp_b', '21', '-profile:v', 'high'],
+  },
+};
+
+// O ffmpeg lista todo encoder compilado, com ou sem a placa: só um teste real diz qual funciona aqui.
+async function encoderFunciona(id) {
+  const args = ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=black:s=320x240:r=30:d=0.2', '-c:v', `h264_${id}`, '-f', 'null', '-'];
   try {
-    await rodar(carregar().ffmpegPath, ['-hide_banner', '-encoders'], { onLinha: (l) => (saida += l + '\n') });
-  } catch {}
-  return (nvencCache = /h264_nvenc/.test(saida));
+    const r = await rodar(carregar().ffmpegPath, args, { sinal: AbortSignal.timeout(15000) });
+    return r.codigo === 0;
+  } catch {
+    return false;
+  }
+}
+
+let encoderCache;
+// 'nvenc', 'amf' ou null (sem GPU utilizável: só CPU).
+export function encoderGpu() {
+  encoderCache ??= (async () => {
+    for (const id of Object.keys(ENCODERS_GPU)) if (await encoderFunciona(id)) return id;
+    return null;
+  })();
+  return encoderCache;
 }
 
 // Codec, duração e se é HDR (HLG/PQ de celular), para decidir o tone mapping.
@@ -53,22 +79,23 @@ export function nomeSaida(entrada, formato, pastaSaida) {
   return path.join(pastaSaida || path.dirname(entrada), `${base}_h264.${formato}`);
 }
 
-// Converte para H.264 8-bit (yuv420p) em MP4 ou MOV. modo: 'gpu' (NVDEC + NVENC) ou 'cpu' (libx264).
+// Converte para H.264 8-bit (yuv420p) em MP4 ou MOV. modo: 'gpu' (NVENC ou AMF) ou 'cpu' (libx264).
 export async function transcodificar(entrada, { formato = 'mp4', modo = 'gpu', saida, pastaSaida } = {}, onProgresso, sinal) {
   const info = await infoVideo(entrada);
   saida ??= nomeSaida(entrada, formato, pastaSaida);
   if (path.resolve(saida) === path.resolve(entrada)) throw new Error('A saída seria igual ao arquivo original.');
   fs.mkdirSync(path.dirname(saida), { recursive: true });
-  if (modo === 'gpu' && !(await nvencDisponivel())) modo = 'cpu';
+  const encoder = ENCODERS_GPU[await encoderGpu()];
+  if (!encoder) modo = 'cpu';
 
   const args = ['-y', '-hide_banner', '-nostats', '-progress', 'pipe:1'];
   // HDR na GPU: tone mapping pelo libplacebo (Vulkan), ~2,5x mais rápido que o zscale da CPU.
   const placebo = modo === 'gpu' && info.hdr;
   if (placebo) args.push('-init_hw_device', 'vulkan');
-  else if (modo === 'gpu') args.push('-hwaccel', 'cuda');
+  else if (modo === 'gpu') args.push('-hwaccel', encoder.hwaccel);
   args.push('-i', entrada, '-map', '0:v:0', '-map', '0:a?');
   args.push('-vf', placebo ? TONEMAP_GPU : info.hdr ? TONEMAP : 'format=yuv420p');
-  if (modo === 'gpu') args.push('-c:v', 'h264_nvenc', '-preset', 'p5', '-rc', 'vbr', '-cq', '19', '-b:v', '0', '-profile:v', 'high');
+  if (modo === 'gpu') args.push(...encoder.args);
   else args.push('-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-profile:v', 'high');
   args.push('-c:a', 'aac', '-b:a', '320k', '-movflags', '+faststart', saida);
 
@@ -86,7 +113,7 @@ export async function transcodificar(entrada, { formato = 'mp4', modo = 'gpu', s
   }
   if (r.codigo !== 0) {
     fs.rmSync(saida, { force: true });
-    // NVDEC não abre alguns arquivos (ex.: 4:2:2 10-bit); tenta de novo na CPU.
+    // O decodificador de GPU não abre alguns arquivos (ex.: 4:2:2 10-bit); tenta de novo na CPU.
     if (modo === 'gpu') return transcodificar(entrada, { formato, modo: 'cpu', saida }, onProgresso, sinal);
     throw new Error(`ffmpeg falhou (código ${r.codigo}):\n${r.cauda}`);
   }

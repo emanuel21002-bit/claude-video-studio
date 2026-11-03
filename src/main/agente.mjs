@@ -25,7 +25,7 @@ function regrasEngine(p) {
   if (p.timeline) {
     return `ENGINE: Remotion com TIMELINE. O vídeo é o arquivo ${rel}/timeline.json: o usuário edita o mesmo arquivo numa timeline visual no app e vê a prévia ao vivo. Monte e altere o vídeo editando esse JSON; não crie outra composição.
 
-Formato (tempos em segundos): { largura, altura, fps, fundo, trilhas: [{ id, tipo, nome, itens: [...] }] }. As trilhas são camadas: as últimas ficam por cima. Não mude largura, altura nem fps. Itens de uma trilha podem se sobrepor (o último fica por cima), o que serve para transições.
+Formato (tempos em segundos): { largura, altura, fps, fundo, trilhas: [{ id, tipo, nome, itens: [...] }] }. As trilhas são camadas: as últimas ficam por cima. Não mude largura, altura nem fps sem o usuário pedir. Itens de uma trilha podem se sobrepor (o último fica por cima), o que serve para transições.
 Tipos de trilha e o que aceitam: video (video, imagem) | sobreposicao (video, imagem, texto, bloco) | legenda (legenda) | audio (audio).
 Todo item tem: id único, tipo, inicio, duracao.
 - video: arquivo, corteInicio (segundo do arquivo onde começa), velocidade, volume (0 a 1; use 0 quando houver narração), ajuste (cover|contain).
@@ -34,6 +34,11 @@ Todo item tem: id único, tipo, inicio, duracao.
 - texto: texto, estilo. legenda: texto, palavras [{texto, inicio, fim}] (tempos relativos ao início da legenda), estilo.
 - bloco: componente, props. Para o que os outros tipos não fazem (selo animado, light leak, gráfico): escreva o componente React em ${rel}/src/blocos.tsx e registre em "blocos". Só blocos.tsx é seu; os outros arquivos de src/ são do app.
 Itens visuais também aceitam: x, y (deslocamento em px a partir do centro), escala, rotacao, opacidade, zoom {de, para} (zoom contínuo), entrada e saida {tipo: fade|slide-cima|slide-baixo|slide-esq|slide-dir|zoom|pop, duracao}.
+- keyframes: { "<parâmetro>": [{ t, v, curva }] } anima x, y, escala, rotacao, opacidade e os números de efeitos (ex.: "efeitos.desfoque.raio", "efeitos.cor.exposicao"). t é em segundos desde o início do item; curva: linear|hold|bezier|easeIn|easeOut, e vale para o trecho que sai do keyframe. Com keyframes o valor fixo do parâmetro é ignorado. Prefira keyframes a zoom/entrada/saida quando precisar de movimento preciso.
+- mesclagem: normal|multiply|screen|overlay|darken|lighten|color-dodge|color-burn|hard-light|soft-light|difference|exclusion|hue|saturation|color|luminosity.
+- efeitos: { cor: {exposicao (-5 a 5), contraste (-100 a 100), saturacao (0 a 200, normal 100), temperatura (-100 a 100), matiz (-100 a 100)}, desfoque: {raio}, corte: {esquerda, cima, direita, baixo} (em %), vinheta: {quantidade} (-100 a 100; negativo escurece), pb: true, inverter: true, espelhoH: true, espelhoV: true }.
+- transicoes fica na trilha (video ou sobreposicao), não no item: [{ id, tipo, duracao, alinhamento: centro|inicio|fim, de, para, direcao: esq|dir|cima|baixo }]. "de" é o id do item que sai e "para" o do que entra; os dois precisam se encostar. Sem um deles, a transição só abre ou só fecha. Tipos desenhados na prévia e no render: cross_dissolve, dip_to_black, dip_to_white, flash, push, whip, slide, linear_wipe, iris_round, cross_zoom. Centralizada, ela usa duracao/2 a mais de arquivo nos dois clipes: deixe essa sobra (corteInicio de quem entra e o que resta do arquivo de quem sai), senão o corte fica seco.
+- filmcraft em um item ou transição guarda dados que só existem no Filmcraft: não edite nem apague.
 estilo: fonte (Montserrat|Inter|Poppins|Roboto|Anton|Bebas Neue|Oswald|Playfair Display), tamanho, peso, cor, corDestaque (cor da palavra falada na legenda), contorno, contornoLargura, sombra, fundo, alinhamento, maiusculas, entrelinha.
 - arquivo é só o nome dentro de assets/. Se uma skill pedir para escrever código Remotion, aplique o visual dela por aqui, com blocos para o que for específico.
 - Para as legendas use mcp__studio__gerar_legendas, não escreva palavra por palavra. Depois de cortar ou mover a narração, gere de novo.`;

@@ -5,6 +5,7 @@ import { carregar } from './settings.mjs';
 import { rodar } from './proc.mjs';
 import { dirs, caminhoProjeto, lerProjeto, gravarProjeto, importarMaterial } from './workspace.mjs';
 import { infoVideo } from './transcodificar.mjs';
+import { FORMATOS } from './presets.mjs';
 
 const aqui = path.dirname(fileURLToPath(import.meta.url));
 const MODELO = ['index.ts', 'Root.tsx', 'TimelineVideo.tsx', 'blocos.tsx', 'previa.tsx'];
@@ -15,6 +16,9 @@ const TIPOS_POR_TRILHA = {
   legenda: ['legenda'],
   audio: ['audio'],
 };
+
+export const CURVAS = ['linear', 'hold', 'bezier', 'easeIn', 'easeOut'];
+export const MESCLAGENS = ['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'];
 
 let contador = 0;
 export const novoId = (prefixo = 'i') => `${prefixo}${Date.now().toString(36)}${(contador++).toString(36)}`;
@@ -52,6 +56,22 @@ export function validarTimeline(id, t) {
       if (['video', 'imagem', 'audio'].includes(i.tipo) && !fs.existsSync(path.join(assets, i.arquivo ?? ''))) {
         erros.push(`${nome}: arquivo "${i.arquivo}" não está em assets/.`);
       }
+      if (i.mesclagem && !MESCLAGENS.includes(i.mesclagem)) erros.push(`${nome}: mesclagem "${i.mesclagem}" não existe (use ${MESCLAGENS.join(', ')}).`);
+      for (const [param, kfs] of Object.entries(i.keyframes ?? {})) {
+        if (!Array.isArray(kfs) || kfs.some((k) => !(k.t >= 0) || typeof k.v !== 'number')) erros.push(`${nome}: keyframes de "${param}" precisam de t >= 0 e v numérico.`);
+        else if (kfs.some((k) => k.curva && !CURVAS.includes(k.curva))) erros.push(`${nome}: curva de "${param}" não existe (use ${CURVAS.join(', ')}).`);
+      }
+    }
+    for (const x of tr.transicoes ?? []) {
+      const nome = `Transição "${x.id}" (trilha ${tr.id})`;
+      if (!['video', 'sobreposicao'].includes(tr.tipo)) erros.push(`${nome}: só trilhas de vídeo e sobreposição têm transição.`);
+      if (!x.id || !x.tipo) erros.push(`${nome}: precisa de "id" e "tipo".`);
+      if (!(x.duracao > 0)) erros.push(`${nome}: "duracao" precisa ser > 0.`);
+      if (!x.de && !x.para) erros.push(`${nome}: precisa de "de" ou "para".`);
+      for (const ref of [x.de, x.para]) if (ref && !tr.itens.some((i) => i.id === ref)) erros.push(`${nome}: o item "${ref}" não está nesta trilha.`);
+      const a = tr.itens.find((i) => i.id === x.de);
+      const b = tr.itens.find((i) => i.id === x.para);
+      if (a && b && Math.abs(a.inicio + a.duracao - b.inicio) > 0.05) erros.push(`${nome}: "de" precisa terminar onde "para" começa.`);
     }
   }
   return erros;
@@ -61,6 +81,14 @@ export function gravarTimeline(id, t) {
   const erros = validarTimeline(id, t);
   if (erros.length) throw new Error(erros.join('\n'));
   fs.writeFileSync(arquivoTimeline(id), JSON.stringify(t, null, 2));
+  // O formato pode mudar pela timeline: o projeto acompanha.
+  const p = lerProjeto(id);
+  if (p.largura !== t.largura || p.altura !== t.altura) {
+    p.largura = t.largura;
+    p.altura = t.altura;
+    p.formato = Object.keys(FORMATOS).find((f) => FORMATOS[f].largura === t.largura && FORMATOS[f].altura === t.altura) ?? p.formato;
+    gravarProjeto(p);
+  }
 }
 
 // Primeira versão: materiais em sequência e narração. O Claude refaz os cortes e põe as legendas.
@@ -100,13 +128,16 @@ export function timelineInicial(p) {
 }
 
 // Copia a composição padrão para o projeto. blocos.tsx é do projeto e nunca é sobrescrito.
+// Roda também ao abrir e ao renderizar: projetos antigos recebem a composição nova do app.
 export function escreverModelo(p) {
   const src = path.join(caminhoProjeto(p.id), 'src');
   fs.mkdirSync(src, { recursive: true });
   for (const nome of MODELO) {
     const destino = path.join(src, nome);
     if (nome === 'blocos.tsx' && fs.existsSync(destino)) continue;
-    fs.writeFileSync(destino, fs.readFileSync(path.join(aqui, 'modelo-timeline', nome)));
+    const modelo = fs.readFileSync(path.join(aqui, 'modelo-timeline', nome));
+    // Sem mudança não regrava, senão a prévia seria empacotada de novo a cada abertura.
+    if (!fs.existsSync(destino) || !fs.readFileSync(destino).equals(modelo)) fs.writeFileSync(destino, modelo);
   }
 }
 
@@ -232,6 +263,7 @@ async function gerarProxy(id, arquivo) {
 
 // Empacota a composição para o player do app. Só refaz quando o código do projeto mudou.
 export async function prepararPrevia(id) {
+  escreverModelo(lerProjeto(id));
   const dir = caminhoProjeto(id);
   const saida = path.join(dir, '.previa', 'previa.js');
   const src = path.join(dir, 'src');

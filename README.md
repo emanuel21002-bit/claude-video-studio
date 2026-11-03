@@ -29,11 +29,12 @@ O instalador é autossuficiente: leva a pasta `recursos\` (fora do git, montada 
 
 | Pasta | Conteúdo |
 |---|---|
-| `bin\` | `node.exe`, `ffmpeg.exe`, `ffprobe.exe` (full build, com NVENC e libplacebo) — entram na frente do PATH |
-| `whisper\` | `whisper-cli.exe` e DLLs de CPU do whisper.cpp, runtime do Visual C++, `ggml-medium-q5_0.bin` |
+| `bin\` | `node.exe`, `ffmpeg.exe`, `ffprobe.exe` (full build, com NVENC, AMF e libplacebo) — entram na frente do PATH |
+| `whisper\` | `whisper-cli.exe` do whisper.cpp (build com Vulkan: usa a GPU, inclusive AMD), `ggml-medium-q5_0.bin` |
 | `engines\node_modules\` | Remotion + HyperFrames já instalados (com o Chrome do Remotion em `.remotion`) |
 | `chrome-hyperframes\` | Chrome do HyperFrames, copiado para `~\.cache\hyperframes\chrome` |
 | `skills\` | skills de edição copiadas para o workspace (sem a lista de clientes) |
+| `filmcraft\` | `filmcraft.exe` e `filmcraft-cli.exe` (pacote portátil Windows x64 do [Filmcraft](https://github.com/storytold/filmcraft)). Opcional: sem ele os botões do Filmcraft somem |
 
 Na primeira abertura o app copia as engines e as skills para `Documentos\Claude Video Studio`, sem internet. Quem for usar só precisa entrar com a própria conta Claude (Pro ou superior) ou colar uma chave de API.
 
@@ -47,12 +48,32 @@ Projetos Remotion têm uma timeline editável com prévia ao vivo, sem precisar 
 - Vídeos que o Chromium não toca (ProRes) ganham uma cópia VP9 em `.previa/proxy/` só para a prévia; o render usa o original.
 - Enquanto o Claude trabalha, a timeline fica travada; quando ele para, o app relê o arquivo e a versão anterior vai para o desfazer.
 
+Recursos de edição, com os nomes de parâmetro no `timeline.json`:
+
+- **Keyframes** (`keyframes`): posição, escala, rotação, opacidade e números dos efeitos, com curvas linear, suave, entrada, saída e segurar.
+- **Mesclagem** (`mesclagem`) e **efeitos** (`efeitos`): correção de cor, desfoque, recorte, vinheta, preto e branco, inverter e espelhar.
+- **Transições** (`trilha.transicoes`): dissolver, fade, flash, empurrar, chicote, deslizar, cortina, íris e zoom.
+- **Materiais**: a aba ao lado do player lista os arquivos do projeto. Arrastar para uma trilha adiciona; soltar sobre um clipe substitui o arquivo dele e mantém lugar, efeitos e animações; o botão ⇄ substitui em todos os clipes.
+- **Formato**: 9:16, 16:9, 1:1 e 4:5 na barra da timeline. Posições, textos e larguras acompanham o quadro novo.
+- **Ferramentas**: selecionar (V), ripple (B), roll (N), slip (Y), slide (U), velocidade (R) e navalha (C).
+
+## Filmcraft
+
+`src/main/otio.mjs` converte `timeline.json` em OpenTimelineIO e de volta; `src/main/filmcraft.mjs` chama o Filmcraft. "Abrir no Filmcraft" gera `filmcraft/projeto.fcproj` no projeto; o usuário salva lá e "Trazer" recebe as edições. `timeline.json` segue como a fonte da verdade, e a sincronia acontece nesses dois botões, não em tempo real.
+
+- Vão e voltam: cortes, trilhas, velocidade, volume, keyframes, mesclagem, os efeitos acima e as transições. Na volta, o que não mudou mantém os campos do app (`zoom`, `entrada`, `saida`).
+- Só lá: efeitos e modos sem equivalente ficam em `item.filmcraft` e voltam intactos na próxima ida, mas a prévia e o render do app não os desenham, e o app avisa. Tipos de transição desconhecidos viram dissolve na prévia.
+- Só aqui: texto, legendas e blocos vão como o vídeo transparente "Camada Remotion", travado e só de referência, e são ignorados na volta.
+- As cores são aproximadas: a prévia usa filtros CSS e o Filmcraft usa o Lumetri dele.
+
 ## Render
 
 | Modo | Remotion | HyperFrames |
 |---|---|---|
-| GPU | Chrome com ANGLE (GPU) + codificação final em NVENC (`h264_nvenc`) | `--gpu --browser-gpu` |
+| GPU | Chrome com ANGLE (GPU) + codificação final em NVENC (`h264_nvenc`) ou AMF (`h264_amf`) | `--gpu --browser-gpu` |
 | CPU | SwiftShader + x264 (MP4) ou ProRes HQ (MOV) | `--no-browser-gpu` |
+
+O app testa os encoders ao abrir, com uma codificação real, porque o ffmpeg lista NVENC e AMF mesmo sem a placa: usa NVENC, senão AMF (placas AMD), senão CPU. O AMF usa QP constante 19, com a qualidade do x264 CRF 18 em arquivos cerca de 3x maiores (medido na RX 570).
 
 MOV em GPU sai em H.264 dentro de .mov; ProRes só existe em CPU.
 

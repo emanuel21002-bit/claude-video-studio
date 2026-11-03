@@ -4,8 +4,8 @@ import os from 'node:os';
 import { carregar } from './settings.mjs';
 import { rodar } from './proc.mjs';
 import { dirs, caminhoProjeto, hyperframesBin, lerProjeto, gravarProjeto, carimbo } from './workspace.mjs';
-import { infoVideo, nvencDisponivel, transcodificar } from './transcodificar.mjs';
-import { lerTimeline, validarTimeline } from './timeline.mjs';
+import { ENCODERS_GPU, encoderGpu, infoVideo, transcodificar } from './transcodificar.mjs';
+import { escreverModelo, lerTimeline, validarTimeline } from './timeline.mjs';
 
 // Progresso vem como "123/900" (frames) ou "45%" nas linhas dos CLIs.
 function lerProgresso(linha) {
@@ -31,11 +31,11 @@ async function etapa(nome, cmd, args, { cwd, onEvento, sinal, peso = [0, 1] }) {
   if (r.codigo !== 0) throw new Error(`${nome} falhou (código ${r.codigo}):\n${r.cauda}`);
 }
 
-// Recodifica com NVENC (GPU). O contêiner sai pela extensão do destino (.mp4 ou .mov).
-function argsNvenc(entrada, saida) {
+// Recodifica com o encoder da GPU. O contêiner sai pela extensão do destino (.mp4 ou .mov).
+function argsGpu(encoder, entrada, saida) {
   return [
     '-y', '-hide_banner', '-i', entrada,
-    '-c:v', 'h264_nvenc', '-preset', 'p5', '-rc', 'vbr', '-cq', '19', '-b:v', '0',
+    ...encoder.args,
     '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '320k',
     '-movflags', '+faststart', saida,
   ];
@@ -45,10 +45,13 @@ export async function renderizar(id, { modo, formato } = {}, onEvento, sinal) {
   const s = carregar();
   modo ??= s.renderModo;
   formato ??= s.renderFormato;
+  const encoder = ENCODERS_GPU[await encoderGpu()];
+  if (!encoder) modo = 'cpu';
   const projeto = lerProjeto(id);
   if (projeto.timeline) {
     const erros = validarTimeline(id, lerTimeline(id));
     if (erros.length) throw new Error('A timeline tem problemas:\n' + erros.join('\n'));
+    escreverModelo(projeto);
   }
   const dir = caminhoProjeto(id);
   const quando = carimbo();
@@ -63,12 +66,12 @@ export async function renderizar(id, { modo, formato } = {}, onEvento, sinal) {
       const entrada = path.join('projetos', id, 'src', 'index.ts');
       const base = [cli, 'render', entrada, 'Main', '--public-dir', path.join('projetos', id, 'assets')];
       if (modo === 'gpu') {
-        // Chrome desenha os quadros com a GPU (ANGLE); intermediário rápido e quase sem perda; final em NVENC.
+        // Chrome desenha os quadros com a GPU (ANGLE); intermediário rápido e quase sem perda; final no encoder da GPU.
         const inter = path.join(tmp, 'inter.mp4');
         await etapa('Renderizando quadros (GPU)', s.nodePath,
           [...base, inter, '--gl=angle', '--codec=h264', '--crf=12', '--x264-preset=veryfast'],
           { ...opts, peso: [0, 0.85] });
-        await etapa('Codificando com NVENC', s.ffmpegPath, argsNvenc(inter, saida), { ...opts, peso: [0.85, 1] });
+        await etapa(`Codificando com ${encoder.nome}`, s.ffmpegPath, argsGpu(encoder, inter, saida), { ...opts, peso: [0.85, 1] });
       } else if (formato === 'mov') {
         await etapa('Renderizando (CPU, ProRes)', s.nodePath,
           [...base, saida, '--gl=swangle', '--codec=prores', '--prores-profile=hq'], opts);
@@ -80,7 +83,7 @@ export async function renderizar(id, { modo, formato } = {}, onEvento, sinal) {
       const bin = hyperframesBin();
       const gpuFlags = modo === 'gpu' ? ['--gpu', '--browser-gpu'] : ['--no-browser-gpu'];
       if (formato === 'mov' && modo === 'gpu') {
-        // ProRes não tem encoder de GPU: renderiza H.264 em NVENC e só troca o contêiner.
+        // ProRes não tem encoder de GPU: renderiza H.264 na GPU e só troca o contêiner.
         const inter = path.join(tmp, 'inter.mp4');
         await etapa('Renderizando (GPU)', s.nodePath, [bin, 'render', dir, '-o', inter, ...gpuFlags], { ...opts, peso: [0, 0.95] });
         await etapa('Gerando MOV', s.ffmpegPath, ['-y', '-i', inter, '-c', 'copy', saida], { ...opts, peso: [0.95, 1] });
@@ -102,7 +105,7 @@ export async function renderizar(id, { modo, formato } = {}, onEvento, sinal) {
     // O player do app (Chromium) não toca ProRes: gera uma cópia H.264 só para assistir.
     onEvento?.({ etapa: 'Gerando prévia', progresso: 1 });
     preview = path.join(dir, 'renders', '.previa', path.basename(saida, '.mov') + '.mp4');
-    await transcodificar(saida, { formato: 'mp4', modo: (await nvencDisponivel()) ? 'gpu' : 'cpu', saida: preview });
+    await transcodificar(saida, { formato: 'mp4', modo: encoder ? 'gpu' : 'cpu', saida: preview });
   }
   const atual = lerProjeto(id);
   atual.renders.unshift({ arquivo: saida, preview, modo, formato, data: new Date().toISOString(), segundos });

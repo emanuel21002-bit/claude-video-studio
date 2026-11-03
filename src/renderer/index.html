@@ -125,7 +125,7 @@
             </label>
             <label>Codificar com
               <div class="segmentado" id="seg-tc-modo">
-                <button data-v="gpu">GPU (NVENC)</button>
+                <button data-v="gpu">GPU</button>
                 <button data-v="cpu">CPU (x264)</button>
               </div>
             </label>
@@ -164,7 +164,14 @@
               </div>
             </div>
             <div class="area-player">
-              <aside id="inspetor" class="inspetor" hidden></aside>
+              <aside id="painel-lateral" class="inspetor painel-lateral" hidden>
+                <div class="abas-lateral">
+                  <button data-aba="materiais">Materiais</button>
+                  <button data-aba="inspetor">Propriedades</button>
+                </div>
+                <div id="materiais" class="painel-aba"></div>
+                <div id="inspetor" class="painel-aba"></div>
+              </aside>
               <div class="player">
                 <div id="previa-host" class="previa-host" hidden></div>
                 <video id="player" controls></video>
@@ -173,7 +180,7 @@
             </div>
             <div class="barra-render">
               <div class="segmentado" id="seg-modo">
-                <button data-v="gpu">GPU (NVENC)</button>
+                <button data-v="gpu">GPU</button>
                 <button data-v="cpu">CPU</button>
               </div>
               <div class="segmentado" id="seg-saida">
@@ -213,6 +220,15 @@
               <button id="tl-tocar" class="tl-tocar" title="Tocar / pausar (Espaço)">▶</button>
               <span class="tl-tempo"><span id="tl-tempo">00:00.00</span> / <span id="tl-total">00:00.00</span></span>
               <span class="tl-sep"></span>
+              <div id="tl-ferramentas" class="segmentado tl-ferramentas">
+                <button data-f="selecao" title="Selecionar, mover e aparar (V)">➤</button>
+                <button data-f="ripple" title="Ripple: apara e empurra o resto da trilha (B)">⇤|</button>
+                <button data-f="roll" title="Roll: move o corte entre dois clipes (N)">|↔|</button>
+                <button data-f="slip" title="Slip: troca o trecho do arquivo sem mover o clipe (Y)">⇄</button>
+                <button data-f="slide" title="Slide: desliza o clipe entre os vizinhos (U)">↔</button>
+                <button data-f="taxa" title="Muda a velocidade esticando a ponta do clipe (R)">⏱</button>
+                <button data-f="navalha" title="Navalha: clique para cortar (C)">✂</button>
+              </div>
               <button id="tl-dividir" title="Dividir no cursor (S)">✂ Dividir</button>
               <button id="tl-excluir" title="Excluir (Del). Shift+Del fecha o vão.">🗑 Excluir</button>
               <button id="tl-desfazer" title="Desfazer (Ctrl+Z)">↶</button>
@@ -221,6 +237,9 @@
               <button id="tl-add-texto">+ Texto</button>
               <button id="tl-add-midia">+ Mídia</button>
               <button id="tl-legendas" title="Cria as legendas a partir da transcrição, seguindo os cortes da narração">Gerar legendas</button>
+              <select id="tl-formato" class="tl-formato" title="Formato do vídeo"></select>
+              <button id="tl-fc-abrir" title="Abre esta timeline no Filmcraft. Textos, legendas e blocos vão como um vídeo de referência." hidden>Abrir no Filmcraft</button>
+              <button id="tl-fc-trazer" title="Recebe o que foi salvo no Filmcraft" hidden>Trazer</button>
               <span id="tl-aviso" class="tl-aviso"></span>
               <button id="tl-ima" class="tl-ima" title="Encaixar nas pontas dos outros itens e no cursor">🧲</button>
               <button id="tl-ajustar" title="Mostrar o vídeo inteiro">Ajustar</button>

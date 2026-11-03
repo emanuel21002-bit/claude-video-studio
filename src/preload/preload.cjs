@@ -38,6 +38,8 @@ contextBridge.exposeInMainWorld('studio', {
   midiaTimeline: chamar('timeline:midia'),
   legendasTimeline: chamar('timeline:legendas'),
   importarTimeline: chamar('timeline:importar'),
+  abrirFilmcraft: chamar('filmcraft:abrir'),
+  trazerFilmcraft: chamar('filmcraft:trazer'),
   infoVideos: chamar('transcode:info'),
   pastaSaida: chamar('transcode:pasta'),
   transcodificar: chamar('transcode:iniciar'),
