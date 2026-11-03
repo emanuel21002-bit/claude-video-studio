@@ -53,7 +53,7 @@ Recursos de edição, com os nomes de parâmetro no `timeline.json`:
 - **Keyframes** (`keyframes`): posição, escala, rotação, opacidade e números dos efeitos, com curvas linear, suave, entrada, saída e segurar.
 - **Mesclagem** (`mesclagem`) e **efeitos** (`efeitos`): correção de cor, desfoque, recorte, vinheta, preto e branco, inverter e espelhar.
 - **Transições** (`trilha.transicoes`): dissolver, fade, flash, empurrar, chicote, deslizar, cortina, íris e zoom.
-- **Materiais**: a aba ao lado do player lista os arquivos do projeto. Arrastar para uma trilha adiciona; soltar sobre um clipe substitui o arquivo dele e mantém lugar, efeitos e animações; o botão ⇄ substitui em todos os clipes.
+- **Materiais**: a aba ao lado do player lista os arquivos do projeto, com as pastas e subpastas de onde vieram. Os arquivos ficam todos em `assets/` e a pasta é o campo `pasta` de cada material. Arrastar para uma trilha adiciona; soltar sobre um clipe substitui o arquivo dele e mantém lugar, efeitos e animações; o botão ⇄ substitui em todos os clipes.
 - **Formato**: 9:16, 16:9, 1:1 e 4:5 na barra da timeline. Posições, textos e larguras acompanham o quadro novo.
 - **Ferramentas**: selecionar (V), ripple (B), roll (N), slip (Y), slide (U), velocidade (R) e navalha (C).
 

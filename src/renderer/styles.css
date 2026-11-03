@@ -451,3 +451,9 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
 .tl-pista.alvo-soltar { background: rgba(217, 119, 87, 0.12); }
 .tl-formato { flex: none; width: auto; padding: 3px 4px; font-size: 12px; }
 .drop-erro { color: var(--erro); }
+.mat-pasta { grid-column: 1 / -1; position: relative; display: flex; align-items: center; justify-content: space-between; font-size: 13px; padding: 6px 2px 0; }
+.mat-pasta .remover { position: static; }
+.mat-grade-pasta { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.mat-grade-pasta:empty { display: none; }
+.inspetor .material-pasta { display: block; width: 100%; margin: 6px 0 0; padding: 4px 2px; border: none; background: transparent; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.material-dentro { padding-left: 8px; border-left: 1px solid var(--borda); margin-left: 4px; }

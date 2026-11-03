@@ -32,6 +32,7 @@ const TL = (() => {
     ferramenta: 'selecao',
     camposKf: [],
     materiais: [],
+    pastasFechadas: new Set(),
     aba: 'materiais',
     desfazer: [],
     refazer: [],
@@ -1059,6 +1060,52 @@ const TL = (() => {
     avisar(`${m.arquivo} entrou em ${alvos.length} clipe(s).`);
   }
 
+  // Monta a árvore a partir do campo pasta de cada material ("Feed/15.10").
+  function arvoreDePastas(materiais) {
+    const raiz = { nome: '', caminho: '', filhas: new Map(), itens: [] };
+    for (const m of materiais) {
+      let no = raiz;
+      for (const nome of (m.pasta ?? '').split('/').filter(Boolean)) {
+        if (!no.filhas.has(nome)) no.filhas.set(nome, { nome, caminho: no.caminho ? `${no.caminho}/${nome}` : nome, filhas: new Map(), itens: [] });
+        no = no.filhas.get(nome);
+      }
+      no.itens.push(m);
+    }
+    return raiz;
+  }
+
+  const totalNaPasta = (no) => no.itens.length + [...no.filhas.values()].reduce((n, f) => n + totalNaPasta(f), 0);
+
+  function desenharPastas(no, cartao) {
+    const box = document.createElement('div');
+    for (const filha of no.filhas.values()) {
+      const fechada = s.pastasFechadas.has(filha.caminho);
+      const titulo = document.createElement('button');
+      titulo.className = 'material-pasta';
+      titulo.dataset.pasta = filha.caminho;
+      titulo.title = filha.caminho;
+      titulo.textContent = `${fechada ? '▸' : '▾'} 📁 ${filha.nome} (${totalNaPasta(filha)})`;
+      titulo.onclick = () => {
+        if (fechada) s.pastasFechadas.delete(filha.caminho);
+        else s.pastasFechadas.add(filha.caminho);
+        desenharMateriais();
+      };
+      box.append(titulo);
+      if (!fechada) {
+        const dentro = desenharPastas(filha, cartao);
+        dentro.className = 'material-dentro';
+        box.append(dentro);
+      }
+    }
+    if (no.itens.length) {
+      const grade = document.createElement('div');
+      grade.className = 'materiais-grade';
+      for (const m of no.itens) grade.append(cartao(m));
+      box.append(grade);
+    }
+    return box;
+  }
+
   function desenharMateriais() {
     const box = qs('#materiais');
     box.innerHTML = '';
@@ -1070,9 +1117,7 @@ const TL = (() => {
     pasta.title = 'Importa os materiais da pasta e das subpastas';
     pasta.onclick = async () => adicionarAoProjeto(await api.escolherPasta());
     box.append(importar, pasta);
-    const grade = document.createElement('div');
-    grade.className = 'materiais-grade';
-    for (const m of s.materiais) {
+    const cartao = (m) => {
       const card = document.createElement('div');
       card.className = 'material';
       card.draggable = true;
@@ -1120,9 +1165,9 @@ const TL = (() => {
         const tr = s.t.trilhas.find((x) => ACEITA[x.tipo].includes(m.tipo));
         inserirMaterial(m, tr, m.tipo === 'audio' ? s.tempo : Math.max(0, ...(tr?.itens ?? []).map((i) => i.inicio + i.duracao)));
       });
-      grade.append(card);
-    }
-    box.append(grade);
+      return card;
+    };
+    box.append(desenharPastas(arvoreDePastas(s.materiais), cartao));
     const dica = document.createElement('div');
     dica.className = 'materiais-dica';
     dica.textContent = 'Arraste para uma trilha para adicionar, ou solte em cima de um clipe para substituir o arquivo dele. Arquivos e pastas soltos aqui entram só na lista.';
@@ -1720,6 +1765,7 @@ const TL = (() => {
     await fechar();
     s.id = p.id;
     s.midia = {};
+    s.pastasFechadas = new Set();
     s.sel = null;
     s.desfazer = [];
     s.refazer = [];

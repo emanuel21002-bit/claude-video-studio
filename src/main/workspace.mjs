@@ -134,9 +134,10 @@ export function tipoDe(arquivo) {
 }
 
 // Troca pastas pelos materiais que há dentro delas, subpastas incluídas, em ordem de nome.
+// pasta é o caminho a partir da pasta escolhida, com o nome dela ("Feed/15.10"); arquivo solto fica com "".
 export function listarMateriais(caminhos) {
-  const achados = [];
-  const visitar = (c) => {
+  const achados = new Map();
+  const visitar = (c, pasta) => {
     let info;
     try {
       info = fs.statSync(c);
@@ -144,7 +145,7 @@ export function listarMateriais(caminhos) {
       return;
     }
     if (info.isFile()) {
-      if (tipoDe(c) !== 'outro') achados.push(c);
+      if (tipoDe(c) !== 'outro' && !achados.has(c)) achados.set(c, pasta);
       return;
     }
     if (!info.isDirectory()) return;
@@ -157,10 +158,10 @@ export function listarMateriais(caminhos) {
     nomes
       .filter((n) => !n.startsWith('.'))
       .sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true, sensitivity: 'base' }))
-      .forEach((n) => visitar(path.join(c, n)));
+      .forEach((n) => visitar(path.join(c, n), pasta ? `${pasta}/${path.basename(c)}` : path.basename(c)));
   };
-  caminhos.forEach(visitar);
-  return [...new Set(achados)];
+  caminhos.forEach((c) => visitar(c, ''));
+  return [...achados].map(([caminho, pasta]) => ({ caminho, pasta }));
 }
 
 function ffprobePath() {
@@ -328,7 +329,7 @@ async function unirAudios(arquivos, saida) {
   ]);
 }
 
-export async function criarProjeto({ nome, materiais, narracao, duracaoMotion, estiloId, estiloTexto, engine, formato, lote, convertidos }, onLinha) {
+export async function criarProjeto({ nome, materiais, pastas, narracao, duracaoMotion, estiloId, estiloTexto, engine, formato, lote, convertidos }, onLinha) {
   const agora = new Date();
   const slug = (nome || 'video')
     .normalize('NFD')
@@ -349,7 +350,7 @@ export async function criarProjeto({ nome, materiais, narracao, duracaoMotion, e
   const itens = [];
   for (const origem of materiais) {
     const m = await importarMaterial(origem, assets, usados, onLinha, convertidos);
-    if (m) itens.push(m);
+    if (m) itens.push(pastas?.[origem] ? { ...m, pasta: pastas[origem] } : m);
   }
 
   let narr = null;
@@ -476,11 +477,11 @@ export function escreverBriefing(p, transcricao) {
     '',
     '## Materiais (em assets/)',
     '',
-    '| arquivo | tipo | duração | resolução | áudio |',
-    '|---|---|---|---|---|',
+    '| arquivo | pasta | tipo | duração | resolução | áudio |',
+    '|---|---|---|---|---|---|',
     ...p.materiais.map(
       (m) =>
-        `| ${m.arquivo} | ${m.tipo} | ${m.tipo === 'imagem' ? '-' : fmt(m.duracao)} | ${m.largura ? `${m.largura}x${m.altura}` : '-'} | ${m.temAudio ? 'sim' : 'não'} |`,
+        `| ${m.arquivo} | ${m.pasta || '-'} | ${m.tipo} | ${m.tipo === 'imagem' ? '-' : fmt(m.duracao)} | ${m.largura ? `${m.largura}x${m.altura}` : '-'} | ${m.temAudio ? 'sim' : 'não'} |`,
     ),
     '',
   ];

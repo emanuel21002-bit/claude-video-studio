@@ -346,11 +346,20 @@ export async function importarParaProjeto(id, caminhos, onLinha) {
   const p = lerProjeto(id);
   const usados = new Set([...p.materiais.map((m) => m.arquivo), p.narracao?.arquivo].filter(Boolean));
   const novos = [];
-  for (const origem of listarMateriais(caminhos)) {
-    const m = await importarMaterial(origem, path.join(caminhoProjeto(id), 'assets'), usados, onLinha);
-    if (m) novos.push(m);
+  for (const { caminho, pasta } of listarMateriais(caminhos)) {
+    // O mesmo arquivo importado de novo não vira cópia; só atualiza a pasta quando veio de uma.
+    const existente = p.materiais.find((m) => m.original === caminho);
+    if (existente) {
+      if (pasta) existente.pasta = pasta;
+      novos.push(existente);
+      continue;
+    }
+    const m = await importarMaterial(caminho, path.join(caminhoProjeto(id), 'assets'), usados, onLinha);
+    if (!m) continue;
+    if (pasta) m.pasta = pasta;
+    p.materiais.push(m);
+    novos.push(m);
   }
-  p.materiais.push(...novos);
   gravarProjeto(p);
   return novos;
 }

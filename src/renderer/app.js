@@ -7,6 +7,7 @@ const estado = {
   config: null,
   ambiente: null,
   materiais: [], // caminhos
+  pastas: {}, // caminho -> pasta de onde o material veio
   narracoes: [], // { nome, arquivos, duracao }; cada uma vira um vídeo
   semNarracao: false,
   estiloId: 'reels-estetica',
@@ -173,6 +174,7 @@ function novoVideo() {
   TL.fechar();
   estado.projetoId = null;
   estado.materiais = [];
+  estado.pastas = {};
   estado.narracoes = [];
   estado.semNarracao = false;
   estado.soMotion = false;
@@ -193,7 +195,10 @@ function novoVideo() {
 async function adicionarMateriais(caminhos) {
   if (!caminhos.length) return;
   const achados = await api.listarMateriais(caminhos);
-  for (const c of achados) if (!estado.materiais.includes(c)) estado.materiais.push(c);
+  for (const { caminho, pasta } of achados) {
+    if (!estado.materiais.includes(caminho)) estado.materiais.push(caminho);
+    if (pasta) estado.pastas[caminho] = pasta;
+  }
   const texto = $('#drop-materiais .drop-txt');
   texto.textContent = achados.length ? 'Solte arquivos ou pastas aqui' : 'Não há vídeo, imagem nem áudio nesse local.';
   texto.classList.toggle('drop-erro', !achados.length);
@@ -203,6 +208,30 @@ async function adicionarMateriais(caminhos) {
 function renderMateriais() {
   const g = $('#grade-materiais');
   g.innerHTML = '';
+  // As seções nascem antes dos cartões, que chegam fora de ordem por causa do await.
+  const secoes = new Map();
+  for (const c of estado.materiais) {
+    const pasta = estado.pastas[c] ?? '';
+    if (secoes.has(pasta)) continue;
+    if (pasta) {
+      const titulo = document.createElement('div');
+      titulo.className = 'mat-pasta';
+      titulo.innerHTML = '<span></span><button class="remover" title="Remover esta pasta">×</button>';
+      titulo.querySelector('span').textContent = `📁 ${pasta}`;
+      titulo.querySelector('button').onclick = () => {
+        estado.materiais = estado.materiais.filter((x) => {
+          const de = estado.pastas[x] ?? '';
+          return de !== pasta && !de.startsWith(pasta + '/');
+        });
+        renderMateriais();
+      };
+      g.append(titulo);
+    }
+    const grade = document.createElement('div');
+    grade.className = 'mat-grade-pasta';
+    g.append(grade);
+    secoes.set(pasta, grade);
+  }
   estado.materiais.forEach(async (c, i) => {
     const d = document.createElement('div');
     d.className = 'mat';
@@ -217,7 +246,7 @@ function renderMateriais() {
       estado.materiais.splice(estado.materiais.indexOf(c), 1);
       renderMateriais();
     };
-    g.append(d);
+    secoes.get(estado.pastas[c] ?? '').append(d);
   });
   $('#btn-ir-2').disabled = estado.materiais.length === 0;
 }
@@ -347,6 +376,7 @@ async function criar() {
     const criados = await api.criarProjeto({
       nome: $('#nome-video').value.trim(),
       materiais: estado.soMotion ? [] : estado.materiais,
+      pastas: estado.pastas,
       narracoes: estado.soMotion || estado.semNarracao ? [] : estado.narracoes.map((n) => ({ nome: n.nome, arquivos: n.arquivos })),
       duracaoMotion: estado.soMotion ? Math.max(1, Math.min(600, Number($('#duracao-motion').value) || 15)) : null,
       estiloId: estado.estiloId,
