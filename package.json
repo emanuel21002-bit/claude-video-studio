@@ -1,0 +1,66 @@
+{
+  "name": "claude-video-studio",
+  "version": "0.3.0",
+  "description": "Editor de vídeo automático comandado pelo Claude (Remotion + HyperFrames).",
+  "main": "src/main/main.mjs",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win",
+    "icone": "electron build/gerar-icone.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.314",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "electron": "^45.2.0",
+    "electron-builder": "^26.18.0"
+  },
+  "author": "Emanuel",
+  "build": {
+    "appId": "com.emanuel.claudevideostudio",
+    "productName": "Claude Video Studio",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/@anthropic-ai/claude-agent-sdk-win32-x64/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Claude Video Studio",
+      "artifactName": "Claude-Video-Studio-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Claude-Video-Studio-Portatil-${version}.${ext}"
+    },
+    "extraResources": [
+      {
+        "from": "recursos",
+        "to": "recursos"
+      }
+    ]
+  }
+}

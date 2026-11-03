@@ -1,0 +1,5 @@
+node_modules/
+dist/
+# FFmpeg, Node, Whisper, engines e skills do instalador (2,2 GB); ver o README
+recursos/
+*.log

@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' file:; style-src 'self' 'unsafe-inline'; img-src 'self' file: data: blob:; media-src 'self' file: blob: data:; font-src 'self' file: data: https://fonts.gstatic.com; connect-src 'self' file: data: blob: https://fonts.gstatic.com"
+    />
+    <title>Claude Video Studio</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topo">
+      <div class="marca"><span class="logo">▶</span> Claude Video Studio</div>
+      <div class="topo-dir">
+        <button id="pill-claude" class="pill" title="Status do Claude">Claude: verificando…</button>
+        <button id="btn-config" class="icone" title="Configurações">⚙</button>
+      </div>
+    </header>
+
+    <div class="corpo">
+      <aside class="lateral">
+        <button id="btn-novo" class="primario largo">+ Novo vídeo</button>
+        <button id="btn-transcode" class="largo ferramenta">⇄ Converter H.265 → H.264</button>
+        <h3>Projetos</h3>
+        <ul id="lista-projetos" class="lista-projetos"></ul>
+      </aside>
+
+      <main id="conteudo">
+        <!-- Preparação -->
+        <section id="v-setup" class="vista">
+          <h1>Vamos preparar o estúdio</h1>
+          <p class="sub">Só na primeira vez. Cada item precisa ficar verde.</p>
+          <ul id="checklist" class="checklist"></ul>
+          <pre id="setup-log" class="log"></pre>
+        </section>
+
+        <!-- Assistente de criação -->
+        <section id="v-wizard" class="vista">
+          <ol class="passos">
+            <li data-passo="1">Materiais</li>
+            <li data-passo="2">Narração</li>
+            <li data-passo="3">Estilo</li>
+          </ol>
+
+          <div class="passo" data-passo="1">
+            <h1>Materiais do vídeo</h1>
+            <p class="sub">Vídeos, fotos, logo e trilha. Arraste para cá ou selecione.</p>
+            <div id="drop-materiais" class="drop">
+              <div class="drop-txt">Solte os arquivos aqui</div>
+              <div class="linha-botoes">
+                <button id="btn-sel-materiais">Selecionar arquivos</button>
+                <button id="btn-sel-pasta">Selecionar pasta</button>
+              </div>
+            </div>
+            <div id="grade-materiais" class="grade-materiais"></div>
+            <div class="rodape-passo">
+              <button id="btn-so-motion" title="Sem vídeos, fotos nem áudio: o Claude cria tudo em animação">Só motion, sem materiais nem áudio →</button>
+              <button class="primario" data-ir="2" id="btn-ir-2" disabled>Próximo →</button>
+            </div>
+          </div>
+
+          <div class="passo" data-passo="2">
+            <h1>Narração</h1>
+            <p class="sub">Cada narração vira um vídeo, com os mesmos materiais. Uma pasta é uma narração: os áudios dela são um roteiro só, unidos na ordem dos nomes.</p>
+            <div id="drop-narracao" class="drop">
+              <div class="drop-txt">Solte as pastas ou os áudios aqui</div>
+              <div class="linha-botoes">
+                <button id="btn-sel-pastas-narracao">Selecionar pastas</button>
+                <button id="btn-sel-narracao">Selecionar áudios</button>
+              </div>
+            </div>
+            <div id="narracao-escolhida" class="narracao-escolhida"></div>
+            <label class="check"><input type="checkbox" id="sem-narracao" /> Este vídeo não tem narração</label>
+            <div class="rodape-passo">
+              <button data-ir="1">← Voltar</button>
+              <button class="primario" data-ir="3" id="btn-ir-3" disabled>Próximo →</button>
+            </div>
+          </div>
+
+          <div class="passo" data-passo="3">
+            <h1>Estilo da edição</h1>
+            <p class="sub">Escolha um estilo pronto ou descreva o seu.</p>
+            <div id="grade-estilos" class="grade-estilos"></div>
+            <div class="opcoes">
+              <label>Nome do vídeo <input id="nome-video" placeholder="Ex.: Galli — polimento Civic" /></label>
+              <label>Engine
+                <div class="segmentado" id="seg-engine">
+                  <button data-v="remotion">Remotion</button>
+                  <button data-v="hyperframes">HyperFrames</button>
+                </div>
+              </label>
+              <label>Formato
+                <div class="segmentado" id="seg-formato"></div>
+              </label>
+              <label id="campo-duracao" hidden>Duração (s)
+                <input id="duracao-motion" type="number" min="1" max="600" value="15" />
+              </label>
+            </div>
+            <label class="bloco"><span id="rotulo-detalhes">Detalhes do estilo (opcional)</span>
+              <textarea id="texto-estilo" rows="4" placeholder="Ex.: legendas amarelas, cortes rápidos, terminar com o logo e o WhatsApp do cliente"></textarea>
+            </label>
+            <label class="check"><input type="checkbox" id="salvar-estilo" /> Depois de montar, o Claude salva este estilo como preset para os próximos vídeos</label>
+            <div class="rodape-passo">
+              <button data-ir="2">← Voltar</button>
+              <button class="primario" id="btn-criar">Criar vídeo com o Claude</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Transcodificador -->
+        <section id="v-transcode" class="vista">
+          <h1>Converter H.265 → H.264</h1>
+          <p class="sub">Para vídeos de celular (HEVC) abrirem em qualquer editor. Vídeos HDR saem convertidos para cores normais (SDR).</p>
+          <div id="drop-transcode" class="drop">
+            <div class="drop-txt">Solte os vídeos aqui</div>
+            <div class="linha-botoes"><button id="btn-sel-transcode">Selecionar vídeos</button></div>
+          </div>
+          <div class="opcoes-transcode">
+            <label>Formato
+              <div class="segmentado" id="seg-tc-formato">
+                <button data-v="mp4">MP4</button>
+                <button data-v="mov">MOV</button>
+              </div>
+            </label>
+            <label>Codificar com
+              <div class="segmentado" id="seg-tc-modo">
+                <button data-v="gpu">GPU (NVENC)</button>
+                <button data-v="cpu">CPU (x264)</button>
+              </div>
+            </label>
+            <label>Salvar em
+              <div class="linha-pasta">
+                <span id="tc-pasta">Mesma pasta do original</span>
+                <button id="btn-tc-pasta">Escolher…</button>
+                <button id="btn-tc-pasta-limpar" hidden>Usar a do original</button>
+              </div>
+            </label>
+          </div>
+          <ul id="lista-transcode" class="lista-transcode"></ul>
+          <div class="rodape-passo">
+            <button id="btn-tc-limpar">Limpar lista</button>
+            <div class="linha-botoes">
+              <button id="btn-tc-cancelar" class="perigo" hidden>Cancelar</button>
+              <button id="btn-tc-iniciar" class="primario" disabled>Converter</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Editor -->
+        <section id="v-editor" class="vista editor">
+          <div class="painel-video">
+            <div class="cab-editor">
+              <div>
+                <h2 id="ed-nome"></h2>
+                <div id="ed-info" class="sub"></div>
+              </div>
+              <div class="linha-botoes">
+                <div class="segmentado" id="seg-player" hidden>
+                  <button data-v="previa">Prévia ao vivo</button>
+                  <button data-v="render">Último render</button>
+                </div>
+                <button id="btn-abrir-pasta">Abrir pasta</button>
+              </div>
+            </div>
+            <div class="area-player">
+              <aside id="inspetor" class="inspetor" hidden></aside>
+              <div class="player">
+                <div id="previa-host" class="previa-host" hidden></div>
+                <video id="player" controls></video>
+                <div id="player-vazio" class="player-vazio">O vídeo aparece aqui quando o primeiro render terminar.</div>
+              </div>
+            </div>
+            <div class="barra-render">
+              <div class="segmentado" id="seg-modo">
+                <button data-v="gpu">GPU (NVENC)</button>
+                <button data-v="cpu">CPU</button>
+              </div>
+              <div class="segmentado" id="seg-saida">
+                <button data-v="mp4">MP4</button>
+                <button data-v="mov">MOV</button>
+              </div>
+              <button id="btn-render" class="primario">Renderizar</button>
+              <div class="progresso"><div id="prog-barra"></div><span id="prog-txt">Pronto</span></div>
+            </div>
+            <details class="renders">
+              <summary>Renders anteriores</summary>
+              <ul id="lista-renders"></ul>
+            </details>
+          </div>
+
+          <div class="painel-chat">
+            <div class="cab-chat">Claude <span id="chat-status" class="status-dot"></span></div>
+            <div id="mensagens" class="mensagens"></div>
+            <form id="form-chat" class="form-chat">
+              <div class="atalhos">
+                <button type="button" data-msg="Salve o estilo deste vídeo como um preset reutilizável. Sugira um nome curto.">Salvar estilo</button>
+                <button type="button" data-msg="Confira o vídeo inteiro com ver_quadros (início, meio e fim), corrija o que estiver errado e renderize de novo.">Revisar vídeo</button>
+                <button type="button" data-msg="Deixe o ritmo mais rápido: cortes mais curtos e legendas mais dinâmicas. Renderize de novo.">Mais dinâmico</button>
+              </div>
+              <textarea id="entrada-chat" rows="2" placeholder="Peça uma alteração… (Enter envia, Shift+Enter quebra linha)"></textarea>
+              <div class="linha-botoes">
+                <button type="button" id="btn-cancelar" class="perigo" hidden>Parar</button>
+                <button type="submit" class="primario">Enviar</button>
+              </div>
+            </form>
+          </div>
+
+          <div id="tl" class="tl" hidden>
+            <div id="tl-divisor" class="tl-divisor" title="Arraste para mudar a altura"></div>
+            <div class="tl-barra">
+              <button id="tl-inicio" title="Ir ao início (Home)">⏮</button>
+              <button id="tl-tocar" class="tl-tocar" title="Tocar / pausar (Espaço)">▶</button>
+              <span class="tl-tempo"><span id="tl-tempo">00:00.00</span> / <span id="tl-total">00:00.00</span></span>
+              <span class="tl-sep"></span>
+              <button id="tl-dividir" title="Dividir no cursor (S)">✂ Dividir</button>
+              <button id="tl-excluir" title="Excluir (Del). Shift+Del fecha o vão.">🗑 Excluir</button>
+              <button id="tl-desfazer" title="Desfazer (Ctrl+Z)">↶</button>
+              <button id="tl-refazer" title="Refazer (Ctrl+Y)">↷</button>
+              <span class="tl-sep"></span>
+              <button id="tl-add-texto">+ Texto</button>
+              <button id="tl-add-midia">+ Mídia</button>
+              <button id="tl-legendas" title="Cria as legendas a partir da transcrição, seguindo os cortes da narração">Gerar legendas</button>
+              <span id="tl-aviso" class="tl-aviso"></span>
+              <button id="tl-ima" class="tl-ima" title="Encaixar nas pontas dos outros itens e no cursor">🧲</button>
+              <button id="tl-ajustar" title="Mostrar o vídeo inteiro">Ajustar</button>
+              <input id="tl-zoom" class="tl-zoom" type="range" min="1.4" max="6" step="0.01" title="Zoom (Ctrl+roda do mouse)" />
+            </div>
+            <div id="tl-corpo" class="tl-corpo">
+              <div id="tl-conteudo" class="tl-conteudo">
+                <div id="tl-regua-linha" class="tl-regua-linha">
+                  <div class="tl-canto"></div>
+                  <div id="tl-regua" class="tl-regua"></div>
+                </div>
+                <div id="tl-trilhas"></div>
+                <div id="tl-guia" class="tl-guia" hidden></div>
+                <div id="tl-cursor" class="tl-cursor"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="dlg-config">
+      <form method="dialog" class="form-config">
+        <h2>Configurações</h2>
+        <label>Modelo do Claude
+          <select id="cfg-modelo">
+            <option value="claude-opus-5-5">Claude Opus 5.5 (melhor qualidade)</option>
+            <option value="claude-sonnet-5-5">Claude Sonnet 5.5 (mais rápido)</option>
+          </select>
+        </label>
+        <label>Chave de API da Anthropic (opcional — se vazio, usa o login da sua conta Claude)
+          <input id="cfg-apikey" type="password" placeholder="sk-ant-…" />
+        </label>
+        <label>Pasta do workspace <input id="cfg-workspace" /></label>
+        <label>Pasta do whisper.cpp <input id="cfg-whisper" /></label>
+        <label>Modelo do Whisper <input id="cfg-whisper-modelo" /></label>
+        <label>ffmpeg <input id="cfg-ffmpeg" /></label>
+        <label>Pasta de skills do HyperFrames <input id="cfg-skills" /></label>
+        <div class="linha-botoes">
+          <button value="cancelar">Cancelar</button>
+          <button value="salvar" class="primario">Salvar</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="app.js"></script>
+    <script src="timeline.js"></script>
+  </body>
+</html>

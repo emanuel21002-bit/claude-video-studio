@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; width: 512px; height: 512px; background: transparent; }
+      .fundo {
+        position: absolute;
+        inset: 24px;
+        border-radius: 112px;
+        background: linear-gradient(145deg, #e8916f 0%, #d97757 55%, #b85a3c 100%);
+        box-shadow: inset 0 -10px 30px rgba(0, 0, 0, 0.18);
+      }
+      svg { position: absolute; inset: 0; }
+    </style>
+  </head>
+  <body>
+    <div class="fundo"></div>
+    <svg viewBox="0 0 512 512" width="512" height="512">
+      <!-- quadro de vídeo -->
+      <rect x="112" y="150" width="288" height="212" rx="34" fill="#1a0f0a" opacity="0.92" />
+      <!-- play -->
+      <path d="M226 206 L226 306 L314 256 Z" fill="#f4ede8" stroke="#f4ede8" stroke-width="14" stroke-linejoin="round" />
+      <!-- faísca -->
+      <path d="M372 104 l10 26 26 10 -26 10 -10 26 -10 -26 -26 -10 26 -10 z" fill="#fff6f0" />
+    </svg>
+  </body>
+</html>
