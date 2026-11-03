@@ -33,7 +33,11 @@ export function rodar(cmd, args, { cwd, env, onLinha, sinal, shell = false } = {
       }
       resolve({ codigo, cauda: cauda.join('\n') });
     });
-    sinal?.addEventListener('abort', () => filho.kill());
+    sinal?.addEventListener('abort', () => {
+      // No Windows kill() só encerra o processo direto: o Chrome e o ffmpeg do render ficariam presos à GPU.
+      if (process.platform === 'win32' && filho.pid) spawn('taskkill', ['/T', '/F', '/PID', String(filho.pid)], { windowsHide: true, stdio: 'ignore' });
+      else filho.kill();
+    });
   });
 }
 

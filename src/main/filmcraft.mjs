@@ -8,6 +8,7 @@ import { rodar, rodarOuFalhar } from './proc.mjs';
 import { dirs, caminhoProjeto, lerProjeto, gravarProjeto } from './workspace.mjs';
 import { lerTimeline, gravarTimeline, escreverModelo, importarParaProjeto, novoId } from './timeline.mjs';
 import { paraOtio, deOtio, arquivosDeFora } from './otio.mjs';
+import { pastaPublica } from './render.mjs';
 
 // Ponte com o Filmcraft (editor nativo, à parte). O app gera um projeto a partir de timeline.json,
 // o usuário edita e salva lá, e "Trazer de volta" lê o que foi salvo.
@@ -47,14 +48,20 @@ async function renderizarCamada(id, t, onLinha) {
   const { ws } = dirs();
   const projeto = path.join('projetos', id);
   const parcial = saida + '.tmp.mov';
-  await rodarOuFalhar(s.nodePath, [
-    path.join(ws, 'node_modules', '@remotion', 'cli', 'remotion-cli.js'), 'render',
-    path.join(projeto, 'src', 'index.ts'), 'Main', parcial,
-    '--public-dir', path.join(projeto, 'assets'), `--props=${props}`,
-    '--codec=prores', '--prores-profile=4444', '--pixel-format=yuva444p10le', '--image-format=png', '--gl=angle',
-    `--frames=0-${Math.ceil(duracao * t.fps) - 1}`,
-  ], { cwd: ws });
-  fs.renameSync(parcial, saida);
+  const tmp = path.join(pasta(id), 'tmp');
+  try {
+    const publica = await pastaPublica(id, soGraficos, path.join(tmp, 'publico'));
+    await rodarOuFalhar(s.nodePath, [
+      path.join(ws, 'node_modules', '@remotion', 'cli', 'remotion-cli.js'), 'render',
+      path.join(projeto, 'src', 'index.ts'), 'Main', parcial,
+      '--public-dir', publica, `--props=${props}`, '--concurrency=2', '--timeout=120000',
+      '--codec=prores', '--prores-profile=4444', '--pixel-format=yuva444p10le', '--image-format=png', '--gl=angle',
+      `--frames=0-${Math.ceil(duracao * t.fps) - 1}`,
+    ], { cwd: ws, env: { TEMP: tmp, TMP: tmp } });
+    fs.renameSync(parcial, saida);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
   return { arquivo: saida, duracao };
 }
 
