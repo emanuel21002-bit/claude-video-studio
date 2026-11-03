@@ -9,12 +9,13 @@ import { dirs, caminhoProjeto, lerProjeto, gravarProjeto } from './workspace.mjs
 import { lerTimeline, gravarTimeline, escreverModelo, importarParaProjeto, novoId } from './timeline.mjs';
 import { paraOtio, deOtio, arquivosDeFora } from './otio.mjs';
 import { pastaPublica } from './render.mjs';
+import { infoVideo } from './transcodificar.mjs';
 
 // Ponte com o Filmcraft (editor nativo, à parte). O app gera um projeto a partir de timeline.json,
 // o usuário edita e salva lá, e "Trazer de volta" lê o que foi salvo.
 
 const exe = () => recurso('filmcraft', 'filmcraft.exe');
-const cli = () => recurso('filmcraft', 'filmcraft-cli.exe');
+export const cli = () => recurso('filmcraft', 'filmcraft-cli.exe');
 
 export const filmcraftDisponivel = () => temRecurso('filmcraft', 'filmcraft.exe') && temRecurso('filmcraft', 'filmcraft-cli.exe');
 
@@ -67,6 +68,20 @@ async function renderizarCamada(id, t, onLinha) {
 
 const estado = (p) => p.filmcraft ?? {};
 
+// O Claude pode pôr em assets/ arquivos que não estão em materiais (logo, por exemplo). Sem o tamanho deles,
+// a escala no Filmcraft sairia errada.
+async function comTamanhos(projeto, t) {
+  const conhecidos = new Set(projeto.materiais.map((m) => m.arquivo));
+  const assets = path.join(caminhoProjeto(projeto.id), 'assets');
+  const extras = [];
+  for (const arquivo of new Set(t.trilhas.flatMap((tr) => tr.itens).map((i) => i.arquivo).filter(Boolean))) {
+    if (conhecidos.has(arquivo) || projeto.narracao?.arquivo === arquivo || !fs.existsSync(path.join(assets, arquivo))) continue;
+    const { largura, altura } = await infoVideo(path.join(assets, arquivo));
+    if (largura) extras.push({ arquivo, largura, altura });
+  }
+  return { ...projeto, materiais: [...projeto.materiais, ...extras] };
+}
+
 // Salvo no Filmcraft depois da última ida ou volta: abrir de novo descartaria essas edições.
 function editadoLa(id) {
   const arq = projetoFc(id);
@@ -80,6 +95,21 @@ function marcarSincronizado(id) {
   gravarProjeto(p);
 }
 
+// Monta o projeto do Filmcraft a partir da timeline. Devolve o caminho do projeto e os avisos da conversão.
+export async function prepararProjetoFilmcraft(id, destino, onLinha) {
+  const projeto = lerProjeto(id);
+  escreverModelo(projeto);
+  const t = lerTimeline(id);
+  fs.mkdirSync(pasta(id), { recursive: true });
+  const camada = await renderizarCamada(id, t, onLinha);
+  const { otio, avisos } = paraOtio(t, await comTamanhos(projeto, t), { assets: path.join(caminhoProjeto(id), 'assets'), camada });
+  const arqOtio = path.join(pasta(id), 'ida.otio');
+  fs.writeFileSync(arqOtio, JSON.stringify(otio, null, 1));
+  fs.rmSync(destino, { force: true });
+  await rodarOuFalhar(cli(), ['--compact', '--save-as', destino, 'exec', 'file.import', JSON.stringify({ paths: [arqOtio] })], { cwd: pasta(id) });
+  return { avisos };
+}
+
 export async function abrirNoFilmcraft(id, { descartar = false } = {}, onLinha) {
   if (!filmcraftDisponivel()) throw new Error('O Filmcraft não está em recursos\\filmcraft.');
   if (!descartar && editadoLa(id)) return { pendente: true };
@@ -88,7 +118,7 @@ export async function abrirNoFilmcraft(id, { descartar = false } = {}, onLinha) 
   const t = lerTimeline(id);
   fs.mkdirSync(pasta(id), { recursive: true });
   const camada = await renderizarCamada(id, t, onLinha);
-  const { otio, avisos } = paraOtio(t, projeto, { assets: path.join(caminhoProjeto(id), 'assets'), camada });
+  const { otio, avisos } = paraOtio(t, await comTamanhos(projeto, t), { assets: path.join(caminhoProjeto(id), 'assets'), camada });
   const arqOtio = path.join(pasta(id), 'ida.otio');
   fs.writeFileSync(arqOtio, JSON.stringify(otio, null, 1));
   onLinha?.('Preparando o projeto do Filmcraft…');
@@ -119,7 +149,8 @@ export async function trazerDoFilmcraft(id, onLinha) {
     const [m] = await importarParaProjeto(id, [caminho], onLinha);
     if (m) mapaArquivos[caminho] = m.arquivo;
   }
-  const { timeline, avisos } = deOtio(otio, lerTimeline(id), lerProjeto(id), { novoId, mapaArquivos, base: pasta(id) });
+  const atual = lerTimeline(id);
+  const { timeline, avisos } = deOtio(otio, atual, await comTamanhos(lerProjeto(id), atual), { novoId, mapaArquivos, base: pasta(id) });
   gravarTimeline(id, timeline);
   marcarSincronizado(id);
   return { avisos };

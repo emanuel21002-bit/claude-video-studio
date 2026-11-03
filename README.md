@@ -68,6 +68,10 @@ Recursos de edição, com os nomes de parâmetro no `timeline.json`:
 
 ## Render
 
+O vídeo final pode sair pelo Filmcraft (padrão, se estiver em `recursos\filmcraft`) ou pelo Remotion, no botão ao lado de GPU/CPU. Pelo Filmcraft, textos, legendas e blocos são renderizados pelo Remotion como uma camada transparente, guardada enquanto não mudam, e ele monta o resto em um passo só. Se ele falhar, o app exporta pelo Remotion. A prévia ao vivo é sempre do Remotion, e a correção de cor pode ter pequenas diferenças entre os dois.
+
+Só roda um render por vez. Pedir o mesmo render enquanto ele roda não inicia outro, e pedir de novo sem nada mudar devolve o arquivo pronto.
+
 | Modo | Remotion | HyperFrames |
 |---|---|---|
 | GPU | Chrome com ANGLE (GPU) + codificação final em NVENC (`h264_nvenc`) ou AMF (`h264_amf`) | `--gpu --browser-gpu` |

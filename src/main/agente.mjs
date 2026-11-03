@@ -1,10 +1,13 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { carregar } from './settings.mjs';
 import { dirs, lerProjeto, gravarProjeto, hyperframesBin } from './workspace.mjs';
-import { renderizar, extrairQuadros } from './render.mjs';
+import { renderizar } from './render.mjs';
+import { folhaDeQuadros, folhaDeMateriais, resumoTimeline, editarTimeline, resumirErro } from './ferramentas.mjs';
+const imagem = (arquivo) => ({ type: 'image', data: fs.readFileSync(arquivo).toString('base64'), mimeType: 'image/jpeg' });
 import { salvarEstilo } from './presets.mjs';
 import { gerarLegendas } from './timeline.mjs';
 
@@ -72,14 +75,23 @@ PROJETO ATUAL: ${rel}/  (trabalhe somente dentro desta pasta)
 ${regrasEngine(p)}
 
 FERRAMENTAS DO APP:
-- mcp__studio__renderizar — exporta o vídeo (o app escolhe GPU/CPU e MP4/MOV conforme o usuário). Chame ao terminar a montagem e sempre que o usuário pedir render. Se falhar, leia o erro, corrija e chame de novo.
-- mcp__studio__ver_quadros — extrai quadros do último render em segundos escolhidos; depois leia os PNGs com Read para conferir legenda, enquadramento e cortes.
-${p.timeline ? '- mcp__studio__gerar_legendas — cria a trilha de legendas a partir da transcrição, seguindo os pedaços de narração que estão na timeline.\n' : ''}- mcp__studio__salvar_estilo — guarda o estilo deste vídeo como preset reutilizável no app. Use quando o usuário pedir para salvar o estilo. Escreva as instruções como receita completa e concreta (fontes, tamanhos, posições, cores em hex, ritmo de cortes, transições, efeitos), para outro vídeo sair igual sem ver este código.
+- mcp__studio__renderizar — exporta o vídeo (o app escolhe GPU/CPU e MP4/MOV conforme o usuário).
+- mcp__studio__ver_quadros — devolve uma imagem com os momentos pedidos, em segundos, para conferir legenda, enquadramento e cortes.
+- mcp__studio__ver_materiais — devolve uma imagem com os materiais numerados e a lista deles.
+${p.timeline ? '- mcp__studio__resumo_timeline — a timeline sem as palavras das legendas; com ids, os itens completos.\n- mcp__studio__editar_timeline — altera, adiciona ou remove itens pelo id.\n' : ''}${p.timeline ? '- mcp__studio__gerar_legendas — cria a trilha de legendas a partir da transcrição, seguindo os pedaços de narração que estão na timeline.\n' : ''}- mcp__studio__salvar_estilo — guarda o estilo deste vídeo como preset reutilizável no app. Use quando o usuário pedir para salvar o estilo. Escreva as instruções como receita completa e concreta (fontes, tamanhos, posições, cores em hex, ritmo de cortes, transições, efeitos), para outro vídeo sair igual sem ver este código.
+
+ECONOMIA (cada imagem e cada arquivo lido é reenviado em todos os turnos; siga sempre):
+- Veja os clipes com mcp__studio__ver_materiais, nunca extraindo quadros com ffmpeg nem lendo imagens soltas. Só peça clipes específicos para decidir um corte difícil.
+- Confira o vídeo com mcp__studio__ver_quadros, que lê direto da timeline sem renderizar. Peça no máximo 8 momentos por vez.
+- O render leva minutos e só roda uma vez: chame mcp__studio__renderizar só depois de conferir os quadros e corrigir tudo, ou quando o usuário pedir. Nunca renderize para conferir.
+- Nunca renderize pelo CLI nem por Bash, e nunca rode nada em segundo plano. Se o render falhar, descubra a causa e mude algo antes de chamar de novo; não repita a mesma chamada. Se a chamada vier interrompida, avise o usuário em vez de insistir.
+- Depois da primeira montagem, use mcp__studio__resumo_timeline e mcp__studio__editar_timeline. Não leia nem reescreva timeline.json inteiro.
+- O briefing já traz a transcrição: não leia transcricao.json. Faça várias alterações de uma vez e leia um arquivo só uma vez.
 
 COMO TRABALHAR:
 - Responda sempre em português do Brasil, curto e direto: o usuário vê suas mensagens num chat ao lado do player.
-- Na primeira montagem: leia o briefing, monte o vídeo completo, renderize, confira 3–4 quadros e corrija o que estiver errado antes de encerrar.
-${p.timeline ? '- Em pedidos de alteração: altere só o que foi pedido na timeline e diga em uma ou duas frases o que mudou. A prévia ao vivo do app já mostra a mudança; só renderize quando o usuário pedir, ou para conferir quadros.\n- Mensagens podem trazer [Timeline: …] com a posição do cursor e o item selecionado: é a isso que o usuário se refere com "aqui" ou "esse".' : '- Em pedidos de alteração: altere só o que foi pedido, renderize de novo e diga em uma ou duas frases o que mudou.'}
+- Na primeira montagem: leia o briefing, monte o vídeo completo, confira com ver_quadros, corrija o que estiver errado e só então renderize uma vez.
+${p.timeline ? '- Em pedidos de alteração: altere só o que foi pedido na timeline e diga em uma ou duas frases o que mudou. A prévia ao vivo do app já mostra a mudança; só renderize quando o usuário pedir.\n- Mensagens podem trazer [Timeline: …] com a posição do cursor e o item selecionado: é a isso que o usuário se refere com "aqui" ou "esse".' : '- Em pedidos de alteração: altere só o que foi pedido, renderize de novo e diga em uma ou duas frases o que mudou.'}
 `.trim();
 }
 
@@ -104,6 +116,9 @@ function resumoFerramenta(nome, input = {}) {
   if (nome === 'Skill') return `Usando a skill ${input.skill ?? ''}`;
   if (nome === 'mcp__studio__renderizar') return 'Renderizando o vídeo';
   if (nome === 'mcp__studio__ver_quadros') return 'Conferindo quadros do vídeo';
+  if (nome === 'mcp__studio__ver_materiais') return 'Vendo os materiais';
+  if (nome === 'mcp__studio__resumo_timeline') return 'Lendo a timeline';
+  if (nome === 'mcp__studio__editar_timeline') return 'Editando a timeline';
   if (nome === 'mcp__studio__gerar_legendas') return 'Gerando as legendas';
   if (nome === 'mcp__studio__salvar_estilo') return `Salvando o estilo "${input.nome ?? ''}"`;
   return nome;
@@ -133,21 +148,58 @@ export async function conversar(id, mensagem, onEvento) {
           try {
             const r = await renderizar(id, args, (e) => onEvento({ tipo: 'render', ...e }), controle.signal);
             onEvento({ tipo: 'render', concluido: r.preview ?? r.arquivo });
-            return { content: [{ type: 'text', text: `Render concluído em ${r.segundos}s: ${r.arquivo}` }] };
+            const texto = r.reaproveitado ? `Nada mudou desde o último render; o arquivo continua valendo: ${r.arquivo}` : `Render concluído em ${r.segundos}s: ${r.arquivo}`;
+            return { content: [{ type: 'text', text: texto }] };
           } catch (e) {
             onEvento({ tipo: 'render', falhou: String(e.message).split('\n')[0] });
-            return { content: [{ type: 'text', text: `O render falhou:\n${e.message}` }], isError: true };
+            return { content: [{ type: 'text', text: `O render falhou:\n${resumirErro(e.message)}` }], isError: true };
           }
         },
       ),
       tool(
         'ver_quadros',
-        'Extrai quadros (PNG) do último render nos segundos pedidos e devolve os caminhos para ler com Read.',
+        'Devolve uma imagem com os momentos pedidos, em ordem de tempo. Em projetos com timeline não precisa de render. Até 2 momentos vêm maiores, para ver detalhes.',
         { segundos: z.array(z.number().min(0)).min(1).max(8) },
         async ({ segundos }) => {
           try {
-            const arquivos = await extrairQuadros(id, segundos);
-            return { content: [{ type: 'text', text: arquivos.join('\n') || 'Nenhum quadro extraído.' }] };
+            return { content: [imagem(await folhaDeQuadros(id, segundos))] };
+          } catch (e) {
+            return { content: [{ type: 'text', text: resumirErro(e.message) }], isError: true };
+          }
+        },
+      ),
+      tool(
+        'ver_materiais',
+        'Devolve uma imagem com os vídeos e fotos do projeto numerados e a lista deles (até 30 por página). Com arquivos, mostra três momentos de cada clipe pedido.',
+        { arquivos: z.array(z.string()).max(8).optional(), pagina: z.number().int().min(1).optional() },
+        async (args) => {
+          try {
+            const { saida, texto } = await folhaDeMateriais(id, args);
+            return { content: [imagem(saida), { type: 'text', text: texto }] };
+          } catch (e) {
+            return { content: [{ type: 'text', text: e.message }], isError: true };
+          }
+        },
+      ),
+      tool(
+        'resumo_timeline',
+        'A timeline compacta, uma linha por item, sem as palavras das legendas. Com ids, devolve esses itens completos.',
+        { ids: z.array(z.string()).max(20).optional() },
+        async (args) => {
+          try {
+            return { content: [{ type: 'text', text: resumoTimeline(id, args) }] };
+          } catch (e) {
+            return { content: [{ type: 'text', text: e.message }], isError: true };
+          }
+        },
+      ),
+      tool(
+        'editar_timeline',
+        'Grava alterações na timeline sem reescrever o arquivo. Operações: {op:"alterar",id,campos} (campo null apaga), {op:"adicionar",trilha,item}, {op:"remover",id}, {op:"transicoes",trilha,lista}.',
+        { operacoes: z.array(z.record(z.string(), z.any())).min(1) },
+        async ({ operacoes }) => {
+          try {
+            return { content: [{ type: 'text', text: editarTimeline(id, operacoes) }] };
           } catch (e) {
             return { content: [{ type: 'text', text: e.message }], isError: true };
           }
@@ -190,8 +242,30 @@ export async function conversar(id, mensagem, onEvento) {
     ],
   });
 
-  const env = { ...process.env };
+  const env = {
+    ...process.env,
+    // Tarefa em segundo plano acorda o Claude depois que a sessão encerrou, e aí as ferramentas do app são
+    // interrompidas em 0 s; foi isso que fez o render ser repetido várias vezes seguidas.
+    CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
+    // Um render passa bem de minutos, e o padrão não pode cortá-lo no meio.
+    MCP_TOOL_TIMEOUT: String(3 * 60 * 60 * 1000),
+    // Resume a conversa antes: cada turno reenvia tudo, inclusive as imagens já vistas.
+    CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '45',
+  };
   if (s.apiKey) env.ANTHROPIC_API_KEY = s.apiKey;
+
+  // O render pelo CLI passa por fora da fila, do cache e da lista do app.
+  const barrarRenderPorFora = async (entrada) => {
+    const comando = String(entrada.tool_input?.command ?? '');
+    if (!/remotion[^\n]*\brender\b|hyperframes[^\n]*\brender\b/i.test(comando)) return {};
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: 'Use mcp__studio__renderizar: render por Bash não entra na fila nem na lista do app. Para conferir, use mcp__studio__ver_quadros.',
+      },
+    };
+  };
 
   try {
     const q = query({
@@ -206,10 +280,11 @@ export async function conversar(id, mensagem, onEvento) {
         settingSources: ['user', 'project'],
         systemPrompt: { type: 'preset', preset: 'claude_code', append: promptSistema(projeto) },
         mcpServers: { studio },
+        hooks: { PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [barrarRenderPorFora] }] },
         permissionMode: 'dontAsk',
         allowedTools: [
           'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash', 'Skill',
-          'mcp__studio__renderizar', 'mcp__studio__ver_quadros', 'mcp__studio__gerar_legendas', 'mcp__studio__salvar_estilo',
+          'mcp__studio__renderizar', 'mcp__studio__ver_quadros', 'mcp__studio__ver_materiais', 'mcp__studio__resumo_timeline', 'mcp__studio__editar_timeline', 'mcp__studio__gerar_legendas', 'mcp__studio__salvar_estilo',
         ],
         stderr: (d) => onEvento({ tipo: 'log', texto: d }),
       },
@@ -247,9 +322,9 @@ function guardarSessao(id, sessionId) {
 }
 
 export function primeiraMensagem(p, salvarEstilo, referencia) {
-  let m = `Leia projetos/${p.id}/BRIEFING.md e monte o vídeo completo no estilo pedido. Depois renderize com mcp__studio__renderizar, confira alguns quadros e me diga em poucas linhas o que montou.`;
+  let m = `Leia projetos/${p.id}/BRIEFING.md e monte o vídeo completo no estilo pedido. Confira com mcp__studio__ver_quadros, corrija, renderize uma vez com mcp__studio__renderizar e me diga em poucas linhas o que montou.`;
   if (p.lote) m += ` Este é o vídeo ${p.lote.indice} de ${p.lote.total} de um lote: mesmos materiais, cada vídeo com sua narração.`;
-  if (referencia) m += ` Para o lote ter a mesma identidade, leia antes (só leitura) projetos/${referencia}/timeline.json e projetos/${referencia}/src/ e siga o mesmo visual, adaptando os cortes e a escolha das cenas a esta narração.`;
+  if (referencia) m += ` Para o lote ter a mesma identidade, leia antes (só leitura) projetos/${referencia}/src/blocos.tsx e o estilo de alguns itens de projetos/${referencia}/timeline.json com Grep, e siga o mesmo visual, adaptando os cortes e a escolha das cenas a esta narração.`;
   if (salvarEstilo) m += ' No final, salve o estilo com mcp__studio__salvar_estilo, com um nome curto que o descreva.';
   return m;
 }

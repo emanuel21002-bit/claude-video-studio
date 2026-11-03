@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { carregar } from './settings.mjs';
 import { rodar } from './proc.mjs';
 import { dirs, caminhoProjeto, hyperframesBin, lerProjeto, gravarProjeto, carimbo, tipoDe } from './workspace.mjs';
@@ -18,18 +19,36 @@ function lerProgresso(linha) {
 // As saídas dos CLIs vêm coloridas, e o erro vai para o chat.
 const semCores = (texto) => texto.replace(/\x1b\[[0-9;]*m/g, '');
 
-async function etapa(nome, cmd, args, { cwd, env, onEvento, sinal, peso = [0, 1] }) {
+// Sem nenhuma saída por este tempo, o processo travou: melhor falhar com um aviso do que ficar parado para sempre.
+const LIMITE_SEM_SAIDA = 10 * 60 * 1000;
+
+async function etapa(nome, cmd, args, { cwd, env, onEvento, sinal, peso = [0, 1], limiteSemSaida = LIMITE_SEM_SAIDA }) {
   onEvento?.({ etapa: nome, progresso: peso[0] });
+  const vigia = new AbortController();
+  sinal?.addEventListener('abort', () => vigia.abort());
+  let travou = false;
+  let timer;
+  const rearmar = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      travou = true;
+      vigia.abort();
+    }, limiteSemSaida);
+  };
+  rearmar();
   const r = await rodar(cmd, args, {
     cwd,
     env,
-    sinal,
+    sinal: vigia.signal,
     onLinha: (l) => {
+      rearmar();
       onEvento?.({ log: l });
       const p = lerProgresso(l);
       if (p != null) onEvento?.({ etapa: nome, progresso: peso[0] + p * (peso[1] - peso[0]) });
     },
   });
+  clearTimeout(timer);
+  if (travou) throw new Error(`${nome} travou: nenhuma resposta por ${Math.round(limiteSemSaida / 60000)} minutos.`);
   if (sinal?.aborted) throw new Error('Render cancelado.');
   if (r.codigo !== 0) throw new Error(`${nome} falhou (código ${r.codigo}):\n${semCores(r.cauda)}`);
 }
@@ -124,10 +143,94 @@ function argsGpu(encoder, entrada, saida) {
   ];
 }
 
-export async function renderizar(id, { modo, formato } = {}, onEvento, sinal) {
+// ---------- um render por vez ----------
+
+// Tudo o que muda o resultado. Igual ao do último render, o arquivo já existente serve.
+function impressao(id, projeto, modo, formato) {
+  const dir = caminhoProjeto(id);
+  const h = crypto.createHash('sha1').update(`${modo}|${formato}|${projeto.engine}|${carregar().renderMotor}`);
+  const incluir = (pasta) => {
+    for (const e of fs.readdirSync(pasta, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const c = path.join(pasta, e.name);
+      if (e.isDirectory()) incluir(c);
+      else {
+        const info = fs.statSync(c);
+        h.update(`${e.name}:${info.size}:${info.mtimeMs}`);
+      }
+    }
+  };
+  if (projeto.timeline) {
+    h.update(fs.readFileSync(path.join(dir, 'timeline.json')));
+    for (const n of ['blocos.tsx', 'TimelineVideo.tsx']) {
+      const c = path.join(dir, 'src', n);
+      if (fs.existsSync(c)) h.update(fs.readFileSync(c));
+    }
+  } else {
+    for (const n of fs.readdirSync(dir)) {
+      const c = path.join(dir, n);
+      if (['renders', '.previa', 'chat', 'projeto.json'].includes(n)) continue;
+      if (fs.statSync(c).isDirectory()) incluir(c);
+      else h.update(`${n}:${fs.readFileSync(c).length}:${fs.statSync(c).mtimeMs}`);
+    }
+  }
+  incluir(path.join(dir, 'assets'));
+  return h.digest('hex');
+}
+
+let filaRender = Promise.resolve();
+const emAndamento = new Map(); // "id|modo|formato" -> promessa
+
+// A GPU de 4 GB não aguenta dois renders juntos: os pedidos entram numa fila única. Pedir de novo o mesmo render
+// enquanto ele roda não inicia outro; pedir depois, sem nada mudar, devolve o arquivo pronto.
+export function renderizar(id, opcoes = {}, onEvento, sinal) {
   const s = carregar();
-  modo ??= s.renderModo;
-  formato ??= s.renderFormato;
+  const modo = opcoes.modo ?? s.renderModo;
+  const formato = opcoes.formato ?? s.renderFormato;
+  const chave = `${id}|${modo}|${formato}`;
+  if (emAndamento.has(chave)) {
+    onEvento?.({ etapa: 'Este render já está rodando', progresso: 0 });
+    return emAndamento.get(chave);
+  }
+  const trabalho = filaRender.catch(() => {}).then(() => {
+    if (sinal?.aborted) throw new Error('Render cancelado.');
+    const projeto = lerProjeto(id);
+    if (projeto.timeline) escreverModelo(projeto);
+    const marca = impressao(id, projeto, modo, formato);
+    const ultimo = projeto.renders[0];
+    if (ultimo?.impressao === marca && fs.existsSync(ultimo.arquivo)) {
+      onEvento?.({ etapa: 'Nada mudou desde o último render', progresso: 1 });
+      return { arquivo: ultimo.arquivo, preview: ultimo.preview, segundos: 0, reaproveitado: true };
+    }
+    return executarRender(id, { modo, formato, marca }, onEvento, sinal);
+  });
+  filaRender = trabalho;
+  emAndamento.set(chave, trabalho);
+  const limpar = () => emAndamento.delete(chave);
+  trabalho.then(limpar, limpar);
+  return trabalho;
+}
+
+// O CLI só imprime o resultado no fim: em vídeos longos, ficar sem saída não quer dizer que travou.
+const LIMITE_FILMCRAFT = 60 * 60 * 1000;
+
+// Composição e decodificação na GPU, em um passo só; textos, legendas e blocos vêm do Remotion como camada.
+async function exportarPeloFilmcraft(id, saida, { modo, formato }, opts) {
+  const { prepararProjetoFilmcraft, cli } = await import('./filmcraft.mjs');
+  const projetoFc = path.join(path.dirname(opts.env.TEMP), `${path.basename(opts.env.TEMP)}.fcproj`);
+  opts.onEvento?.({ etapa: 'Preparando textos e legendas', progresso: 0.02 });
+  try {
+    await prepararProjetoFilmcraft(id, projetoFc, (l) => opts.onEvento?.({ log: l }));
+    if (opts.sinal?.aborted) throw new Error('Render cancelado.');
+    await etapa('Exportando pelo Filmcraft', cli(), [
+      '--project', projetoFc, 'export', saida, '--format', formato === 'mov' ? 'prores' : 'h264', '--gpu-rendering', modo === 'gpu' ? 'auto' : 'off',
+    ], { ...opts, peso: [0.4, 1], limiteSemSaida: LIMITE_FILMCRAFT });
+  } finally {
+    fs.rmSync(projetoFc, { force: true });
+  }
+}
+
+async function executarRender(id, { modo, formato, marca }, onEvento, sinal) {
+  const s = carregar();
   const encoder = ENCODERS_GPU[await encoderGpu()];
   if (!encoder) modo = 'cpu';
   const projeto = lerProjeto(id);
@@ -141,13 +244,36 @@ export async function renderizar(id, { modo, formato } = {}, onEvento, sinal) {
   const saida = path.join(dir, 'renders', `${projeto.id.split('-').slice(1).join('-') || 'video'}-${quando}.${formato}`);
   // Temporários no mesmo disco dos projetos: o C: costuma estar cheio e os arquivos ligados não cruzam discos.
   const raizTmp = path.join(dirs().ws, '.tmp');
+  // Só um render roda por vez: o que estiver aqui sobrou de um app fechado no meio do render.
+  fs.rmSync(raizTmp, { recursive: true, force: true });
   fs.mkdirSync(raizTmp, { recursive: true });
   const tmp = fs.mkdtempSync(path.join(raizTmp, 'render-'));
   const inicio = Date.now();
   const opts = { cwd: dirs().ws, env: { TEMP: tmp, TMP: tmp }, onEvento, sinal };
 
+  let motor = 'remotion';
+  if (projeto.engine === 'remotion' && projeto.timeline && s.renderMotor === 'filmcraft') {
+    const { filmcraftDisponivel } = await import('./filmcraft.mjs');
+    if (filmcraftDisponivel()) {
+      try {
+        await exportarPeloFilmcraft(id, saida, { modo, formato }, opts);
+        motor = 'filmcraft';
+      } catch (e) {
+        if (sinal?.aborted) {
+          fs.rmSync(tmp, { recursive: true, force: true });
+          throw e;
+        }
+        fs.rmSync(saida, { force: true });
+        onEvento?.({ log: `Filmcraft falhou, exportando pelo Remotion: ${semCores(e.message).slice(0, 300)}` });
+        onEvento?.({ etapa: 'Filmcraft falhou: usando o Remotion', progresso: 0 });
+      }
+    }
+  }
+
   try {
-    if (projeto.engine === 'remotion') {
+    if (motor === 'filmcraft') {
+      // Já exportado acima.
+    } else if (projeto.engine === 'remotion') {
       const cli = path.join(dirs().ws, 'node_modules', '@remotion', 'cli', 'remotion-cli.js');
       const entrada = path.join('projetos', id, 'src', 'index.ts');
       const publica = projeto.timeline
@@ -198,7 +324,7 @@ export async function renderizar(id, { modo, formato } = {}, onEvento, sinal) {
     await transcodificar(saida, { formato: 'mp4', modo: encoder ? 'gpu' : 'cpu', saida: preview });
   }
   const atual = lerProjeto(id);
-  atual.renders.unshift({ arquivo: saida, preview, modo, formato, data: new Date().toISOString(), segundos });
+  atual.renders.unshift({ arquivo: saida, preview, modo, motor, formato, data: new Date().toISOString(), segundos, impressao: marca });
   gravarProjeto(atual);
   onEvento?.({ etapa: 'Pronto', progresso: 1 });
   return { arquivo: saida, preview, segundos };

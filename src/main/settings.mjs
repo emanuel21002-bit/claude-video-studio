@@ -20,6 +20,7 @@ export const PADRAO = {
   modeloClaude: 'claude-opus-5-5',
   apiKey: '',
   renderModo: 'gpu', // gpu | cpu
+  renderMotor: 'filmcraft', // filmcraft | remotion
   renderFormato: 'mp4', // mp4 | mov
 };
 

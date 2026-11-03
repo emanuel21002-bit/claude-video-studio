@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 
@@ -8,6 +9,9 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 export const TICKS = 254016000000;
 const NOME_CAMADA = 'Camada Remotion';
 const NOME_AUDIO_VIDEOS = 'Áudio dos vídeos';
+// Valores padrão, lidos do próprio Filmcraft. Parâmetro ausente não assume o padrão lá: a imagem sai clara demais.
+const LUMETRI_PADRAO = JSON.parse(fs.readFileSync(fileURLToPath(new URL('./lumetri-padrao.json', import.meta.url)), 'utf8'));
+const VINHETA_PADRAO = { midpoint: { value: { Float: 50 } }, roundness: { value: { Float: 0 } }, feather: { value: { Float: 50 } }, color: { value: { Color: [0, 0, 0, 1] } } };
 const ID_NO_NOME = /\s*⟦([^⟧]+)⟧$/;
 
 const INTERP = { linear: 'Linear', hold: 'Hold', bezier: 'Bezier', easeIn: 'EaseIn', easeOut: 'EaseOut' };
@@ -125,13 +129,14 @@ function efeitosExtras(item) {
   const lista = [];
   if (e.cor || item.filmcraft?.lumetri) {
     lista.push(fx('lumetri', {
+      ...LUMETRI_PADRAO,
       ...item.filmcraft?.lumetri,
       ...(e.cor ? { exposure: num('cor.exposicao', 0), contrast: num('cor.contraste', 0), saturation: num('cor.saturacao', 100), temperature: num('cor.temperatura', 0), tint: num('cor.matiz', 0) } : {}),
     }));
   }
   if (e.desfoque) lista.push(fx('gaussian_blur', { blurriness: num('desfoque.raio', 0) }));
   if (e.corte) lista.push(fx('crop', { left: num('corte.esquerda', 0), top: num('corte.cima', 0), right: num('corte.direita', 0), bottom: num('corte.baixo', 0) }));
-  if (e.vinheta) lista.push(fx('vignette', { amount: num('vinheta.quantidade', -50) }));
+  if (e.vinheta) lista.push(fx('vignette', { ...VINHETA_PADRAO, amount: num('vinheta.quantidade', -50) }));
   if (e.pb) lista.push(fx('black_white', {}));
   if (e.inverter) lista.push(fx('invert', {}));
   if (e.espelhoH) lista.push(fx('horizontal_flip', {}));
@@ -278,7 +283,7 @@ function filhosDaFaixa(faixa, transicoes, t, materiais, assets, avisos) {
 
 function configuracao(t) {
   return {
-    audio_master: 'Stereo', color: { auto_tone_map: true, wide_gamut: false, working: 'Rec709' }, drop_frame: false,
+    audio_master: 'Stereo', color: { auto_tone_map: false, wide_gamut: false, working: 'Rec709' }, drop_frame: false,
     frame_rate: { den: 1, num: t.fps }, height: t.altura, max_bit_depth: false, max_render_quality: false, par: [1, 1],
     preset: `${t.largura}x${t.altura} ${t.fps}`, preview_codec: 'ProRes 422', sample_rate: 48000, width: t.largura, working_space: 'Rec. 709',
   };
@@ -405,13 +410,7 @@ function lumetriExtra(params) {
   const conhecidos = Object.keys(MAPA_EFEITOS.lumetri.campos);
   for (const [k, v] of Object.entries(params)) {
     if (conhecidos.includes(k)) continue;
-    if (['hdr_white', 'basic_on', 'creative_on', 'curves_on'].includes(k)) continue;
-    const val = v.value;
-    const neutro = v.keyframes?.length ? false
-      : val?.Float === 0 || val?.Float === 100 || val?.Choice === 0 || val?.Text === '' || val?.Bool === true || val?.Bool === false
-      || (val?.Color && val.Color[0] === 0.5 && val.Color[1] === 0.5 && val.Color[2] === 0.5)
-      || (val?.Curve && (val.Curve.length === 0 || JSON.stringify(val.Curve) === '[[0,0],[1,1]]'));
-    if (!neutro) extra[k] = v;
+    if (JSON.stringify(v) !== JSON.stringify(LUMETRI_PADRAO[k])) extra[k] = v;
   }
   return extra;
 }

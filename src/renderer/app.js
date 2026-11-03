@@ -54,6 +54,7 @@ async function verificarAmbiente() {
 const nomeEncoderGpu = () => ({ nvenc: 'NVENC', amf: 'AMF' })[estado.ambiente?.encoderGpu];
 
 function rotularBotoesGpu() {
+  $('#seg-motor').hidden = !estado.ambiente?.filmcraft;
   const nome = nomeEncoderGpu();
   document.querySelectorAll('#seg-modo [data-v="gpu"], #seg-tc-modo [data-v="gpu"]').forEach((b) => {
     b.textContent = nome ? `GPU (${nome})` : 'GPU';
@@ -774,6 +775,7 @@ async function renderEstilosUmaVez() {
   estado.catalogo = await api.catalogo();
   estado.config = await api.lerConfig();
   renderEstilos();
+  segmentado($('#seg-motor'), estado.config.renderMotor, async (v) => (estado.config = await api.salvarConfig({ renderMotor: v })));
   segmentado($('#seg-modo'), estado.config.renderModo, async (v) => (estado.config = await api.salvarConfig({ renderModo: v })));
   segmentado($('#seg-saida'), estado.config.renderFormato, async (v) => (estado.config = await api.salvarConfig({ renderFormato: v })));
   iniciar();
