@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('studio', {
   escolher: chamar('escolher'),
   escolherPasta: chamar('escolherPasta'),
   escolherPastas: chamar('escolherPastas'),
+  listarMateriais: chamar('materiais:listar'),
   resolverNarracoes: chamar('narracoes:resolver'),
   filaPendentes: chamar('fila:pendentes'),
   retomarFila: chamar('fila:retomar'),

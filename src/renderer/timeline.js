@@ -923,7 +923,9 @@ const TL = (() => {
       tirarLog();
     }
     if (s.id !== id) return;
+    const antes = s.materiais.length;
     await carregarMateriais();
+    if (s.materiais.length === antes) avisar('Nenhum material novo: não há vídeo, imagem nem áudio nesse local.');
     carregarMidia();
   }
 
@@ -1063,7 +1065,11 @@ const TL = (() => {
     const importar = document.createElement('button');
     importar.textContent = '+ Importar arquivos';
     importar.onclick = async () => adicionarAoProjeto(await api.escolher({ tipo: 'materiais', multiplos: true }));
-    box.append(importar);
+    const pasta = document.createElement('button');
+    pasta.textContent = '+ Importar pasta';
+    pasta.title = 'Importa os materiais da pasta e das subpastas';
+    pasta.onclick = async () => adicionarAoProjeto(await api.escolherPasta());
+    box.append(importar, pasta);
     const grade = document.createElement('div');
     grade.className = 'materiais-grade';
     for (const m of s.materiais) {
@@ -1119,7 +1125,7 @@ const TL = (() => {
     box.append(grade);
     const dica = document.createElement('div');
     dica.className = 'materiais-dica';
-    dica.textContent = 'Arraste para uma trilha para adicionar, ou solte em cima de um clipe para substituir o arquivo dele.';
+    dica.textContent = 'Arraste para uma trilha para adicionar, ou solte em cima de um clipe para substituir o arquivo dele. Arquivos e pastas soltos aqui entram só na lista.';
     box.append(dica);
   }
 
@@ -1671,6 +1677,7 @@ const TL = (() => {
     );
     window.addEventListener('keydown', aoTeclar);
     areaDeSoltar(qs('#tl'), adicionarArquivos);
+    areaDeSoltar(qs('#materiais'), adicionarAoProjeto);
     qs('#seg-player').querySelectorAll('button').forEach((b) => {
       b.onclick = () => (b.dataset.v === 'previa' ? verPrevia() : verRender());
     });

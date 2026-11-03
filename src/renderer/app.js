@@ -191,10 +191,12 @@ function novoVideo() {
 }
 
 async function adicionarMateriais(caminhos) {
-  for (const c of caminhos) {
-    const tipo = await api.tipoArquivo(c);
-    if (tipo !== 'outro' && !estado.materiais.includes(c)) estado.materiais.push(c);
-  }
+  if (!caminhos.length) return;
+  const achados = await api.listarMateriais(caminhos);
+  for (const c of achados) if (!estado.materiais.includes(c)) estado.materiais.push(c);
+  const texto = $('#drop-materiais .drop-txt');
+  texto.textContent = achados.length ? 'Solte arquivos ou pastas aqui' : 'Não há vídeo, imagem nem áudio nesse local.';
+  texto.classList.toggle('drop-erro', !achados.length);
   renderMateriais();
 }
 

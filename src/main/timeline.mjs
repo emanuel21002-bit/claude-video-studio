@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { carregar } from './settings.mjs';
 import { rodar } from './proc.mjs';
-import { dirs, caminhoProjeto, lerProjeto, gravarProjeto, importarMaterial } from './workspace.mjs';
+import { dirs, caminhoProjeto, lerProjeto, gravarProjeto, importarMaterial, listarMateriais } from './workspace.mjs';
 import { infoVideo } from './transcodificar.mjs';
 import { FORMATOS } from './presets.mjs';
 
@@ -346,7 +346,7 @@ export async function importarParaProjeto(id, caminhos, onLinha) {
   const p = lerProjeto(id);
   const usados = new Set([...p.materiais.map((m) => m.arquivo), p.narracao?.arquivo].filter(Boolean));
   const novos = [];
-  for (const origem of caminhos) {
+  for (const origem of listarMateriais(caminhos)) {
     const m = await importarMaterial(origem, path.join(caminhoProjeto(id), 'assets'), usados, onLinha);
     if (m) novos.push(m);
   }

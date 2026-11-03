@@ -450,3 +450,4 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
 .tl-item.alvo-troca { outline: 2px dashed var(--acento); outline-offset: -2px; }
 .tl-pista.alvo-soltar { background: rgba(217, 119, 87, 0.12); }
 .tl-formato { flex: none; width: auto; padding: 3px 4px; font-size: 12px; }
+.drop-erro { color: var(--erro); }

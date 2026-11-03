@@ -133,6 +133,36 @@ export function tipoDe(arquivo) {
   return Object.keys(EXT).find((t) => EXT[t].includes(ext)) ?? 'outro';
 }
 
+// Troca pastas pelos materiais que há dentro delas, subpastas incluídas, em ordem de nome.
+export function listarMateriais(caminhos) {
+  const achados = [];
+  const visitar = (c) => {
+    let info;
+    try {
+      info = fs.statSync(c);
+    } catch {
+      return;
+    }
+    if (info.isFile()) {
+      if (tipoDe(c) !== 'outro') achados.push(c);
+      return;
+    }
+    if (!info.isDirectory()) return;
+    let nomes;
+    try {
+      nomes = fs.readdirSync(c);
+    } catch {
+      return;
+    }
+    nomes
+      .filter((n) => !n.startsWith('.'))
+      .sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true, sensitivity: 'base' }))
+      .forEach((n) => visitar(path.join(c, n)));
+  };
+  caminhos.forEach(visitar);
+  return [...new Set(achados)];
+}
+
 function ffprobePath() {
   const ff = carregar().ffmpegPath;
   return ff === 'ffmpeg' ? 'ffprobe' : path.join(path.dirname(ff), 'ffprobe.exe');

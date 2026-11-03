@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { usarBinariosEmbutidos } from './recursos.mjs';
 import { carregar, salvar } from './settings.mjs';
 import { todosEstilos, excluirEstilo, FORMATOS } from './presets.mjs';
-import {
+import { listarMateriais,
   workspacePronto, prepararWorkspace, criarProjeto, listarProjetos, lerProjeto, gravarProjeto,
   escreverBriefing, caminhoProjeto, tipoDe, resolverNarracoes,
 } from './workspace.mjs';
@@ -148,15 +148,13 @@ ipcMain.handle('escolher', async (_e, { tipo, multiplos }) => {
   return r.canceled ? [] : r.filePaths;
 });
 
+// Devolve as pastas, não o conteúdo: quem chama expande e sabe avisar quando não há nada dentro.
 ipcMain.handle('escolherPasta', async () => {
-  const r = await dialog.showOpenDialog(janela, { properties: ['openDirectory'] });
-  if (r.canceled) return [];
-  const pasta = r.filePaths[0];
-  return fs
-    .readdirSync(pasta, { withFileTypes: true })
-    .filter((d) => d.isFile() && tipoDe(d.name) !== 'outro')
-    .map((d) => path.join(pasta, d.name));
+  const r = await dialog.showOpenDialog(janela, { properties: ['openDirectory', 'multiSelections'] });
+  return r.canceled ? [] : r.filePaths;
 });
+
+ipcMain.handle('materiais:listar', (_e, caminhos) => listarMateriais(caminhos));
 
 ipcMain.handle('escolherPastas', async () => {
   const r = await dialog.showOpenDialog(janela, { properties: ['openDirectory', 'multiSelections'] });
