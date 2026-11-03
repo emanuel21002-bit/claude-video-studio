@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { carregar } from './settings.mjs';
 import { rodar } from './proc.mjs';
+import { CODIFICADORES, AUDIO, cpuDoCodec } from './codificadores.mjs';
 
 function ffprobePath() {
   const ff = carregar().ffmpegPath;
@@ -74,30 +75,48 @@ const TONEMAP =
 const TONEMAP_GPU =
   'libplacebo=tonemapping=bt.2390:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:format=yuv420p';
 
-export function nomeSaida(entrada, formato, pastaSaida) {
+export function nomeSaida(entrada, formato, pastaSaida, sufixo = 'h264') {
   const base = path.basename(entrada, path.extname(entrada));
-  return path.join(pastaSaida || path.dirname(entrada), `${base}_h264.${formato}`);
+  return path.join(pastaSaida || path.dirname(entrada), `${base}_${sufixo}.${formato}`);
 }
 
-// Converte para H.264 8-bit (yuv420p) em MP4 ou MOV. modo: 'gpu' (NVENC ou AMF) ou 'cpu' (libx264).
-export async function transcodificar(entrada, { formato = 'mp4', modo = 'gpu', saida, pastaSaida } = {}, onProgresso, sinal) {
+// Converte para 8-bit (yuv420p). Sem `codificador` é o caminho de sempre: H.264 em MP4 ou MOV, modo 'gpu' (NVENC ou AMF)
+// ou 'cpu' (libx264). Com `codificador` (id de CODIFICADORES) vale a escolha do conversor: codec, qualidade (RF),
+// velocidade (0 a 2) e áudio (id de AUDIO).
+export async function transcodificar(entrada, { formato = 'mp4', modo = 'gpu', saida, pastaSaida, codificador, qualidade, velocidade = 1, audio = 'aac' } = {}, onProgresso, sinal) {
   const info = await infoVideo(entrada);
-  saida ??= nomeSaida(entrada, formato, pastaSaida);
+  const escolhido = codificador ? CODIFICADORES[codificador] : null;
+  if (codificador && !escolhido) throw new Error(`Codificador desconhecido: ${codificador}`);
+  const som = AUDIO[audio];
+  if (!som) throw new Error(`Áudio desconhecido: ${audio}`);
+  if (escolhido) {
+    if (!escolhido.formatos.includes(formato)) throw new Error(`${escolhido.nome} não cabe em ${formato.toUpperCase()}.`);
+    if (!som.formatos.includes(formato)) throw new Error(`${som.nome} não cabe em ${formato.toUpperCase()}.`);
+  }
+  saida ??= nomeSaida(entrada, formato, pastaSaida, escolhido?.codec);
   if (path.resolve(saida) === path.resolve(entrada)) throw new Error('A saída seria igual ao arquivo original.');
   fs.mkdirSync(path.dirname(saida), { recursive: true });
   const encoder = ENCODERS_GPU[await encoderGpu()];
-  if (!encoder) modo = 'cpu';
+  if (escolhido) modo = escolhido.tipo;
+  else if (!encoder) modo = 'cpu';
+  const hwaccel = escolhido ? escolhido.hwaccel : encoder?.hwaccel;
 
   const args = ['-y', '-hide_banner', '-nostats', '-progress', 'pipe:1'];
   // HDR na GPU: tone mapping pelo libplacebo (Vulkan), ~2,5x mais rápido que o zscale da CPU.
   const placebo = modo === 'gpu' && info.hdr;
   if (placebo) args.push('-init_hw_device', 'vulkan');
-  else if (modo === 'gpu') args.push('-hwaccel', encoder.hwaccel);
+  else if (modo === 'gpu') args.push('-hwaccel', hwaccel);
   args.push('-i', entrada, '-map', '0:v:0', '-map', '0:a?');
   args.push('-vf', placebo ? TONEMAP_GPU : info.hdr ? TONEMAP : 'format=yuv420p');
-  if (modo === 'gpu') args.push(...encoder.args);
+  if (escolhido) {
+    args.push(...escolhido.args(qualidade ?? escolhido.q.padrao, velocidade).map(String));
+    // O Apple e a maioria dos editores só leem H.265 em MP4/MOV com a etiqueta hvc1.
+    if (escolhido.codec === 'h265' && formato !== 'mkv') args.push('-tag:v', 'hvc1');
+  } else if (modo === 'gpu') args.push(...encoder.args);
   else args.push('-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-profile:v', 'high');
-  args.push('-c:a', 'aac', '-b:a', '320k', '-movflags', '+faststart', saida);
+  args.push('-c:a', som.enc, ...som.args);
+  if (formato !== 'mkv') args.push('-movflags', '+faststart');
+  args.push(saida);
 
   const inicio = Date.now();
   const r = await rodar(carregar().ffmpegPath, args, {
@@ -114,9 +133,13 @@ export async function transcodificar(entrada, { formato = 'mp4', modo = 'gpu', s
   if (r.codigo !== 0) {
     fs.rmSync(saida, { force: true });
     // O decodificador de GPU não abre alguns arquivos (ex.: 4:2:2 10-bit); tenta de novo na CPU.
-    if (modo === 'gpu') return transcodificar(entrada, { formato, modo: 'cpu', saida }, onProgresso, sinal);
+    if (modo === 'gpu') {
+      const cpu = escolhido ? { codificador: cpuDoCodec(escolhido.codec), velocidade, audio } : { modo: 'cpu' };
+      if (!cpu.codificador && escolhido) throw new Error(`ffmpeg falhou (código ${r.codigo}):\n${r.cauda}`);
+      return transcodificar(entrada, { formato, saida, ...cpu }, onProgresso, sinal);
+    }
     throw new Error(`ffmpeg falhou (código ${r.codigo}):\n${r.cauda}`);
   }
   onProgresso?.(1);
-  return { saida, modo, hdr: info.hdr, segundos: Math.round((Date.now() - inicio) / 1000) };
+  return { saida, modo, hdr: info.hdr, segundos: Math.round((Date.now() - inicio) / 1000), codificador: escolhido?.nome };
 }

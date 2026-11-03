@@ -106,6 +106,50 @@ export async function folhaDeMateriais(id, { arquivos, pagina = 1 } = {}) {
   return { saida, texto: linhas.join('\n') + (resto > 0 ? `\nHá mais ${resto} materiais: peça a página ${pagina + 1}.` : '') };
 }
 
+// Estuda um material de referência: uma imagem com quadros rotulados com o segundo, mais os dados medidos pelo ffmpeg
+// (duração, resolução, instantes dos cortes). Os cortes saem de graça aqui, sem o Claude precisar contar quadro a quadro.
+export async function folhaDeReferencia(id, { arquivo, momentos } = {}) {
+  const projeto = lerProjeto(id);
+  const refs = projeto.referencias ?? [];
+  if (!refs.length) throw new Error('Este projeto não tem material de referência.');
+  const ref = arquivo ? refs.find((r) => r.arquivo === arquivo) : refs[0];
+  if (!ref) throw new Error(`Referência "${arquivo}" não existe. Disponíveis: ${refs.map((r) => r.arquivo).join(', ')}`);
+  const origem = path.join(caminhoProjeto(id), 'referencia', ref.arquivo);
+  const pasta = path.join(caminhoProjeto(id), '.previa', 'referencia');
+  fs.rmSync(pasta, { recursive: true, force: true });
+  fs.mkdirSync(pasta, { recursive: true });
+
+  const dur = ref.tipo === 'imagem' ? 0 : ref.duracao ?? 0;
+  const linhas = [`${ref.arquivo}: ${ref.tipo === 'imagem' ? 'imagem' : `${dur.toFixed(1)}s`}${ref.largura ? ` ${ref.largura}x${ref.altura}` : ''}${ref.temAudio ? ' com áudio' : ' sem áudio'}`];
+
+  let cortes = [];
+  if (dur > 0) {
+    await rodar(carregar().ffmpegPath, ['-hide_banner', '-nostats', '-i', origem, '-vf', "scale=320:-2,select='gt(scene,0.3)',showinfo", '-an', '-f', 'null', '-'], {
+      onLinha: (l) => {
+        const m = l.match(/pts_time:([\d.]+)/);
+        if (m) cortes.push(Number(m[1]));
+      },
+    });
+    cortes = cortes.filter((t) => t > 0.2);
+    const duracoes = [0, ...cortes, dur].map((t, i, a) => (i ? t - a[i - 1] : null)).filter((x) => x != null);
+    const media = duracoes.reduce((s, x) => s + x, 0) / duracoes.length;
+    linhas.push(`${cortes.length} cortes detectados, plano médio de ${media.toFixed(1)}s (${(60 / media).toFixed(0)} cortes por minuto).`);
+    if (cortes.length) linhas.push(`Instantes dos cortes (s): ${cortes.slice(0, 60).map((t) => t.toFixed(1)).join(', ')}${cortes.length > 60 ? ' …' : ''}`);
+  }
+
+  const instantes = ref.tipo === 'imagem' ? [0] : (momentos?.length ? momentos : Array.from({ length: Math.min(12, Math.max(4, Math.ceil(dur / 2))) }, (_, i, a) => (dur * (i + 0.5)) / a.length)).slice(0, 12);
+  for (const [n, t] of instantes.entries()) {
+    const saida = path.join(pasta, `f${String(n + 1).padStart(3, '0')}.jpg`);
+    const filtro = `scale=270:270:force_original_aspect_ratio=decrease,pad=270:270:(ow-iw)/2:(oh-ih)/2,drawtext=fontfile='${FONTE}':text='${t.toFixed(1)}s':x=6:y=6:fontsize=26:fontcolor=yellow:borderw=3`;
+    const r = await rodar(carregar().ffmpegPath, ['-y', '-hide_banner', '-loglevel', 'error', ...(ref.tipo === 'imagem' ? [] : ['-ss', String(Math.max(0, t))]), '-i', origem, '-frames:v', '1', '-vf', filtro, '-q:v', '5', saida]);
+    if (r.codigo !== 0 || !fs.existsSync(saida)) throw new Error(`Não consegui ler ${ref.arquivo}.\n${r.cauda.slice(-300)}`);
+  }
+  const saida = path.join(pasta, 'folha.jpg');
+  await grade(pasta, 'f%03d.jpg', Math.min(4, instantes.length), instantes.length, saida);
+  if (refs.length > 1) linhas.push(`Outras referências: ${refs.filter((r) => r !== ref).map((r) => r.arquivo).join(', ')}`);
+  return { saida, texto: linhas.join('\n') };
+}
+
 const seg = (x) => Number(x.toFixed(2));
 
 // A timeline sem o que pesa: palavras das legendas e detalhes de estilo. Quem precisa de um item pede pelo id.

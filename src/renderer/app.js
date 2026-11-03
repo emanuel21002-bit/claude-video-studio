@@ -16,6 +16,7 @@ const estado = {
   projetoId: null,
   trabalhando: new Set(),
   naFila: new Set(),
+  referencias: [],
 };
 
 const urlArquivo = (p) => 'file:///' + encodeURI(p.replace(/\\/g, '/')).replace(/#/g, '%23');
@@ -126,20 +127,92 @@ function logSetup(l) {
 
 // ---------- projetos ----------
 
+// Cada projeto é uma pasta com uma ou mais timelines (os vídeos de um lote ficam na mesma pasta).
+function pastasDe(lista) {
+  const pastas = new Map();
+  for (const p of lista) {
+    const id = p.grupo?.id ?? p.id;
+    if (!pastas.has(id)) pastas.set(id, { id, nome: p.grupo?.nome ?? p.nome, timelines: [] });
+    pastas.get(id).timelines.push(p);
+  }
+  for (const f of pastas.values()) {
+    f.timelines.sort((a, b) => (a.lote?.indice ?? 0) - (b.lote?.indice ?? 0) || a.criadoEm.localeCompare(b.criadoEm));
+  }
+  return [...pastas.values()]; // a lista já vem da mais nova para a mais antiga
+}
+
+// Dentro da pasta o nome do vídeo perde o prefixo da pasta: "Detailer 03.11 — Narração 1" vira "Narração 1".
+const rotuloTimeline = (f, p) => (p.nome.startsWith(f.nome + ' — ') ? p.nome.slice(f.nome.length + 3) : p.nome);
+
+const situacaoDe = (p) => (estado.naFila.has(p.id) ? 'na fila' : estado.trabalhando.has(p.id) ? 'montando' : '');
+
 async function carregarProjetos() {
   const lista = await api.projetos();
+  estado.listaProjetos = lista;
+  estado.pastasAbertas ??= new Set();
   const ul = $('#lista-projetos');
   ul.innerHTML = '';
   if (!lista.length) ul.innerHTML = '<li class="p-meta">Nenhum vídeo ainda.</li>';
-  for (const p of lista) {
+  for (const f of pastasDe(lista)) {
+    const ativa = f.timelines.some((p) => p.id === estado.projetoId);
+    const aberta = estado.pastasAbertas.has(f.id);
+    const primeiro = f.timelines[0];
+    const situacoes = f.timelines.map(situacaoDe).filter(Boolean);
+    const n = f.timelines.length;
     const li = document.createElement('li');
-    li.className = p.id === estado.projetoId ? 'ativo' : '';
-    li.innerHTML = `<div class="p-nome"></div><div class="p-meta"></div>`;
-    li.querySelector('.p-nome').textContent = p.nome;
-    const situacao = estado.naFila.has(p.id) ? ' · na fila' : estado.trabalhando.has(p.id) ? ' · montando' : '';
-    li.querySelector('.p-meta').textContent = `${p.engine === 'remotion' ? 'Remotion' : 'HyperFrames'} · ${p.formato} · ${new Date(p.criadoEm).toLocaleDateString('pt-BR')}${situacao}`;
-    li.onclick = () => abrirProjeto(p.id);
+    li.className = 'pasta';
+    li.innerHTML = `<div class="pasta-cab"><span class="seta"></span><div class="pasta-txt"><div class="p-nome"></div><div class="p-meta"></div></div></div>`;
+    const cab = li.querySelector('.pasta-cab');
+    cab.classList.toggle('ativo', ativa && !aberta);
+    li.querySelector('.seta').textContent = n > 1 ? (aberta ? '▾' : '▸') : '▪';
+    li.querySelector('.p-nome').textContent = f.nome;
+    li.querySelector('.p-meta').textContent =
+      [`${n} timeline${n > 1 ? 's' : ''}`, primeiro.engine === 'remotion' ? 'Remotion' : 'HyperFrames', primeiro.formato, new Date(primeiro.criadoEm).toLocaleDateString('pt-BR'), situacoes.length ? `${situacoes.length > 1 ? situacoes.length + ' ' : ''}${situacoes[0]}` : '']
+        .filter(Boolean)
+        .join(' · ');
+    cab.onclick = () => {
+      if (n === 1) return abrirProjeto(primeiro.id);
+      if (aberta) estado.pastasAbertas.delete(f.id);
+      else estado.pastasAbertas.add(f.id);
+      // Ao abrir uma pasta sem nenhuma timeline aberta, abre a primeira.
+      if (estado.pastasAbertas.has(f.id) && !ativa) abrirProjeto(primeiro.id);
+      else carregarProjetos();
+    };
+    if (n > 1 && aberta) {
+      const itens = document.createElement('div');
+      itens.className = 'pasta-itens';
+      for (const p of f.timelines) {
+        const it = document.createElement('div');
+        it.className = 'timeline-item' + (p.id === estado.projetoId ? ' ativo' : '');
+        const sit = situacaoDe(p);
+        it.textContent = rotuloTimeline(f, p) + (sit ? ` · ${sit}` : '');
+        it.title = p.nome;
+        it.onclick = () => abrirProjeto(p.id);
+        itens.append(it);
+      }
+      li.append(itens);
+    }
     ul.append(li);
+  }
+  renderAbasTimeline(lista);
+}
+
+// Abas com as timelines da pasta aberta, no topo do editor.
+function renderAbasTimeline(lista) {
+  const abas = $('#ed-abas');
+  const atual = lista.find((p) => p.id === estado.projetoId);
+  const irmas = atual ? lista.filter((p) => (p.grupo?.id ?? p.id) === (atual.grupo?.id ?? atual.id)) : [];
+  abas.hidden = irmas.length < 2;
+  abas.innerHTML = '';
+  if (abas.hidden) return;
+  const pasta = pastasDe(irmas)[0];
+  for (const p of pasta.timelines) {
+    const b = document.createElement('button');
+    b.className = 'aba-timeline' + (p.id === atual.id ? ' ativo' : '');
+    b.textContent = rotuloTimeline(pasta, p);
+    b.title = p.nome;
+    b.onclick = () => p.id !== atual.id && abrirProjeto(p.id);
+    abas.append(b);
   }
 }
 
@@ -177,6 +250,8 @@ function novoVideo() {
   estado.materiais = [];
   estado.pastas = {};
   estado.narracoes = [];
+  estado.referencias = [];
+  renderReferencias();
   estado.semNarracao = false;
   estado.soMotion = false;
   $('#campo-duracao').hidden = true;
@@ -295,6 +370,30 @@ async function adicionarNarracoes(caminhos) {
   renderNarracao();
 }
 
+const EXT_REFERENCIA = /\.(mp4|mov|mkv|m4v|hevc|webm|avi|png|jpe?g|webp)$/i;
+
+function adicionarReferencias(caminhos) {
+  for (const c of caminhos.filter((x) => EXT_REFERENCIA.test(x))) if (!estado.referencias.includes(c)) estado.referencias.push(c);
+  renderReferencias();
+}
+
+function renderReferencias() {
+  const el = $('#lista-referencia');
+  el.innerHTML = '';
+  estado.referencias.forEach((c, i) => {
+    const d = document.createElement('div');
+    d.className = 'chip-referencia';
+    d.innerHTML = '<span></span><button type="button" title="Remover">×</button>';
+    d.querySelector('span').textContent = nomeArquivo(c);
+    d.title = c;
+    d.querySelector('button').onclick = () => {
+      estado.referencias.splice(i, 1);
+      renderReferencias();
+    };
+    el.append(d);
+  });
+}
+
 function atualizarBotaoCriar() {
   const n = estado.soMotion || estado.semNarracao ? 1 : estado.narracoes.length;
   $('#btn-criar').textContent = n > 1 ? `Criar ${n} vídeos com o Claude` : 'Criar vídeo com o Claude';
@@ -323,6 +422,7 @@ function renderEstilos() {
     b.className = 'estilo';
     b.dataset.id = e.id;
     b.innerHTML = `<strong></strong><span></span><br><em></em>`;
+    b.prepend(PreviasEstilo.criar(e, b));
     b.querySelector('strong').textContent = e.nome;
     b.querySelector('span').textContent = e.descricao;
     b.querySelector('em').textContent = `${e.engine === 'remotion' ? 'Remotion' : 'HyperFrames'} · ${e.formato}${e.doUsuario ? ' · criado pelo Claude' : ''}`;
@@ -378,6 +478,7 @@ async function criar() {
       nome: $('#nome-video').value.trim(),
       materiais: estado.soMotion ? [] : estado.materiais,
       pastas: estado.pastas,
+      referencias: estado.referencias,
       narracoes: estado.soMotion || estado.semNarracao ? [] : estado.narracoes.map((n) => ({ nome: n.nome, arquivos: n.arquivos })),
       duracaoMotion: estado.soMotion ? Math.max(1, Math.min(600, Number($('#duracao-motion').value) || 15)) : null,
       estiloId: estado.estiloId,
@@ -430,6 +531,7 @@ function progresso(frac, texto) {
 async function abrirProjeto(id) {
   estado.projetoId = id;
   const p = await api.projeto(id);
+  (estado.pastasAbertas ??= new Set()).add(p.grupo?.id ?? p.id);
   mostrarVista('editor');
   await TL.fechar();
   $('#ed-nome').textContent = p.nome;
@@ -558,21 +660,63 @@ async function enviarChat(ev) {
 
 // ---------- transcodificador ----------
 
-const tc = { itens: [], formato: 'mp4', modo: 'gpu', pasta: null, rodando: false };
+const tc = { itens: [], formato: 'mp4', codificador: null, qualidade: null, velocidade: 1, audio: 'aac', pasta: null, rodando: false };
 
-function abrirTranscode() {
+const codificadorAtual = () => tc.catalogo?.video.find((c) => c.id === tc.codificador);
+
+// Formato, codificador, qualidade e áudio dependem uns dos outros (ex.: AV1 não cabe em MOV, Vorbis só em MKV).
+function ajustarOpcoesTranscode() {
+  const cat = tc.catalogo;
+  if (!cat) return;
+  if (!codificadorAtual()) {
+    // Padrão como antes: H.264 na placa de vídeo quando ela dá conta; senão x264.
+    tc.codificador = (cat.video.find((c) => c.codec === 'h264' && c.tipo === 'gpu') ?? cat.video.find((c) => c.id === 'libx264') ?? cat.video[0])?.id;
+    tc.qualidade = null;
+  }
+  const enc = codificadorAtual();
+  if (!enc) return;
+  if (!enc.formatos.includes(tc.formato)) tc.formato = enc.formatos[0];
+  tc.qualidade ??= enc.q.padrao;
+  const audios = cat.audio.filter((a) => a.formatos.includes(tc.formato));
+  if (!audios.some((a) => a.id === tc.audio)) tc.audio = audios[0]?.id ?? 'aac';
+
+  const sel = $('#tc-codificador');
+  sel.replaceChildren();
+  for (const [tipo, rotulo] of [['cpu', 'CPU (software)'], ['gpu', 'Placa de vídeo']]) {
+    const grupo = document.createElement('optgroup');
+    grupo.label = rotulo;
+    for (const c of cat.video.filter((x) => x.tipo === tipo)) grupo.append(new Option(c.nome, c.id));
+    if (grupo.children.length) sel.append(grupo);
+  }
+  sel.value = tc.codificador;
+  $('#tc-velocidade').replaceChildren(...cat.velocidades.map((n, i) => new Option(n, i)));
+  $('#tc-velocidade').value = tc.velocidade;
+  $('#tc-audio').replaceChildren(...audios.map((a) => new Option(a.nome, a.id)));
+  $('#tc-audio').value = tc.audio;
+  const q = $('#tc-qualidade');
+  q.min = enc.q.min;
+  q.max = enc.q.max;
+  q.value = tc.qualidade;
+  $('#tc-q-rotulo').textContent = `Qualidade (${enc.q.maiorMelhor ? 'maior' : 'menor'} = melhor)`;
+  // Formatos que o codificador não aceita ficam desligados.
+  segmentado($('#seg-tc-formato'), tc.formato, (v) => {
+    tc.formato = v;
+    ajustarOpcoesTranscode();
+  });
+  $('#seg-tc-formato').querySelectorAll('button').forEach((b) => (b.disabled = !enc.formatos.includes(b.dataset.v)));
+}
+
+async function abrirTranscode() {
   TL.fechar();
   estado.projetoId = null;
   carregarProjetos();
-  // Sem encoder de GPU o ffmpeg cai para CPU sozinho; aqui só refletimos isso quando já sabemos.
-  if (!tc.modoEscolhido) tc.modo = estado.ambiente && !estado.ambiente.encoderGpu ? 'cpu' : 'gpu';
-  segmentado($('#seg-tc-formato'), tc.formato, (v) => (tc.formato = v));
-  segmentado($('#seg-tc-modo'), tc.modo, (v) => {
-    tc.modo = v;
-    tc.modoEscolhido = true;
-  });
   renderTranscode();
   mostrarVista('transcode');
+  if (!tc.catalogo) {
+    $('#tc-codificador').replaceChildren(new Option('Procurando codificadores…', ''));
+    tc.catalogo = await api.codificadores();
+  }
+  ajustarOpcoesTranscode();
 }
 
 async function adicionarTranscode(caminhos) {
@@ -601,7 +745,7 @@ function renderTranscode() {
     st.textContent = {
       aguardando: 'Na fila',
       convertendo: `${Math.round(it.progresso * 100)}%`,
-      pronto: `Pronto (${it.modo?.toUpperCase()}, ${it.segundos}s) — abrir`,
+      pronto: `Pronto (${it.codificador ?? it.modo?.toUpperCase()}, ${it.segundos}s) — abrir`,
       erro: 'Erro: ' + (it.erro ?? ''),
     }[it.status];
     st.title = it.erro ?? '';
@@ -631,7 +775,15 @@ async function iniciarTranscode() {
   fila.forEach((i) => Object.assign(i, { status: 'aguardando', progresso: 0, erro: null }));
   tc.rodando = true;
   renderTranscode();
-  const resultados = await api.transcodificar({ arquivos: fila.map((i) => i.arquivo), formato: tc.formato, modo: tc.modo, pastaSaida: tc.pasta });
+  const resultados = await api.transcodificar({
+    arquivos: fila.map((i) => i.arquivo),
+    formato: tc.formato,
+    codificador: tc.codificador,
+    qualidade: tc.qualidade,
+    velocidade: tc.velocidade,
+    audio: tc.audio,
+    pastaSaida: tc.pasta,
+  });
   fila.forEach((i, n) => Object.assign(i, resultados[n], { naFila: false }));
   tc.rodando = false;
   renderTranscode();
@@ -640,6 +792,19 @@ async function iniciarTranscode() {
 function ligarTranscode() {
   $('#btn-transcode').onclick = abrirTranscode;
   $('#btn-sel-transcode').onclick = async () => adicionarTranscode(await api.escolher({ tipo: 'videos', multiplos: true }));
+  $('#tc-codificador').onchange = (e) => {
+    tc.codificador = e.target.value;
+    tc.qualidade = null; // cada codificador tem a sua escala
+    ajustarOpcoesTranscode();
+  };
+  $('#tc-qualidade').onchange = (e) => {
+    const q = codificadorAtual()?.q;
+    const n = Math.round(Number(e.target.value));
+    tc.qualidade = q ? Math.min(q.max, Math.max(q.min, Number.isFinite(n) ? n : q.padrao)) : n;
+    e.target.value = tc.qualidade;
+  };
+  $('#tc-velocidade').onchange = (e) => (tc.velocidade = Number(e.target.value));
+  $('#tc-audio').onchange = (e) => (tc.audio = e.target.value);
   $('#btn-tc-iniciar').onclick = iniciarTranscode;
   $('#btn-tc-cancelar').onclick = () => api.cancelarTranscode();
   $('#btn-tc-limpar').onclick = () => {
@@ -670,7 +835,25 @@ const CAMPOS = {
   'cfg-skills': 'skillsOrigem',
 };
 
+const MODELOS = [
+  ['claude-opus-5-5', 'Opus 5.5 (melhor qualidade)'],
+  ['claude-sonnet-5-5', 'Sonnet 5.5 (equilibrado)'],
+  ['claude-haiku-5-5', 'Haiku 5.5 (mais rápido e barato)'],
+  ['claude-fable-5-1', 'Fable 5.1'],
+];
+
+// Os dois seletores (chat e configurações) mostram o mesmo modelo salvo.
+function preencherModelos() {
+  const atual = estado.config?.modeloClaude;
+  const lista = MODELOS.some(([v]) => v === atual) || !atual ? MODELOS : [...MODELOS, [atual, atual]];
+  for (const sel of [$('#chat-modelo'), $('#cfg-modelo')]) {
+    sel.replaceChildren(...lista.map(([v, t]) => new Option(t, v)));
+    sel.value = atual ?? MODELOS[0][0];
+  }
+}
+
 function abrirConfig() {
+  preencherModelos();
   for (const [el, k] of Object.entries(CAMPOS)) $('#' + el).value = estado.config[k] ?? '';
   $('#dlg-config').showModal();
 }
@@ -705,6 +888,7 @@ window.addEventListener('drop', (e) => e.preventDefault());
 
 async function iniciar() {
   estado.config = await api.lerConfig();
+  preencherModelos();
   estado.catalogo ??= await api.catalogo();
   const pronto = await verificarAmbiente();
   estado.pronto = pronto;
@@ -736,6 +920,12 @@ async function oferecerFilaInterrompida() {
 function ligar() {
   renderEstilosUmaVez();
   ligarTranscode();
+  $('#chat-modelo').onchange = async (e) => {
+    estado.config = await api.salvarConfig({ modeloClaude: e.target.value });
+    preencherModelos();
+  };
+  $('#btn-sel-referencia').onclick = async () => adicionarReferencias(await api.escolher({ tipo: 'referencia', multiplos: true }));
+  areaDeSoltar($('#drop-referencia'), adicionarReferencias);
   $('#btn-novo').onclick = novoVideo;
   $('#btn-config').onclick = abrirConfig;
   $('#pill-claude').onclick = () => (estado.ambiente?.claude.conectado ? abrirConfig() : entrarClaude());

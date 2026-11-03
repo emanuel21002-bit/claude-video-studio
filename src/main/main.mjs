@@ -16,9 +16,12 @@ import { conversar, cancelar, primeiraMensagem, claudeExe } from './agente.mjs';
 import { rodar } from './proc.mjs';
 import { abrirNoFilmcraft, trazerDoFilmcraft, filmcraftDisponivel } from './filmcraft.mjs';
 import { encoderGpu, infoVideo, transcodificar } from './transcodificar.mjs';
+import { codificadoresDisponiveis } from './codificadores.mjs';
 import { lerTimeline, gravarTimeline, gerarLegendas, prepararPrevia, midiaDoArquivo, importarParaProjeto } from './timeline.mjs';
 
 const aqui = path.dirname(fileURLToPath(import.meta.url));
+// O nome do app mudou, mas as configurações, a chave de API e os estilos continuam na pasta de antes.
+app.setPath('userData', path.join(app.getPath('appData'), 'claude-video-studio'));
 usarBinariosEmbutidos();
 let janela;
 const rendersManuais = new Map(); // id -> AbortController
@@ -34,7 +37,7 @@ function criarJanela() {
     minWidth: 1100,
     minHeight: 700,
     backgroundColor: '#0f1013',
-    title: 'Claude Video Studio',
+    title: 'Editor Jaborizador da Silva',
     icon: path.join(aqui, '..', '..', 'build', 'icon.png'),
     autoHideMenuBar: true,
     webPreferences: {
@@ -140,6 +143,7 @@ ipcMain.handle('escolher', async (_e, { tipo, multiplos }) => {
     materiais: [{ name: 'Vídeos, imagens e áudios', extensions: ['mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'mp3', 'wav', 'm4a'] }],
     narracao: [{ name: 'Áudio', extensions: ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac'] }],
     videos: [{ name: 'Vídeos', extensions: ['mp4', 'mov', 'mkv', 'm4v', 'hevc', 'webm', 'avi'] }],
+    referencia: [{ name: 'Vídeos e imagens', extensions: ['mp4', 'mov', 'mkv', 'm4v', 'hevc', 'webm', 'avi', 'png', 'jpg', 'jpeg', 'webp'] }],
   }[tipo];
   const r = await dialog.showOpenDialog(janela, {
     properties: multiplos ? ['openFile', 'multiSelections'] : ['openFile'],
@@ -251,6 +255,8 @@ ipcMain.handle('projeto:criar', async (_e, dados) => {
   const narracoes = dados.narracoes?.length ? dados.narracoes : [null];
   const convertidos = new Map();
   const criados = [];
+  // Os vídeos de um lote são timelines da mesma pasta.
+  const grupo = narracoes.length > 1 ? { id: `g${Date.now().toString(36)}`, nome: dados.nome || `Projeto ${new Date().toLocaleDateString('pt-BR')}` } : null;
   for (const [n, narr] of narracoes.entries()) {
     const total = narracoes.length;
     if (total > 1) log(`Preparando o vídeo ${n + 1} de ${total}…`);
@@ -260,6 +266,7 @@ ipcMain.handle('projeto:criar', async (_e, dados) => {
         nome: total > 1 ? [dados.nome, narr.nome].filter(Boolean).join(' — ') : dados.nome,
         narracao: narr?.arquivos ?? null,
         lote: total > 1 ? { indice: n + 1, total } : null,
+        grupo,
         convertidos,
       },
       log,
@@ -342,7 +349,9 @@ ipcMain.handle('transcode:pasta', async () => {
   return r.canceled ? null : r.filePaths[0];
 });
 
-ipcMain.handle('transcode:iniciar', async (_e, { arquivos, formato, modo, pastaSaida }) => {
+ipcMain.handle('transcode:codificadores', () => codificadoresDisponiveis());
+
+ipcMain.handle('transcode:iniciar', async (_e, { arquivos, formato, modo, pastaSaida, codificador, qualidade, velocidade, audio }) => {
   conversaoAtual = new AbortController();
   const sinal = conversaoAtual.signal;
   // Os eventos só mostram o andamento; o estado final de cada arquivo volta no retorno,
@@ -352,7 +361,7 @@ ipcMain.handle('transcode:iniciar', async (_e, { arquivos, formato, modo, pastaS
     if (sinal.aborted) break;
     enviar('transcode', { indice: i, status: 'convertendo', progresso: 0 });
     try {
-      const r = await transcodificar(arquivos[i], { formato, modo, pastaSaida }, (p) =>
+      const r = await transcodificar(arquivos[i], { formato, modo, pastaSaida, codificador, qualidade, velocidade, audio }, (p) =>
         enviar('transcode', { indice: i, status: 'convertendo', progresso: p }),
         sinal,
       );

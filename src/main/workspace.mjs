@@ -236,10 +236,36 @@ export function gravarProjeto(p) {
   return p;
 }
 
+// Cada projeto (uma timeline) pertence a uma pasta: { grupo: { id, nome } }. Os vídeos de um lote dividem a pasta;
+// um vídeo avulso tem a pasta só para ele. Projetos antigos, sem `grupo`, são agrupados aqui uma vez e gravados.
+function migrarGrupos(lista) {
+  const abertos = new Map(); // chave do lote -> { grupo, proximo }
+  for (const p of [...lista].filter((x) => !x.grupo).sort((a, b) => a.criadoEm.localeCompare(b.criadoEm))) {
+    let grupo;
+    if (p.lote) {
+      const prefixo = p.nome.includes(' — ') ? p.nome.split(' — ')[0] : p.nome;
+      const chave = `${prefixo}|${p.lote.total}`;
+      const aberto = abertos.get(chave);
+      if (aberto && aberto.proximo === p.lote.indice) {
+        grupo = aberto.grupo;
+        aberto.proximo++;
+      } else {
+        grupo = { id: p.id, nome: prefixo };
+        abertos.set(chave, { grupo, proximo: p.lote.indice + 1 });
+      }
+    } else {
+      grupo = { id: p.id, nome: p.nome };
+    }
+    p.grupo = grupo;
+    gravarProjeto(p);
+  }
+  return lista;
+}
+
 export function listarProjetos() {
   const { projetos } = dirs();
   if (!fs.existsSync(projetos)) return [];
-  return fs
+  const lista = fs
     .readdirSync(projetos)
     .filter((id) => fs.existsSync(path.join(projetos, id, 'projeto.json')))
     .map((id) => {
@@ -249,11 +275,15 @@ export function listarProjetos() {
         return null;
       }
     })
-    .filter(Boolean)
-    .sort((a, b) => b.criadoEm.localeCompare(a.criadoEm));
+    .filter(Boolean);
+  return migrarGrupos(lista).sort((a, b) => b.criadoEm.localeCompare(a.criadoEm));
 }
 
-// Copia um arquivo para assets/. H.265 não decodifica de forma confiável no Chrome dos renders: entra já em H.264.
+// Codecs que o Chrome dos renders decodifica bem; qualquer outro (H.265, ProRes, MPEG-2…) entra convertido.
+const CODECS_DO_CHROME = ['h264', 'vp8', 'vp9', 'av1'];
+
+// Copia um arquivo para assets/. O que o Chrome dos renders não decodifica de forma confiável (H.265 etc.) entra já em H.264,
+// pelo conversor do app (ffmpeg direto, sem passar pelo Claude).
 // "convertidos" guarda as conversões de um lote: o mesmo material não é convertido uma vez por vídeo.
 export async function importarMaterial(origem, assets, usados, onLinha, convertidos) {
   const tipo = tipoDe(origem);
@@ -263,10 +293,11 @@ export async function importarMaterial(origem, assets, usados, onLinha, converti
     trazerArquivo(convertidos.get(origem), path.join(assets, arquivo));
     return { arquivo, original: origem, tipo, convertidoDe: 'hevc', ...(await sondarCompleto(path.join(assets, arquivo))) };
   }
-  if (tipo === 'video' && (await infoVideo(origem)).codec === 'hevc') {
+  const codec = tipo === 'video' ? (await infoVideo(origem)).codec : null;
+  if (codec && !CODECS_DO_CHROME.includes(codec)) {
     const arquivo = nomeSeguro(path.basename(origem, path.extname(origem)) + '.mp4', usados);
     convertidos?.set(origem, path.join(assets, arquivo));
-    onLinha?.(`Convertendo ${path.basename(origem)} de H.265 para H.264…`);
+    onLinha?.(`Convertendo ${path.basename(origem)} (${codec === 'hevc' ? 'H.265' : codec}) para H.264…`);
     await transcodificar(origem, { formato: 'mp4', modo: carregar().renderModo, saida: path.join(assets, arquivo) }, (p) =>
       onLinha?.(`Convertendo ${path.basename(origem)}… ${Math.round(p * 100)}%`),
     );
@@ -329,7 +360,7 @@ async function unirAudios(arquivos, saida) {
   ]);
 }
 
-export async function criarProjeto({ nome, materiais, pastas, narracao, duracaoMotion, estiloId, estiloTexto, engine, formato, lote, convertidos }, onLinha) {
+export async function criarProjeto({ nome, materiais, pastas, narracao, duracaoMotion, estiloId, estiloTexto, engine, formato, lote, grupo, referencias: refs, convertidos }, onLinha) {
   const agora = new Date();
   const slug = (nome || 'video')
     .normalize('NFD')
@@ -364,6 +395,22 @@ export async function criarProjeto({ nome, materiais, pastas, narracao, duracaoM
     narr = { arquivo, original: narracao[0], partes: narracao, ...(await sondarCompleto(destino)) };
   }
 
+  // Referências ficam fora de assets/: servem para o Claude estudar o estilo, não entram como material do vídeo.
+  const referencias = [];
+  if (refs?.length) {
+    const pastaRef = path.join(dir, 'referencia');
+    fs.mkdirSync(pastaRef, { recursive: true });
+    const usadosRef = new Set();
+    for (const origem of refs) {
+      const tipo = tipoDe(origem);
+      if (tipo !== 'video' && tipo !== 'imagem') continue;
+      onLinha?.(`Guardando a referência ${path.basename(origem)}…`);
+      const arquivo = nomeSeguro(path.basename(origem), usadosRef);
+      trazerArquivo(origem, path.join(pastaRef, arquivo));
+      referencias.push({ arquivo, original: origem, tipo, ...(await sondarCompleto(origem)) });
+    }
+  }
+
   const estilos = todosEstilos();
   const estilo = estilos.find((e) => e.id === estiloId) ?? estilos.at(-1);
   const projeto = {
@@ -380,9 +427,11 @@ export async function criarProjeto({ nome, materiais, pastas, narracao, duracaoM
     estiloNome: estilo.nome,
     estiloTexto: estiloTexto ?? '',
     materiais: itens,
+    referencias,
     narracao: narr,
     duracaoMotion: duracaoMotion ?? null,
     lote: lote ?? null,
+    grupo: grupo ?? { id, nome: nome || 'Vídeo sem nome' },
     sessionId: null,
     renders: [],
     chat: [],
@@ -475,6 +524,19 @@ export function escreverBriefing(p, transcricao) {
     estilo?.instrucoes || '',
     p.estiloTexto ? `\n${p.duracaoMotion ? 'O que o usuário quer no vídeo' : 'Pedido do usuário sobre o estilo'}:\n\n> ${p.estiloTexto.replace(/\n/g, '\n> ')}` : '',
     '',
+    ...(p.referencias?.length
+      ? [
+          '## Material de referência',
+          '',
+          'O usuário enviou material de referência: faça este vídeo de forma parecida com ele. Onde a referência define algo (ritmo e duração dos cortes, tipo e posição das legendas, fontes, cores, transições, efeitos, zoom, enquadramento, abertura e fechamento), a referência vale mais que as instruções do estilo; no que ela não define, siga o estilo. Não copie o conteúdo dela (cenas, falas, marcas), só a linguagem de edição.',
+          'Estude com mcp__studio__ver_referencia (uma imagem com quadros, a duração e os instantes dos cortes, sem gastar leituras de arquivo). Não leia os arquivos de referencia/ direto.',
+          '',
+          '| arquivo | tipo | duração | resolução | áudio |',
+          '|---|---|---|---|---|',
+          ...p.referencias.map((r) => `| ${r.arquivo} | ${r.tipo} | ${r.tipo === 'imagem' ? '-' : fmt(r.duracao)} | ${r.largura ? `${r.largura}x${r.altura}` : '-'} | ${r.temAudio ? 'sim' : 'não'} |`),
+          '',
+        ]
+      : []),
     '## Materiais (em assets/)',
     '',
     '| arquivo | pasta | tipo | duração | resolução | áudio |',

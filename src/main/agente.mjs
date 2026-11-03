@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { carregar } from './settings.mjs';
 import { dirs, lerProjeto, gravarProjeto, hyperframesBin } from './workspace.mjs';
 import { renderizar } from './render.mjs';
-import { folhaDeQuadros, folhaDeMateriais, resumoTimeline, editarTimeline, resumirErro } from './ferramentas.mjs';
+import { folhaDeQuadros, folhaDeMateriais, folhaDeReferencia, resumoTimeline, editarTimeline, resumirErro } from './ferramentas.mjs';
 const imagem = (arquivo) => ({ type: 'image', data: fs.readFileSync(arquivo).toString('base64'), mimeType: 'image/jpeg' });
 import { salvarEstilo } from './presets.mjs';
 import { gerarLegendas } from './timeline.mjs';
@@ -65,7 +65,7 @@ estilo: fonte (Montserrat|Inter|Poppins|Roboto|Anton|Bebas Neue|Oswald|Playfair 
 function promptSistema(p) {
   const rel = `projetos/${p.id}`;
   return `
-Você está dentro do Claude Video Studio, um app de edição automática de vídeo. Você é o editor: monta, ajusta e exporta o vídeo do usuário.
+Você está dentro do Editor Jaborizador da Silva, um app de edição automática de vídeo. Você é o editor: monta, ajusta e exporta o vídeo do usuário.
 
 PROJETO ATUAL: ${rel}/  (trabalhe somente dentro desta pasta)
 - ${rel}/BRIEFING.md — materiais, narração transcrita com tempos e o estilo pedido. Leia primeiro.
@@ -78,9 +78,11 @@ FERRAMENTAS DO APP:
 - mcp__studio__renderizar — exporta o vídeo (o app escolhe GPU/CPU e MP4/MOV conforme o usuário).
 - mcp__studio__ver_quadros — devolve uma imagem com os momentos pedidos, em segundos, para conferir legenda, enquadramento e cortes.
 - mcp__studio__ver_materiais — devolve uma imagem com os materiais numerados e a lista deles.
+${p.referencias?.length ? '- mcp__studio__ver_referencia — estuda o material de referência que o usuário enviou: quadros com o segundo, duração e instantes dos cortes. Chame uma vez antes de montar (de novo só com momentos específicos) e reproduza a linguagem de edição dela (ritmo, legendas, transições, cores, efeitos), nunca o conteúdo. Ao salvar o estilo, inclua na receita o que aprendeu da referência.\n' : ''}
 ${p.timeline ? '- mcp__studio__resumo_timeline — a timeline sem as palavras das legendas; com ids, os itens completos.\n- mcp__studio__editar_timeline — altera, adiciona ou remove itens pelo id.\n' : ''}${p.timeline ? '- mcp__studio__gerar_legendas — cria a trilha de legendas a partir da transcrição, seguindo os pedaços de narração que estão na timeline.\n' : ''}- mcp__studio__salvar_estilo — guarda o estilo deste vídeo como preset reutilizável no app. Use quando o usuário pedir para salvar o estilo. Escreva as instruções como receita completa e concreta (fontes, tamanhos, posições, cores em hex, ritmo de cortes, transições, efeitos), para outro vídeo sair igual sem ver este código.
 
 ECONOMIA (cada imagem e cada arquivo lido é reenviado em todos os turnos; siga sempre):
+- Conversão de vídeo (codec, formato, compressão) não é com você: o app converte os materiais na importação e tem um conversor próprio. Nunca rode ffmpeg nem HandBrake; se um material não abrir, avise o usuário.
 - Veja os clipes com mcp__studio__ver_materiais, nunca extraindo quadros com ffmpeg nem lendo imagens soltas. Só peça clipes específicos para decidir um corte difícil.
 - Confira o vídeo com mcp__studio__ver_quadros, que lê direto da timeline sem renderizar. Peça no máximo 8 momentos por vez.
 - O render leva minutos e só roda uma vez: chame mcp__studio__renderizar só depois de conferir os quadros e corrigir tudo, ou quando o usuário pedir. Nunca renderize para conferir.
@@ -117,6 +119,7 @@ function resumoFerramenta(nome, input = {}) {
   if (nome === 'mcp__studio__renderizar') return 'Renderizando o vídeo';
   if (nome === 'mcp__studio__ver_quadros') return 'Conferindo quadros do vídeo';
   if (nome === 'mcp__studio__ver_materiais') return 'Vendo os materiais';
+  if (nome === 'mcp__studio__ver_referencia') return 'Estudando o material de referência';
   if (nome === 'mcp__studio__resumo_timeline') return 'Lendo a timeline';
   if (nome === 'mcp__studio__editar_timeline') return 'Editando a timeline';
   if (nome === 'mcp__studio__gerar_legendas') return 'Gerando as legendas';
@@ -175,6 +178,19 @@ export async function conversar(id, mensagem, onEvento) {
         async (args) => {
           try {
             const { saida, texto } = await folhaDeMateriais(id, args);
+            return { content: [imagem(saida), { type: 'text', text: texto }] };
+          } catch (e) {
+            return { content: [{ type: 'text', text: e.message }], isError: true };
+          }
+        },
+      ),
+      tool(
+        'ver_referencia',
+        'Estuda o material de referência do projeto: devolve uma imagem com quadros rotulados com o segundo e os dados medidos (duração, resolução, quantos cortes e em que instantes). Sem argumentos, mostra a primeira referência com quadros espaçados; com momentos (em segundos), mostra esses instantes.',
+        { arquivo: z.string().optional(), momentos: z.array(z.number().min(0)).max(12).optional() },
+        async (args) => {
+          try {
+            const { saida, texto } = await folhaDeReferencia(id, args);
             return { content: [imagem(saida), { type: 'text', text: texto }] };
           } catch (e) {
             return { content: [{ type: 'text', text: e.message }], isError: true };
@@ -255,16 +271,19 @@ export async function conversar(id, mensagem, onEvento) {
   if (s.apiKey) env.ANTHROPIC_API_KEY = s.apiKey;
 
   // O render pelo CLI passa por fora da fila, do cache e da lista do app.
+  const negar = (motivo) => ({
+    hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: motivo },
+  });
   const barrarRenderPorFora = async (entrada) => {
     const comando = String(entrada.tool_input?.command ?? '');
-    if (!/remotion[^\n]*\brender\b|hyperframes[^\n]*\brender\b/i.test(comando)) return {};
-    return {
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        permissionDecision: 'deny',
-        permissionDecisionReason: 'Use mcp__studio__renderizar: render por Bash não entra na fila nem na lista do app. Para conferir, use mcp__studio__ver_quadros.',
-      },
-    };
+    if (/remotion[^\n]*\brender\b|hyperframes[^\n]*\brender\b/i.test(comando)) {
+      return negar('Use mcp__studio__renderizar: render por Bash não entra na fila nem na lista do app. Para conferir, use mcp__studio__ver_quadros.');
+    }
+    // A conversão de materiais é do conversor do app (ffmpeg direto, sem gastar tokens): o Claude não converte por conta própria.
+    if (/(^|[\s;&|"'\\/])ffmpeg(\.exe)?(\s|"|'|$)|\bHandBrakeCLI\b/i.test(comando)) {
+      return negar('Não converta nem processe vídeos com ffmpeg: o app já converte os materiais na importação (H.265 vira H.264) e tem o conversor próprio. Se um material não abre, diga isso ao usuário em vez de convertê-lo.');
+    }
+    return {};
   };
 
   try {
@@ -284,7 +303,7 @@ export async function conversar(id, mensagem, onEvento) {
         permissionMode: 'dontAsk',
         allowedTools: [
           'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash', 'Skill',
-          'mcp__studio__renderizar', 'mcp__studio__ver_quadros', 'mcp__studio__ver_materiais', 'mcp__studio__resumo_timeline', 'mcp__studio__editar_timeline', 'mcp__studio__gerar_legendas', 'mcp__studio__salvar_estilo',
+          'mcp__studio__renderizar', 'mcp__studio__ver_quadros', 'mcp__studio__ver_materiais', 'mcp__studio__ver_referencia', 'mcp__studio__resumo_timeline', 'mcp__studio__editar_timeline', 'mcp__studio__gerar_legendas', 'mcp__studio__salvar_estilo',
         ],
         stderr: (d) => onEvento({ tipo: 'log', texto: d }),
       },

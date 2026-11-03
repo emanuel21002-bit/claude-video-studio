@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld('studio', {
   abrirFilmcraft: chamar('filmcraft:abrir'),
   trazerFilmcraft: chamar('filmcraft:trazer'),
   infoVideos: chamar('transcode:info'),
+  codificadores: chamar('transcode:codificadores'),
   pastaSaida: chamar('transcode:pasta'),
   transcodificar: chamar('transcode:iniciar'),
   cancelarTranscode: chamar('transcode:cancelar'),

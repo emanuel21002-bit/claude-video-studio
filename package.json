@@ -21,7 +21,7 @@
   "author": "Emanuel",
   "build": {
     "appId": "com.emanuel.claudevideostudio",
-    "productName": "Claude Video Studio",
+    "productName": "Editor Jaborizador da Silva",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -50,7 +50,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Claude Video Studio",
+      "shortcutName": "Editor Jaborizador da Silva",
       "artifactName": "Claude-Video-Studio-Setup-${version}.${ext}"
     },
     "portable": {

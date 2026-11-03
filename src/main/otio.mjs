@@ -330,7 +330,7 @@ export function paraOtio(t, projeto, { assets, camada } = {}) {
   return {
     otio: {
       OTIO_SCHEMA: 'Timeline.1',
-      name: projeto.nome ?? 'Claude Video Studio',
+      name: projeto.nome ?? 'Editor Jaborizador da Silva',
       global_start_time: null,
       metadata: { filmcraft: { settings: configuracao(t), start_timecode: 0, master_volume_db: 0, master_effects: [] } },
       tracks: { OTIO_SCHEMA: 'Stack.1', name: 'tracks', children: [...videos, ...audios], effects: [], markers: [], enabled: true, source_range: null, metadata: {} },

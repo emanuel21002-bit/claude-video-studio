@@ -6,12 +6,13 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self' file:; style-src 'self' 'unsafe-inline'; img-src 'self' file: data: blob:; media-src 'self' file: blob: data:; font-src 'self' file: data: https://fonts.gstatic.com; connect-src 'self' file: data: blob: https://fonts.gstatic.com"
     />
-    <title>Claude Video Studio</title>
+    <title>Editor Jaborizador da Silva</title>
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="previas-estilo.css" />
   </head>
   <body>
     <header class="topo">
-      <div class="marca"><span class="logo">▶</span> Claude Video Studio</div>
+      <div class="marca"><span class="logo">▶</span> Editor Jaborizador da Silva</div>
       <div class="topo-dir">
         <button id="pill-claude" class="pill" title="Status do Claude">Claude: verificando…</button>
         <button id="btn-config" class="icone" title="Configurações">⚙</button>
@@ -21,7 +22,7 @@
     <div class="corpo">
       <aside class="lateral">
         <button id="btn-novo" class="primario largo">+ Novo vídeo</button>
-        <button id="btn-transcode" class="largo ferramenta">⇄ Converter H.265 → H.264</button>
+        <button id="btn-transcode" class="largo ferramenta">⇄ Converter vídeos</button>
         <h3>Projetos</h3>
         <ul id="lista-projetos" class="lista-projetos"></ul>
       </aside>
@@ -97,6 +98,15 @@
                 <input id="duracao-motion" type="number" min="1" max="600" value="15" />
               </label>
             </div>
+            <div class="bloco" id="bloco-referencia">
+              <span>Material de referência (opcional)</span>
+              <p class="sub">Um vídeo ou imagem no jeito que você quer. O Claude estuda o ritmo dos cortes, as legendas, as cores e os efeitos e faz parecido com os seus materiais. Vale para qualquer estilo.</p>
+              <div id="drop-referencia" class="drop compacto">
+                <div class="drop-txt">Solte a referência aqui</div>
+                <div class="linha-botoes"><button type="button" id="btn-sel-referencia">Escolher referência</button></div>
+              </div>
+              <div id="lista-referencia" class="lista-referencia"></div>
+            </div>
             <label class="bloco"><span id="rotulo-detalhes">Detalhes do estilo (opcional)</span>
               <textarea id="texto-estilo" rows="4" placeholder="Ex.: legendas amarelas, cortes rápidos, terminar com o logo e o WhatsApp do cliente"></textarea>
             </label>
@@ -110,8 +120,8 @@
 
         <!-- Transcodificador -->
         <section id="v-transcode" class="vista">
-          <h1>Converter H.265 → H.264</h1>
-          <p class="sub">Para vídeos de celular (HEVC) abrirem em qualquer editor. Vídeos HDR saem convertidos para cores normais (SDR).</p>
+          <h1>Converter vídeos</h1>
+          <p class="sub">H.264, H.265, AV1 e outros, na CPU ou na placa de vídeo, como no HandBrake. Para vídeos de celular (HEVC) abrirem em qualquer editor, deixe em H.264. Vídeos HDR saem convertidos para cores normais (SDR).</p>
           <div id="drop-transcode" class="drop">
             <div class="drop-txt">Solte os vídeos aqui</div>
             <div class="linha-botoes"><button id="btn-sel-transcode">Selecionar vídeos</button></div>
@@ -121,13 +131,20 @@
               <div class="segmentado" id="seg-tc-formato">
                 <button data-v="mp4">MP4</button>
                 <button data-v="mov">MOV</button>
+                <button data-v="mkv">MKV</button>
               </div>
             </label>
-            <label>Codificar com
-              <div class="segmentado" id="seg-tc-modo">
-                <button data-v="gpu">GPU</button>
-                <button data-v="cpu">CPU (x264)</button>
-              </div>
+            <label>Codificador de vídeo
+              <select id="tc-codificador"></select>
+            </label>
+            <label><span id="tc-q-rotulo">Qualidade</span>
+              <input id="tc-qualidade" type="number" step="1" class="tc-numero" />
+            </label>
+            <label>Velocidade
+              <select id="tc-velocidade"></select>
+            </label>
+            <label>Áudio
+              <select id="tc-audio"></select>
             </label>
             <label>Salvar em
               <div class="linha-pasta">
@@ -154,6 +171,7 @@
               <div>
                 <h2 id="ed-nome"></h2>
                 <div id="ed-info" class="sub"></div>
+                <div id="ed-abas" class="abas-timeline-linha" hidden></div>
               </div>
               <div class="linha-botoes">
                 <div class="segmentado" id="seg-player" hidden>
@@ -201,7 +219,9 @@
           </div>
 
           <div class="painel-chat">
-            <div class="cab-chat">Claude <span id="chat-status" class="status-dot"></span></div>
+            <div class="cab-chat">Claude <span id="chat-status" class="status-dot"></span>
+              <select id="chat-modelo" class="chat-modelo" title="Modelo do Claude (vale a partir da próxima mensagem)"></select>
+            </div>
             <div id="mensagens" class="mensagens"></div>
             <form id="form-chat" class="form-chat">
               <div class="atalhos">
@@ -269,10 +289,7 @@
       <form method="dialog" class="form-config">
         <h2>Configurações</h2>
         <label>Modelo do Claude
-          <select id="cfg-modelo">
-            <option value="claude-opus-5-5">Claude Opus 5.5 (melhor qualidade)</option>
-            <option value="claude-sonnet-5-5">Claude Sonnet 5.5 (mais rápido)</option>
-          </select>
+          <select id="cfg-modelo"></select>
         </label>
         <label>Chave de API da Anthropic (opcional — se vazio, usa o login da sua conta Claude)
           <input id="cfg-apikey" type="password" placeholder="sk-ant-…" />
@@ -289,6 +306,7 @@
       </form>
     </dialog>
 
+    <script src="previas-estilo.js"></script>
     <script src="app.js"></script>
     <script src="timeline.js"></script>
   </body>

@@ -1,6 +1,8 @@
-# Claude Video Studio
+# Raio Jaborizador de videos
 
-App de desktop (Electron) que edita vídeos sozinho com o Claude, usando Remotion ou HyperFrames.
+**Editor Jaborizador da Silva** — app de desktop (Electron) que edita vídeos sozinho com o Claude, usando Remotion ou HyperFrames, com conversor de vídeo próprio (H.264, H.265, AV1 e outros, em CPU ou placa de vídeo).
+
+📖 **Primeira vez aqui? Siga o [GUIA.md](GUIA.md)**: tudo o que precisa ser instalado e o passo a passo de uso.
 
 1. **Materiais** — arraste vídeos, fotos, logo e trilha (ou selecione arquivos/pasta). O botão "Só motion" pula materiais e narração: o Claude cria tudo em animação a partir da descrição e da duração.
 2. **Narração** — solte as pastas ou os áudios; o Whisper transcreve com tempos por palavra. Cada narração vira um vídeo com os mesmos materiais, montados um de cada vez. Uma pasta é uma narração: os áudios dela são unidos na ordem dos nomes.

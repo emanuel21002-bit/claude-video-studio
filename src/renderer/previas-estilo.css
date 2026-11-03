@@ -1,0 +1,115 @@
+/* Prévias dos estilos: 8 s, tocam com o mouse sobre o card, sem som (previas-estilo.js) */
+.estilo { overflow: hidden; }
+.excluir-estilo { z-index: 2; }
+.previa { position: relative; height: 210px; margin: -14px -14px 12px; background: #08090b; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.previa-play { position: absolute; right: 8px; bottom: 8px; font-size: 10px; padding: 2px 8px; border-radius: 999px; background: rgba(0, 0, 0, 0.65); color: #fff; pointer-events: none; transition: opacity 0.2s; }
+.estilo:hover .previa-play, .estilo:focus-visible .previa-play { opacity: 0; }
+.previa .tela { position: relative; overflow: hidden; container-type: size; flex: none; }
+.previa .tela.h { width: 100%; aspect-ratio: 16 / 9; }
+.previa .tela.v { height: 100%; aspect-ratio: 9 / 16; }
+.previa .tela > * { position: absolute; }
+.previa .tela .fx { inset: 0; }
+.previa .tela i { font-style: normal; }
+
+/* Reels Estética */
+.p-est .fundoA { background: linear-gradient(160deg, #171a21, #394252 55%, #10131a); }
+.p-est .fundoB { background: linear-gradient(160deg, #2a2018, #c98a4b 55%, #2b1d12); opacity: 0; animation: p-est-b 8s infinite; }
+.p-est .reflexo { top: -20%; bottom: -20%; width: 30%; left: -40%; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.28), transparent); transform: skewX(-18deg); animation: p-reflexo 8s infinite linear; }
+.p-est .logo { top: 6cqw; right: 6cqw; width: 17cqw; height: 17cqw; border-radius: 50%; border: 0.6cqw solid #fff; opacity: 0.6; display: grid; place-items: center; font: 800 4cqw/1 Montserrat, sans-serif; color: #fff; }
+.p-est .leg { left: 0; right: 0; bottom: 24%; text-align: center; font: 800 11cqw/1.05 Montserrat, 'Segoe UI', sans-serif; color: #fff; text-shadow: 0 1cqw 2cqw rgba(0, 0, 0, 0.7); opacity: 0; }
+.p-est .l1 { animation: p-est-l1 8s infinite; }
+.p-est .l2 { animation: p-est-l2 8s infinite; }
+.p-est .l3 { animation: p-est-l3 8s infinite; }
+.p-est .selo { left: 33cqw; top: 22%; width: 34cqw; height: 34cqw; border-radius: 50%; background: #e11d2e; color: #fff; display: grid; place-items: center; font: 800 8.5cqw/1 Montserrat, sans-serif; box-shadow: 0 0 0 1cqw rgba(255, 255, 255, 0.25); transform: scale(0); animation: p-selo 8s infinite; }
+.p-est .leak { background: radial-gradient(circle at 20% 30%, #ff9a3c, transparent 55%), radial-gradient(circle at 80% 70%, #ff3c6e, transparent 55%); mix-blend-mode: screen; opacity: 0; animation: p-leak 8s infinite; }
+@keyframes p-est-b { 0%, 60% { opacity: 0; } 65%, 97% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes p-reflexo { 0% { left: -40%; } 55% { left: 120%; } 100% { left: 120%; } }
+@keyframes p-est-l1 { 0% { opacity: 0; transform: translateY(4cqw) scale(0.9); } 4%, 24% { opacity: 1; transform: none; } 28%, 100% { opacity: 0; } }
+@keyframes p-est-l2 { 0%, 32% { opacity: 0; transform: translateY(4cqw) scale(0.9); } 36%, 56% { opacity: 1; transform: none; } 60%, 100% { opacity: 0; } }
+@keyframes p-est-l3 { 0%, 70% { opacity: 0; transform: translateY(4cqw) scale(0.9); } 74%, 94% { opacity: 1; transform: none; } 98%, 100% { opacity: 0; } }
+@keyframes p-selo { 0%, 36% { transform: scale(0) rotate(-20deg); } 41% { transform: scale(1.2) rotate(-8deg); } 44%, 60% { transform: scale(1) rotate(-8deg); } 63%, 100% { transform: scale(0) rotate(-8deg); } }
+@keyframes p-leak { 0%, 58% { opacity: 0; transform: translateX(-30%); } 64% { opacity: 0.95; transform: none; } 70% { opacity: 0; transform: translateX(30%); } 94% { opacity: 0; } 98%, 100% { opacity: 0.95; } }
+
+/* YouTube Motion */
+.p-yt { background: #050607; font-family: Inter, 'Segoe UI', sans-serif; }
+.p-yt .fundo { background-image: linear-gradient(rgba(23, 184, 166, 0.09) 1px, transparent 1px), linear-gradient(90deg, rgba(23, 184, 166, 0.09) 1px, transparent 1px); background-size: 8cqw 8cqw; animation: p-yt-grade 8s linear infinite; }
+.p-yt .tag { left: 8cqw; top: 26%; font-weight: 600; font-size: 2.6cqw; letter-spacing: 0.3em; color: #17b8a6; opacity: 0; animation: p-yt-tag 8s infinite; }
+.p-yt .titulo { left: 8cqw; top: 36%; font-weight: 800; font-size: 9cqw; color: #fff; white-space: nowrap; clip-path: inset(0 100% 0 0); animation: p-yt-tit 8s infinite; }
+.p-yt .barra { left: 8cqw; top: 66%; width: 40cqw; height: 0.9cqw; background: #17b8a6; transform: scaleX(0); transform-origin: left; animation: p-yt-barra 8s infinite; }
+.p-yt .anel { left: 30cqw; top: 14%; width: 40cqw; height: 40cqw; border-radius: 50%; border: 0.7cqw solid #17b8a6; opacity: 0; animation: p-yt-b 8s infinite; }
+.p-yt .num { left: 0; right: 0; top: 31%; text-align: center; font-weight: 800; font-size: 13cqw; color: #fff; opacity: 0; animation: p-yt-b 8s infinite; }
+.p-yt .rot { left: 0; right: 0; top: 74%; text-align: center; font-weight: 500; font-size: 3.2cqw; letter-spacing: 0.2em; text-transform: uppercase; color: #17b8a6; opacity: 0; animation: p-yt-b 8s infinite; }
+@keyframes p-yt-grade { to { background-position: 8cqw 8cqw; } }
+@keyframes p-yt-tag { 0% { opacity: 0; transform: translateX(-3cqw); } 6%, 42% { opacity: 1; transform: none; } 46%, 100% { opacity: 0; } }
+@keyframes p-yt-tit { 0%, 3% { clip-path: inset(0 100% 0 0); } 14%, 42% { clip-path: inset(0 0 0 0); } 46%, 100% { clip-path: inset(0 0 0 100%); } }
+@keyframes p-yt-barra { 0%, 8% { transform: scaleX(0); } 20%, 42% { transform: scaleX(1); } 46%, 100% { transform: scaleX(0); } }
+@keyframes p-yt-b { 0%, 50% { opacity: 0; transform: scale(0.7); } 56% { opacity: 1; transform: scale(1.05); } 60%, 92% { opacity: 1; transform: scale(1); } 96%, 100% { opacity: 0; transform: scale(1); } }
+
+/* Reels Dinâmico */
+.p-din { background: #000; }
+.p-din .cena { inset: 0; opacity: 0; animation: p-corte 8s infinite; animation-delay: var(--d, 0s); }
+.p-din .c1 { background: linear-gradient(160deg, #1d2a3a, #4a6a8a); }
+.p-din .c2 { background: linear-gradient(160deg, #3a1d1d, #c4503a); }
+.p-din .c3 { background: linear-gradient(160deg, #1d3a2c, #4ac48a); }
+.p-din .c4 { background: linear-gradient(160deg, #2e1d3a, #a46ae0); }
+.p-din .forma { left: 14%; right: 14%; top: 36%; height: 20%; border-radius: 45% 45% 12% 12%; background: rgba(255, 255, 255, 0.2); }
+.p-din .pal { left: 0; right: 0; bottom: 22%; text-align: center; font: 800 12cqw/1 Montserrat, 'Segoe UI', sans-serif; color: #fff; -webkit-text-stroke: 1.6cqw #000; paint-order: stroke fill; opacity: 0; animation: p-pal 8s infinite; animation-delay: var(--d, 0s); }
+.p-din .pal i { color: #ffd400; }
+@keyframes p-corte { 0% { opacity: 1; transform: scale(1); } 24.5% { opacity: 1; transform: scale(1.1); } 25%, 100% { opacity: 0; transform: scale(1); } }
+@keyframes p-pal { 0% { opacity: 1; transform: scale(1.3); } 3% { transform: scale(1); } 12% { opacity: 1; } 12.5%, 100% { opacity: 0; } }
+
+/* Minimalista Clean */
+.p-min { font-family: Inter, 'Segoe UI', sans-serif; }
+.p-min .fundoA { background: linear-gradient(170deg, #efeee9, #d9d7d1); }
+.p-min .fundoB { background: linear-gradient(170deg, #e8e5de, #cdd2d3); opacity: 0; animation: p-min-b 8s infinite ease-in-out; }
+.p-min .forma { left: 22%; right: 22%; top: 30%; height: 26%; border: 0.35cqw solid rgba(0, 0, 0, 0.22); border-radius: 3cqw; animation: p-min-forma 8s infinite ease-in-out; }
+.p-min .num { left: 8cqw; top: 8cqw; font-weight: 300; font-size: 4cqw; letter-spacing: 0.25em; color: #555; }
+.p-min .leg { left: 0; right: 0; bottom: 19%; text-align: center; font-weight: 300; font-size: 6cqw; letter-spacing: 0.06em; color: #2b2b2b; opacity: 0; }
+.p-min .l1 { animation: p-min-l1 8s infinite; }
+.p-min .l2 { animation: p-min-l2 8s infinite; }
+.p-min .linha { left: 42cqw; width: 16cqw; bottom: 14%; height: 0.35cqw; background: #2b2b2b; transform: scaleX(0); animation: p-min-linha 8s infinite; }
+@keyframes p-min-b { 0%, 42% { opacity: 0; } 52%, 92% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes p-min-forma { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(3cqw); } }
+@keyframes p-min-l1 { 0%, 6% { opacity: 0; } 14%, 36% { opacity: 1; } 44%, 100% { opacity: 0; } }
+@keyframes p-min-l2 { 0%, 54% { opacity: 0; } 62%, 88% { opacity: 1; } 96%, 100% { opacity: 0; } }
+@keyframes p-min-linha { 0%, 8% { transform: scaleX(0); } 20%, 90% { transform: scaleX(1); } 98%, 100% { transform: scaleX(0); } }
+
+/* Documental / Cinematográfico */
+.p-cin { background: #000; font-family: Georgia, 'Times New Roman', serif; }
+.p-cin .cena { inset: -6%; background: radial-gradient(circle at 70% 40%, rgba(255, 200, 120, 0.55), transparent 42%), linear-gradient(120deg, #2b1a0c, #b8762c 50%, #2a1809); animation: p-kb 8s infinite ease-in-out; }
+.p-cin .vinheta { background: radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, 0.72)); }
+.p-cin .barra { left: 0; right: 0; height: 12.8%; background: #000; }
+.p-cin .barra.t { top: 0; animation: p-barra-t 8s infinite; }
+.p-cin .barra.b { bottom: 0; animation: p-barra-b 8s infinite; }
+.p-cin .cap { left: 0; right: 0; top: 33%; text-align: center; font-size: 2.2cqw; letter-spacing: 0.5em; color: rgba(255, 235, 200, 0.85); opacity: 0; animation: p-cin-t 8s infinite; }
+.p-cin .tit { left: 0; right: 0; top: 40%; text-align: center; font-style: italic; font-size: 9cqw; color: #fff3de; opacity: 0; animation: p-cin-t 8s infinite; }
+.p-cin .sub { left: 0; right: 0; bottom: 17%; text-align: center; font-style: italic; font-size: 2.6cqw; color: rgba(255, 243, 222, 0.9); opacity: 0; animation: p-cin-s 8s infinite; }
+.p-cin .fade { background: #000; animation: p-fade 8s infinite; }
+@keyframes p-kb { from { transform: scale(1); } to { transform: scale(1.14) translateX(-2%); } }
+@keyframes p-barra-t { 0% { transform: translateY(-100%); } 10%, 100% { transform: none; } }
+@keyframes p-barra-b { 0% { transform: translateY(100%); } 10%, 100% { transform: none; } }
+@keyframes p-cin-t { 0%, 14% { opacity: 0; transform: translateY(2cqw); } 24%, 58% { opacity: 1; transform: none; } 66%, 100% { opacity: 0; } }
+@keyframes p-cin-s { 0%, 66% { opacity: 0; } 74%, 92% { opacity: 1; } 96%, 100% { opacity: 0; } }
+@keyframes p-fade { 0% { opacity: 1; } 8% { opacity: 0; } 94% { opacity: 0; } 100% { opacity: 1; } }
+
+/* Prévia genérica (Personalizado e estilos salvos) */
+.p-gen .fundo { background: linear-gradient(135deg, #1f2027, #2b2d36, #3a2a25, #1f2027); background-size: 300% 300%; animation: p-gen-fundo 8s infinite linear; }
+.p-gen .bola { right: 12%; top: 12%; width: 22%; aspect-ratio: 1; border-radius: 50%; background: rgba(217, 119, 87, 0.5); animation: p-gen-bola 8s infinite ease-in-out; }
+.p-gen .caixa { left: 14%; right: 14%; bottom: 18%; height: 12%; border-radius: 1.5cqw; background: rgba(255, 255, 255, 0.14); animation: p-gen-caixa 8s infinite ease-in-out; }
+.p-gen .nome { left: 8%; right: 8%; top: 38%; text-align: center; font: 700 8cqw/1.15 'Segoe UI', sans-serif; color: #fff; opacity: 0; animation: p-gen-t 8s infinite; }
+@keyframes p-gen-fundo { to { background-position: 100% 100%; } }
+@keyframes p-gen-bola { 0%, 100% { transform: scale(0.8); } 50% { transform: scale(1.2); } }
+@keyframes p-gen-caixa { 0%, 100% { transform: scaleX(0.7); } 50% { transform: scaleX(1); } }
+@keyframes p-gen-t { 0%, 10% { opacity: 0; transform: translateY(2cqw); } 20%, 80% { opacity: 1; transform: none; } 90%, 100% { opacity: 0; } }
+
+/* Material de referência */
+#bloco-referencia { margin-top: 16px; }
+#bloco-referencia > span { display: block; margin-bottom: 2px; }
+#bloco-referencia .sub { margin: 0 0 8px; }
+.drop.compacto { padding: 12px; display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+.lista-referencia { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chip-referencia { display: flex; align-items: center; gap: 6px; padding: 3px 4px 3px 10px; border: 1px solid var(--borda); border-radius: 999px; background: var(--painel); font-size: 12px; max-width: 100%; }
+.chip-referencia span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 280px; }
+.chip-referencia button { border: 0; background: none; color: var(--fraco); font-size: 16px; line-height: 1; padding: 0 6px; cursor: pointer; }
+.chip-referencia button:hover { color: var(--erro); }
+
