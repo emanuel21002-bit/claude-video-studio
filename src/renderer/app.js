@@ -17,6 +17,7 @@ const estado = {
   trabalhando: new Set(),
   naFila: new Set(),
   referencias: [],
+  audiosInstrucao: [],
 };
 
 const urlArquivo = (p) => 'file:///' + encodeURI(p.replace(/\\/g, '/')).replace(/#/g, '%23');
@@ -251,7 +252,9 @@ function novoVideo() {
   estado.pastas = {};
   estado.narracoes = [];
   estado.referencias = [];
+  estado.audiosInstrucao = [];
   renderReferencias();
+  renderAudioInstrucao();
   estado.semNarracao = false;
   estado.soMotion = false;
   $('#campo-duracao').hidden = true;
@@ -394,6 +397,30 @@ function renderReferencias() {
   });
 }
 
+const EXT_AUDIO = /\.(mp3|wav|m4a|aac|ogg|flac|opus)$/i;
+
+function adicionarAudiosInstrucao(caminhos) {
+  for (const c of caminhos.filter((x) => EXT_AUDIO.test(x))) if (!estado.audiosInstrucao.includes(c)) estado.audiosInstrucao.push(c);
+  renderAudioInstrucao();
+}
+
+function renderAudioInstrucao() {
+  const el = $('#lista-audio-instrucao');
+  el.innerHTML = '';
+  estado.audiosInstrucao.forEach((c, i) => {
+    const d = document.createElement('div');
+    d.className = 'chip-referencia';
+    d.innerHTML = '<span></span><button type="button" title="Remover">×</button>';
+    d.querySelector('span').textContent = nomeArquivo(c);
+    d.title = c;
+    d.querySelector('button').onclick = () => {
+      estado.audiosInstrucao.splice(i, 1);
+      renderAudioInstrucao();
+    };
+    el.append(d);
+  });
+}
+
 function atualizarBotaoCriar() {
   const n = estado.soMotion || estado.semNarracao ? 1 : estado.narracoes.length;
   $('#btn-criar').textContent = n > 1 ? `Criar ${n} vídeos com o Claude` : 'Criar vídeo com o Claude';
@@ -479,6 +506,7 @@ async function criar() {
       materiais: estado.soMotion ? [] : estado.materiais,
       pastas: estado.pastas,
       referencias: estado.referencias,
+      audiosInstrucao: estado.audiosInstrucao,
       narracoes: estado.soMotion || estado.semNarracao ? [] : estado.narracoes.map((n) => ({ nome: n.nome, arquivos: n.arquivos })),
       duracaoMotion: estado.soMotion ? Math.max(1, Math.min(600, Number($('#duracao-motion').value) || 15)) : null,
       estiloId: estado.estiloId,
@@ -928,6 +956,14 @@ function ligar() {
   }
   $('#btn-sel-referencia').onclick = async () => adicionarReferencias(await api.escolher({ tipo: 'referencia', multiplos: true }));
   areaDeSoltar($('#drop-referencia'), adicionarReferencias);
+  $('#btn-sel-audio-instrucao').onclick = async () => adicionarAudiosInstrucao(await api.escolher({ tipo: 'audioInstrucao', multiplos: true }));
+  areaDeSoltar($('#drop-audio-instrucao'), adicionarAudiosInstrucao);
+  $('#btn-pular-narracao').onclick = () => {
+    estado.semNarracao = true;
+    $('#sem-narracao').checked = true;
+    renderNarracao();
+    irPasso(3);
+  };
   $('#btn-novo').onclick = novoVideo;
   $('#btn-config').onclick = abrirConfig;
   $('#pill-claude').onclick = () => (estado.ambiente?.claude.conectado ? abrirConfig() : entrarClaude());

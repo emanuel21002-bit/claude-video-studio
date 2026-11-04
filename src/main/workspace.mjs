@@ -360,7 +360,7 @@ async function unirAudios(arquivos, saida) {
   ]);
 }
 
-export async function criarProjeto({ nome, materiais, pastas, narracao, duracaoMotion, estiloId, estiloTexto, engine, formato, lote, grupo, referencias: refs, convertidos }, onLinha) {
+export async function criarProjeto({ nome, materiais, pastas, narracao, duracaoMotion, estiloId, estiloTexto, engine, formato, lote, grupo, referencias: refs, audiosInstrucao: audios, convertidos }, onLinha) {
   const agora = new Date();
   const slug = (nome || 'video')
     .normalize('NFD')
@@ -411,6 +411,20 @@ export async function criarProjeto({ nome, materiais, pastas, narracao, duracaoM
     }
   }
 
+  // Áudios em que o usuário explica o que fazer no vídeo; ficam fora de assets/ e não entram no vídeo.
+  const audiosInstrucao = [];
+  if (audios?.length) {
+    const pastaInstr = path.join(dir, 'instrucoes');
+    fs.mkdirSync(pastaInstr, { recursive: true });
+    const usadosInstr = new Set();
+    for (const origem of audios) {
+      onLinha?.(`Guardando o áudio de referência ${path.basename(origem)}…`);
+      const arquivo = nomeSeguro(path.basename(origem), usadosInstr);
+      trazerArquivo(origem, path.join(pastaInstr, arquivo));
+      audiosInstrucao.push({ arquivo, original: origem });
+    }
+  }
+
   const estilos = todosEstilos();
   const estilo = estilos.find((e) => e.id === estiloId) ?? estilos.at(-1);
   const projeto = {
@@ -428,6 +442,7 @@ export async function criarProjeto({ nome, materiais, pastas, narracao, duracaoM
     estiloTexto: estiloTexto ?? '',
     materiais: itens,
     referencias,
+    audiosInstrucao,
     narracao: narr,
     duracaoMotion: duracaoMotion ?? null,
     lote: lote ?? null,
@@ -508,7 +523,7 @@ function scaffold(p) {
 
 const fmt = (s) => (s == null ? '?' : `${Number(s).toFixed(2)}s`);
 
-export function escreverBriefing(p, transcricao) {
+export function escreverBriefing(p, transcricao, instrucoes = []) {
   const estilo = todosEstilos().find((e) => e.id === p.estiloId);
   const linhas = [
     `# Briefing — ${p.nome}`,
@@ -524,6 +539,15 @@ export function escreverBriefing(p, transcricao) {
     estilo?.instrucoes || '',
     p.estiloTexto ? `\n${p.duracaoMotion ? 'O que o usuário quer no vídeo' : 'Pedido do usuário sobre o estilo'}:\n\n> ${p.estiloTexto.replace(/\n/g, '\n> ')}` : '',
     '',
+    ...(instrucoes.length
+      ? [
+          '## Instruções do usuário por áudio',
+          '',
+          'O usuário gravou um áudio explicando o que fazer neste vídeo. A transcrição abaixo é o pedido dele: siga-a, com prioridade sobre o texto do estilo quando houver conflito.',
+          '',
+          ...instrucoes.map((i) => (i.texto ? `> ${i.texto.replace(/\n/g, '\n> ')}\n` : `(Não foi possível transcrever ${i.arquivo}: o Whisper não está disponível ou falhou. Avise o usuário.)\n`)),
+        ]
+      : []),
     ...(p.referencias?.length
       ? [
           '## Material de referência',

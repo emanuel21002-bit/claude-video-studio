@@ -72,10 +72,13 @@
               </div>
             </div>
             <div id="narracao-escolhida" class="narracao-escolhida"></div>
-            <label class="check"><input type="checkbox" id="sem-narracao" /> Este vídeo não tem narração</label>
+            <label class="check"><input type="checkbox" id="sem-narracao" /> Pular a narração: o próprio vídeo já é narrado (ou não tem narração)</label>
             <div class="rodape-passo">
               <button data-ir="1">← Voltar</button>
-              <button class="primario" data-ir="3" id="btn-ir-3" disabled>Próximo →</button>
+              <div class="linha-botoes">
+                <button id="btn-pular-narracao" title="Segue sem narração separada, por exemplo quando o vídeo já vem narrado">Pular narração →</button>
+                <button class="primario" data-ir="3" id="btn-ir-3" disabled>Próximo →</button>
+              </div>
             </div>
           </div>
 
@@ -109,6 +112,15 @@
                 <div class="linha-botoes"><button type="button" id="btn-sel-referencia">Escolher referência</button></div>
               </div>
               <div id="lista-referencia" class="lista-referencia"></div>
+            </div>
+            <div class="bloco" id="bloco-audio-instrucao">
+              <span>Áudio de referência (opcional)</span>
+              <p class="sub">Grave ou envie um áudio explicando o que o Claude tem que fazer neste vídeo. Ele é transcrito e vira instrução do pedido.</p>
+              <div id="drop-audio-instrucao" class="drop compacto">
+                <div class="drop-txt">Solte o áudio explicativo aqui</div>
+                <div class="linha-botoes"><button type="button" id="btn-sel-audio-instrucao">Escolher áudio</button></div>
+              </div>
+              <div id="lista-audio-instrucao" class="lista-referencia"></div>
             </div>
             <label class="bloco"><span id="rotulo-detalhes">Detalhes do estilo (opcional)</span>
               <textarea id="texto-estilo" rows="4" placeholder="Ex.: legendas amarelas, cortes rápidos, terminar com o logo e o WhatsApp do cliente"></textarea>

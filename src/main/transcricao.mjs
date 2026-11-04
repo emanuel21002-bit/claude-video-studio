@@ -19,9 +19,16 @@ export function whisperDisponivel() {
 // Transcreve a narração do projeto com whisper.cpp e grava transcricao.json
 // { segmentos: [{inicio, fim, texto}], palavras: [{inicio, fim, texto}] } em segundos.
 export async function transcrever(projeto, onLinha) {
-  const s = carregar();
   const dir = caminhoProjeto(projeto.id);
-  const entrada = path.join(dir, 'assets', projeto.narracao.arquivo);
+  const resultado = await transcreverArquivo(path.join(dir, 'assets', projeto.narracao.arquivo), onLinha);
+  fs.writeFileSync(path.join(dir, 'transcricao.json'), JSON.stringify(resultado, null, 2));
+  onLinha?.(`Transcrição pronta: ${resultado.segmentos.length} frases.`);
+  return resultado;
+}
+
+// Transcreve qualquer áudio/vídeo e devolve { segmentos, palavras } sem gravar nada.
+export async function transcreverArquivo(entrada, onLinha) {
+  const s = carregar();
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cvs-whisper-'));
   const wav = path.join(tmp, 'narracao.wav');
   const base = path.join(tmp, 'saida');
@@ -70,9 +77,6 @@ export async function transcrever(projeto, onLinha) {
       }
     }
   }
-  const resultado = { segmentos, palavras: palavras.filter((p) => p.texto) };
-  fs.writeFileSync(path.join(dir, 'transcricao.json'), JSON.stringify(resultado, null, 2));
   fs.rmSync(tmp, { recursive: true, force: true });
-  onLinha?.(`Transcrição pronta: ${segmentos.length} frases.`);
-  return resultado;
+  return { segmentos, palavras: palavras.filter((p) => p.texto) };
 }

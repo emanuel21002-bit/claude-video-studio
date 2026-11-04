@@ -10,7 +10,7 @@ import { listarMateriais,
   workspacePronto, prepararWorkspace, criarProjeto, listarProjetos, lerProjeto, gravarProjeto,
   escreverBriefing, caminhoProjeto, tipoDe, resolverNarracoes,
 } from './workspace.mjs';
-import { whisperDisponivel, transcrever } from './transcricao.mjs';
+import { whisperDisponivel, transcrever, transcreverArquivo } from './transcricao.mjs';
 import { renderizar } from './render.mjs';
 import { conversar, cancelar, primeiraMensagem, claudeExe } from './agente.mjs';
 import { rodar } from './proc.mjs';
@@ -143,6 +143,7 @@ ipcMain.handle('escolher', async (_e, { tipo, multiplos }) => {
     materiais: [{ name: 'Vídeos, imagens e áudios', extensions: ['mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'mp3', 'wav', 'm4a'] }],
     narracao: [{ name: 'Áudio', extensions: ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac'] }],
     videos: [{ name: 'Vídeos', extensions: ['mp4', 'mov', 'mkv', 'm4v', 'hevc', 'webm', 'avi'] }],
+    audioInstrucao: [{ name: 'Áudio', extensions: ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac', 'opus'] }],
     referencia: [{ name: 'Vídeos e imagens', extensions: ['mp4', 'mov', 'mkv', 'm4v', 'hevc', 'webm', 'avi', 'png', 'jpg', 'jpeg', 'webp'] }],
   }[tipo];
   const r = await dialog.showOpenDialog(janela, {
@@ -236,7 +237,22 @@ async function montarProjeto(id) {
       enviar('agente', { id, tipo: 'erro', texto: 'Não consegui transcrever: ' + e.message.split('\n')[0] });
     }
   }
-  escreverBriefing(projeto, transcricao);
+  // Áudios de instrução: transcritos aqui e entregues ao Claude como pedido do usuário.
+  const instrucoes = [];
+  for (const a of projeto.audiosInstrucao ?? []) {
+    if (!whisperDisponivel()) {
+      instrucoes.push({ arquivo: a.arquivo, texto: null });
+      continue;
+    }
+    try {
+      const r = await transcreverArquivo(path.join(caminhoProjeto(id), 'instrucoes', a.arquivo), (l) => enviar('agente', { id, tipo: 'preparo', texto: 'Áudio de referência: ' + l }));
+      instrucoes.push({ arquivo: a.arquivo, texto: r.segmentos.map((s) => s.texto).join(' ') });
+    } catch (e) {
+      instrucoes.push({ arquivo: a.arquivo, texto: null });
+      enviar('agente', { id, tipo: 'erro', texto: 'Não consegui transcrever o áudio de referência: ' + e.message.split('\n')[0] });
+    }
+  }
+  escreverBriefing(projeto, transcricao, instrucoes);
   preparando = null;
   if (desistidos.delete(id)) {
     enviar('agente', { id, tipo: 'parado' });
