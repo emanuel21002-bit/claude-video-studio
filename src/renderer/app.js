@@ -746,7 +746,7 @@ async function enviarChat(ev) {
 
 // ---------- transcodificador ----------
 
-const tc = { itens: [], formato: 'mp4', codificador: null, qualidade: null, velocidade: 1, audio: 'aac', pasta: null, rodando: false };
+const tc = { itens: [], formato: 'mp4', codificador: null, qualidade: null, velocidade: 1, audio: 'aac', resolucao: '', ajuste: 'barras', pasta: null, rodando: false };
 
 const codificadorAtual = () => tc.catalogo?.video.find((c) => c.id === tc.codificador);
 
@@ -868,6 +868,8 @@ async function iniciarTranscode() {
     qualidade: tc.qualidade,
     velocidade: tc.velocidade,
     audio: tc.audio,
+    resolucao: tc.resolucao || null,
+    ajuste: tc.ajuste,
     pastaSaida: tc.pasta,
   });
   fila.forEach((i, n) => Object.assign(i, resultados[n], { naFila: false }));
@@ -891,6 +893,8 @@ function ligarTranscode() {
   };
   $('#tc-velocidade').onchange = (e) => (tc.velocidade = Number(e.target.value));
   $('#tc-audio').onchange = (e) => (tc.audio = e.target.value);
+  $('#tc-resolucao').onchange = (e) => (tc.resolucao = e.target.value);
+  $('#tc-ajuste').onchange = (e) => (tc.ajuste = e.target.value);
   $('#btn-tc-iniciar').onclick = iniciarTranscode;
   $('#btn-tc-cancelar').onclick = () => api.cancelarTranscode();
   $('#btn-tc-limpar').onclick = () => {

@@ -75,6 +75,28 @@ const TONEMAP =
 const TONEMAP_GPU =
   'libplacebo=tonemapping=bt.2390:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:format=yuv420p';
 
+// Resoluções de saída (largura x altura). Sem ela, o vídeo mantém o tamanho do original.
+export const RESOLUCOES = {
+  '1080x1920': [1080, 1920],
+  '720x1280': [720, 1280],
+  '2160x3840': [2160, 3840],
+  '1920x1080': [1920, 1080],
+  '1280x720': [1280, 720],
+  '3840x2160': [3840, 2160],
+  '1080x1080': [1080, 1080],
+  '1080x1350': [1080, 1350],
+};
+
+// "barras": cabe inteiro e completa com preto; "preencher": ocupa o quadro todo e corta o que sobra.
+function filtroResolucao(resolucao, ajuste) {
+  const r = RESOLUCOES[resolucao];
+  if (!r) return '';
+  const [w, h] = r;
+  return ajuste === 'preencher'
+    ? `,scale=${w}:${h}:force_original_aspect_ratio=increase:flags=lanczos,crop=${w}:${h},setsar=1`
+    : `,scale=${w}:${h}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black,setsar=1`;
+}
+
 export function nomeSaida(entrada, formato, pastaSaida, sufixo = 'h264') {
   const base = path.basename(entrada, path.extname(entrada));
   return path.join(pastaSaida || path.dirname(entrada), `${base}_${sufixo}.${formato}`);
@@ -83,7 +105,8 @@ export function nomeSaida(entrada, formato, pastaSaida, sufixo = 'h264') {
 // Converte para 8-bit (yuv420p). Sem `codificador` é o caminho de sempre: H.264 em MP4 ou MOV, modo 'gpu' (NVENC ou AMF)
 // ou 'cpu' (libx264). Com `codificador` (id de CODIFICADORES) vale a escolha do conversor: codec, qualidade (RF),
 // velocidade (0 a 2) e áudio (id de AUDIO).
-export async function transcodificar(entrada, { formato = 'mp4', modo = 'gpu', saida, pastaSaida, codificador, qualidade, velocidade = 1, audio = 'aac' } = {}, onProgresso, sinal) {
+export async function transcodificar(entrada, { formato = 'mp4', modo = 'gpu', saida, pastaSaida, codificador, qualidade, velocidade = 1, audio = 'aac', resolucao = null, ajuste = 'barras' } = {}, onProgresso, sinal) {
+  if (resolucao && !RESOLUCOES[resolucao]) throw new Error(`Resolução desconhecida: ${resolucao}`);
   const info = await infoVideo(entrada);
   const escolhido = codificador ? CODIFICADORES[codificador] : null;
   if (codificador && !escolhido) throw new Error(`Codificador desconhecido: ${codificador}`);
@@ -93,7 +116,7 @@ export async function transcodificar(entrada, { formato = 'mp4', modo = 'gpu', s
     if (!escolhido.formatos.includes(formato)) throw new Error(`${escolhido.nome} não cabe em ${formato.toUpperCase()}.`);
     if (!som.formatos.includes(formato)) throw new Error(`${som.nome} não cabe em ${formato.toUpperCase()}.`);
   }
-  saida ??= nomeSaida(entrada, formato, pastaSaida, escolhido?.codec);
+  saida ??= nomeSaida(entrada, formato, pastaSaida, [escolhido?.codec ?? 'h264', resolucao].filter(Boolean).join('_'));
   if (path.resolve(saida) === path.resolve(entrada)) throw new Error('A saída seria igual ao arquivo original.');
   fs.mkdirSync(path.dirname(saida), { recursive: true });
   const encoder = ENCODERS_GPU[await encoderGpu()];
@@ -107,7 +130,7 @@ export async function transcodificar(entrada, { formato = 'mp4', modo = 'gpu', s
   if (placebo) args.push('-init_hw_device', 'vulkan');
   else if (modo === 'gpu') args.push('-hwaccel', hwaccel);
   args.push('-i', entrada, '-map', '0:v:0', '-map', '0:a?');
-  args.push('-vf', placebo ? TONEMAP_GPU : info.hdr ? TONEMAP : 'format=yuv420p');
+  args.push('-vf', (placebo ? TONEMAP_GPU : info.hdr ? TONEMAP : 'format=yuv420p') + filtroResolucao(resolucao, ajuste));
   if (escolhido) {
     args.push(...escolhido.args(qualidade ?? escolhido.q.padrao, velocidade).map(String));
     // O Apple e a maioria dos editores só leem H.265 em MP4/MOV com a etiqueta hvc1.
@@ -136,7 +159,7 @@ export async function transcodificar(entrada, { formato = 'mp4', modo = 'gpu', s
     if (modo === 'gpu') {
       const cpu = escolhido ? { codificador: cpuDoCodec(escolhido.codec), velocidade, audio } : { modo: 'cpu' };
       if (!cpu.codificador && escolhido) throw new Error(`ffmpeg falhou (código ${r.codigo}):\n${r.cauda}`);
-      return transcodificar(entrada, { formato, saida, ...cpu }, onProgresso, sinal);
+      return transcodificar(entrada, { formato, saida, resolucao, ajuste, ...cpu }, onProgresso, sinal);
     }
     throw new Error(`ffmpeg falhou (código ${r.codigo}):\n${r.cauda}`);
   }

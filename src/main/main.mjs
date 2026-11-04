@@ -405,7 +405,7 @@ ipcMain.handle('transcode:pasta', async () => {
 
 ipcMain.handle('transcode:codificadores', () => codificadoresDisponiveis());
 
-ipcMain.handle('transcode:iniciar', async (_e, { arquivos, formato, modo, pastaSaida, codificador, qualidade, velocidade, audio }) => {
+ipcMain.handle('transcode:iniciar', async (_e, { arquivos, formato, modo, pastaSaida, codificador, qualidade, velocidade, audio, resolucao, ajuste }) => {
   conversaoAtual = new AbortController();
   const sinal = conversaoAtual.signal;
   // Os eventos só mostram o andamento; o estado final de cada arquivo volta no retorno,
@@ -415,7 +415,7 @@ ipcMain.handle('transcode:iniciar', async (_e, { arquivos, formato, modo, pastaS
     if (sinal.aborted) break;
     enviar('transcode', { indice: i, status: 'convertendo', progresso: 0 });
     try {
-      const r = await transcodificar(arquivos[i], { formato, modo, pastaSaida, codificador, qualidade, velocidade, audio }, (p) =>
+      const r = await transcodificar(arquivos[i], { formato, modo, pastaSaida, codificador, qualidade, velocidade, audio, resolucao, ajuste }, (p) =>
         enviar('transcode', { indice: i, status: 'convertendo', progresso: p }),
         sinal,
       );

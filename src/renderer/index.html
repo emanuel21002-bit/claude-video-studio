@@ -162,6 +162,31 @@
             <label>Áudio
               <select id="tc-audio"></select>
             </label>
+            <label>Resolução
+              <select id="tc-resolucao">
+                <option value="">Original</option>
+                <optgroup label="Vertical (Reels, Shorts)">
+                  <option value="1080x1920">1080×1920 (Full HD vertical)</option>
+                  <option value="720x1280">720×1280 (HD vertical)</option>
+                  <option value="2160x3840">2160×3840 (4K vertical)</option>
+                </optgroup>
+                <optgroup label="Horizontal">
+                  <option value="1920x1080">1920×1080 (Full HD)</option>
+                  <option value="1280x720">1280×720 (HD)</option>
+                  <option value="3840x2160">3840×2160 (4K)</option>
+                </optgroup>
+                <optgroup label="Quadrado e feed">
+                  <option value="1080x1080">1080×1080 (1:1)</option>
+                  <option value="1080x1350">1080×1350 (4:5)</option>
+                </optgroup>
+              </select>
+            </label>
+            <label>Se a proporção for diferente
+              <select id="tc-ajuste">
+                <option value="barras">Manter tudo (barras pretas)</option>
+                <option value="preencher">Preencher o quadro (corta as bordas)</option>
+              </select>
+            </label>
             <label>Salvar em
               <div class="linha-pasta">
                 <span id="tc-pasta">Mesma pasta do original</span>
