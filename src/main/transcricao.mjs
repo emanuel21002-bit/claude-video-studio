@@ -27,7 +27,7 @@ export async function transcrever(projeto, onLinha) {
 }
 
 // Transcreve qualquer áudio/vídeo e devolve { segmentos, palavras } sem gravar nada.
-export async function transcreverArquivo(entrada, onLinha) {
+export async function transcreverArquivo(entrada, onLinha, sinal) {
   const s = carregar();
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cvs-whisper-'));
   const wav = path.join(tmp, 'narracao.wav');
@@ -49,6 +49,7 @@ export async function transcreverArquivo(entrada, onLinha) {
       '-of', base,
     ],
     {
+      sinal,
       onLinha: (l) => {
         const m = l.match(/progress\s*=\s*(\d+)%/);
         if (m) onLinha?.(`Transcrevendo… ${m[1]}%`);

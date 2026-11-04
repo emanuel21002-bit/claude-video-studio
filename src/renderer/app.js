@@ -932,6 +932,73 @@ async function adicionarDecupar(caminhos) {
   renderDecupar();
 }
 
+// Diferenças entre o áudio e o roteiro: só as palavras com problema e um pouco de contexto ao redor.
+function elementoDiferencas(ops) {
+  const raiz = document.createElement('div');
+  raiz.className = 'dif-texto';
+  const ruim = ops.map((o) => o.t !== 'ok' && o.t !== 'quase');
+  const mostrar = ops.map((_, i) => ruim.slice(Math.max(0, i - 5), i + 6).some(Boolean));
+  let pulou = false;
+  ops.forEach((o, i) => {
+    if (!mostrar[i]) {
+      if (!pulou) raiz.append('… ');
+      pulou = true;
+      return;
+    }
+    pulou = false;
+    const palavra = (classe, txt, titulo) => {
+      const s = document.createElement(classe === 'dif-falta' || classe === 'dif-troca-r' ? 'del' : classe === 'dif-extra' || classe === 'dif-troca-o' ? 'ins' : 'span');
+      s.className = classe;
+      s.textContent = txt;
+      if (titulo) s.title = titulo;
+      raiz.append(s, ' ');
+    };
+    if (o.t === 'ok') palavra('dif-ok', o.o);
+    else if (o.t === 'quase') palavra('dif-quase', o.o, 'Roteiro: ' + o.r);
+    else if (o.t === 'troca') {
+      palavra('dif-troca-r', o.r, 'Está no roteiro');
+      palavra('dif-troca-o', o.o, 'Foi dito');
+    } else if (o.t === 'extra') palavra('dif-extra', o.o, 'Dito, mas não está no roteiro');
+    else palavra('dif-falta', o.r, 'Está no roteiro, mas não foi dito');
+  });
+  return raiz;
+}
+
+function blocoConferencia(it) {
+  const c = it.conf;
+  const div = document.createElement('div');
+  div.className = 'conf';
+  if (it.confProgresso != null && !c) {
+    div.textContent = `Transcrevendo e conferindo… ${Math.round(it.confProgresso * 100)}%`;
+    return div;
+  }
+  if (!c) return null;
+  if (c.erro) {
+    div.textContent = 'Não consegui conferir: ' + c.erro;
+    div.classList.add('conf-ruim');
+    return div;
+  }
+  if (c.vazio) {
+    div.textContent = 'Não ouvi fala neste áudio.';
+    div.classList.add('conf-ruim');
+    return div;
+  }
+  const resumo = document.createElement('div');
+  resumo.className = 'conf-resumo ' + (c.acerto >= 95 ? 'conf-ok' : c.acerto >= 80 ? 'conf-meio' : 'conf-ruim');
+  resumo.textContent = `Igual ao roteiro: ${c.acerto}% · ${c.trocas} trocada${c.trocas === 1 ? '' : 's'} · ${c.faltas} faltando · ${c.sobras} a mais`;
+  div.append(resumo);
+  if (c.trocas + c.faltas + c.sobras > 0) {
+    const det = document.createElement('details');
+    det.innerHTML = '<summary>Ver diferenças</summary>';
+    const legenda = document.createElement('small');
+    legenda.className = 'sub';
+    legenda.textContent = 'Riscado = está no roteiro e não foi dito. Sublinhado = foi dito e não está no roteiro.';
+    det.append(legenda, elementoDiferencas(c.ops));
+    div.append(det);
+  }
+  return div;
+}
+
 function renderDecupar() {
   const ul = $('#lista-decupar');
   ul.innerHTML = '';
@@ -947,10 +1014,32 @@ function renderDecupar() {
     st.title = it.erro ?? '';
     if (it.status === 'pronto') st.onclick = () => api.mostrarNaPasta(it.saida);
     li.querySelector('.barra').style.width = `${Math.round(it.progresso * 100)}%`;
+    const conf = blocoConferencia(it);
+    if (conf) li.append(conf);
     ul.append(li);
   });
+  const resumo = $('#dc-resumo-roteiro');
+  resumo.hidden = !dc.semAudio;
+  if (dc.semAudio) {
+    const s = dc.semAudio;
+    resumo.className = 'resumo-roteiro ' + (s.blocos.length ? 'conf-meio' : 'conf-ok');
+    resumo.replaceChildren();
+    const t = document.createElement('div');
+    t.textContent = s.blocos.length
+      ? `O roteiro tem ${s.total} palavras e os áudios cobrem ${s.cobertas}. Trechos sem áudio:`
+      : `Os áudios cobrem o roteiro inteiro (${s.cobertas} de ${s.total} palavras).`;
+    resumo.append(t);
+    for (const b of s.blocos) {
+      const p = document.createElement('blockquote');
+      p.textContent = b;
+      resumo.append(p);
+    }
+  }
   const pendentes = dc.itens.some((i) => i.status === 'aguardando' || i.status === 'erro');
-  $('#btn-dc-iniciar').disabled = dc.rodando || !pendentes;
+  const temRoteiro = $('#dc-roteiro').value.trim().length > 0;
+  $('#btn-dc-conferir').disabled = dc.rodando || dc.conferindo || !dc.itens.length || !temRoteiro;
+  $('#btn-dc-conferir').textContent = dc.conferindo ? 'Conferindo…' : 'Conferir com o roteiro';
+  $('#btn-dc-iniciar').disabled = dc.rodando || dc.conferindo || !pendentes;
   $('#btn-dc-cancelar').hidden = !dc.rodando;
   $('#btn-dc-limpar').disabled = dc.rodando;
   $('#dc-pasta').textContent = dc.pasta ?? 'Mesma pasta do original';
@@ -963,6 +1052,43 @@ api.aoDecupar((e) => {
   Object.assign(it, e);
   renderDecupar();
 });
+
+api.aoConferir((e) => {
+  const it = dc.itens[e.indice];
+  if (!it) return;
+  it.confProgresso = e.progresso;
+  renderDecupar();
+});
+
+async function conferirDecupar() {
+  const roteiro = $('#dc-roteiro').value.trim();
+  if (!roteiro || !dc.itens.length) return;
+  dc.conferindo = true;
+  dc.semAudio = null;
+  dc.itens.forEach((i) => Object.assign(i, { conf: null, confProgresso: 0 }));
+  renderDecupar();
+  try {
+    const r = await api.conferirAudios({ arquivos: dc.itens.map((i) => i.arquivo), roteiro });
+    dc.itens.forEach((i, n) => Object.assign(i, { conf: r.resultados[n], confProgresso: null }));
+    if (!r.cancelado) dc.semAudio = r.semAudio;
+  } catch (e) {
+    dc.itens.forEach((i) => Object.assign(i, { conf: { erro: e.message.split('\n').pop() }, confProgresso: null }));
+  }
+  dc.conferindo = false;
+  renderDecupar();
+}
+
+async function carregarRoteiro(r) {
+  const info = $('#dc-roteiro-info');
+  if (!r) return;
+  if (r.erro) {
+    info.textContent = 'Não consegui ler ' + nomeArquivo(r.arquivo) + ': ' + r.erro;
+    return;
+  }
+  $('#dc-roteiro').value = r.texto;
+  info.textContent = `${nomeArquivo(r.arquivo)} carregado (${r.texto.split(/\s+/).length} palavras). Dá para editar o texto.`;
+  renderDecupar();
+}
 
 async function iniciarDecupar() {
   dc.itens.forEach((i) => (i.naFila = i.status === 'aguardando' || i.status === 'erro'));
@@ -1013,6 +1139,17 @@ function ligarDecupar() {
   $('#dc-normalizar').onchange = (e) => (dc.normalizar = e.target.checked);
   segmentado($('#seg-dc-formato'), dc.formato, (v) => (dc.formato = v));
   $('#btn-dc-iniciar').onclick = iniciarDecupar;
+  $('#btn-dc-conferir').onclick = conferirDecupar;
+  $('#dc-roteiro').oninput = renderDecupar;
+  $('#btn-dc-roteiro-arquivo').onclick = async () => carregarRoteiro(await api.escolherRoteiro());
+  $('#btn-dc-roteiro-limpar').onclick = () => {
+    $('#dc-roteiro').value = '';
+    $('#dc-roteiro-info').textContent = '';
+    dc.semAudio = null;
+    dc.itens.forEach((i) => Object.assign(i, { conf: null, confProgresso: null }));
+    renderDecupar();
+  };
+  areaDeSoltar($('#drop-roteiro'), async (caminhos) => caminhos[0] && carregarRoteiro(await api.lerRoteiro(caminhos[0])));
   $('#btn-dc-cancelar').onclick = () => api.cancelarDecupagem();
   $('#btn-dc-limpar').onclick = () => {
     dc.itens = [];

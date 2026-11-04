@@ -543,3 +543,21 @@ main:has(#v-transcode.ativa)::before { background-image: url("img/gragas-motoque
 .opcoes-render-corpo select { margin-top: 4px; }
 .check input.tc-numero { width: 70px; }
 main:has(#v-decupar.ativa)::before { background-image: url("img/gragas-barril.png"); opacity: 0.1; width: min(30vw, 380px); height: 80%; }
+
+/* Roteiro e conferência dos áudios */
+.bloco-roteiro { text-align: left; margin-top: 18px; max-width: 1000px; margin-inline: auto; }
+.bloco-roteiro textarea { width: 100%; margin-bottom: 8px; }
+.lista-transcode li .conf { grid-column: 1 / -1; font-size: 13px; }
+.conf-resumo { font-weight: 600; }
+.conf-ok { color: var(--ok); }
+.conf-meio { color: var(--acento-2); }
+.conf-ruim { color: var(--erro); }
+.conf details { margin-top: 6px; }
+.conf summary { cursor: pointer; color: var(--fraco); }
+.dif-texto { margin-top: 6px; line-height: 1.7; color: var(--fraco); text-align: left; }
+.dif-texto .dif-ok { color: var(--texto); }
+.dif-texto .dif-quase { color: var(--texto); border-bottom: 1px dotted var(--fraco); }
+.dif-texto del { color: var(--erro); }
+.dif-texto ins { color: var(--acento-2); font-weight: 600; }
+.resumo-roteiro { max-width: 1000px; margin: 14px auto 0; padding: 10px 14px; border: 1px solid var(--borda); border-radius: var(--raio); background: var(--painel); text-align: left; }
+.resumo-roteiro blockquote { margin: 6px 0 0; padding-left: 10px; border-left: 3px solid var(--acento); color: var(--texto); }

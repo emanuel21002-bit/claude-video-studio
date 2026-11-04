@@ -11,6 +11,8 @@ import { listarMateriais,
   escreverBriefing, caminhoProjeto, tipoDe, resolverNarracoes,
 } from './workspace.mjs';
 import { decuparAudio } from './decupar.mjs';
+import { lerRoteiro, EXTENSOES_ROTEIRO } from './roteiro.mjs';
+import { conferir, trechosSemAudio } from './conferir-nucleo.mjs';
 import { whisperDisponivel, transcrever, transcreverArquivo } from './transcricao.mjs';
 import { renderizar } from './render.mjs';
 import { conversar, cancelar, primeiraMensagem, claudeExe } from './agente.mjs';
@@ -432,6 +434,7 @@ ipcMain.handle('transcode:cancelar', () => conversaoAtual?.abort());
 // ---------- decupagem de narrações ----------
 
 let decupagemAtual = null;
+// (a conferência com o roteiro fica mais abaixo)
 
 ipcMain.handle('decupar:info', async (_e, arquivos) =>
   Promise.all(arquivos.map(async (a) => ({ arquivo: a, duracao: (await infoVideo(a)).duracao }))),
@@ -456,7 +459,68 @@ ipcMain.handle('decupar:iniciar', async (_e, { arquivos, opcoes }) => {
   return resultados;
 });
 
-ipcMain.handle('decupar:cancelar', () => decupagemAtual?.abort());
+ipcMain.handle('decupar:cancelar', () => {
+  decupagemAtual?.abort();
+  conferenciaAtual?.abort();
+});
+
+// Roteiro de referência: qualquer formato vira texto, e a transcrição de cada áudio é comparada com ele.
+ipcMain.handle('roteiro:ler', async (_e, arquivo) => {
+  try {
+    return { arquivo, texto: await lerRoteiro(arquivo) };
+  } catch (e) {
+    return { arquivo, erro: e.message.split('\n')[0] };
+  }
+});
+
+ipcMain.handle('roteiro:escolher', async () => {
+  const r = await dialog.showOpenDialog(janela, {
+    properties: ['openFile'],
+    filters: [{ name: 'Roteiro (PDF, DOCX, TXT…)', extensions: EXTENSOES_ROTEIRO }, { name: 'Todos os arquivos', extensions: ['*'] }],
+  });
+  if (r.canceled) return null;
+  try {
+    return { arquivo: r.filePaths[0], texto: await lerRoteiro(r.filePaths[0]) };
+  } catch (e) {
+    return { arquivo: r.filePaths[0], erro: e.message.split('\n')[0] };
+  }
+});
+
+let conferenciaAtual = null;
+const transcricoesCache = new Map(); // "arquivo|mtime" -> texto, para conferir de novo sem transcrever outra vez
+
+ipcMain.handle('decupar:conferir', async (_e, { arquivos, roteiro }) => {
+  if (!whisperDisponivel()) throw new Error('O Whisper não está configurado: sem ele não dá para transcrever os áudios (veja Configurações).');
+  conferenciaAtual = new AbortController();
+  const sinal = conferenciaAtual.signal;
+  const resultados = arquivos.map(() => null);
+  try {
+    for (let i = 0; i < arquivos.length; i++) {
+      if (sinal.aborted) break;
+      enviar('conferir', { indice: i, progresso: 0 });
+      try {
+        const chave = `${arquivos[i]}|${fs.statSync(arquivos[i]).mtimeMs}`;
+        let texto = transcricoesCache.get(chave);
+        if (texto == null) {
+          const r = await transcreverArquivo(arquivos[i], (l) => {
+            const m = l.match(/(\d+)%/);
+            if (m) enviar('conferir', { indice: i, progresso: Number(m[1]) / 100 });
+          }, sinal);
+          texto = r.segmentos.map((s) => s.texto).join(' ');
+          transcricoesCache.set(chave, texto);
+        }
+        resultados[i] = conferir(texto, roteiro);
+      } catch (e) {
+        resultados[i] = sinal.aborted ? null : { erro: e.message.split('\n')[0] };
+      }
+      enviar('conferir', { indice: i, progresso: 1, pronto: true });
+    }
+  } finally {
+    conferenciaAtual = null;
+  }
+  const faixas = resultados.filter((r) => r && !r.erro && !r.vazio).map((r) => [r.inicio, r.fim]);
+  return { resultados, semAudio: trechosSemAudio(roteiro, faixas), cancelado: sinal.aborted };
+});
 
 app.whenReady().then(criarJanela);
 app.on('window-all-closed', () => app.quit());

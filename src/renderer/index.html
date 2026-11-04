@@ -228,11 +228,25 @@
               </div>
             </label>
           </div>
+          <div class="bloco bloco-roteiro">
+            <span>Roteiro (opcional)</span>
+            <p class="sub">Cole o texto ou carregue o roteiro (PDF, DOCX, TXT, MD, RTF, HTML, SRT…). Com ele, o app transcreve cada áudio e mostra o que difere do roteiro: palavras trocadas, faltando ou a mais, e trechos do roteiro que nenhum áudio cobre.</p>
+            <div id="drop-roteiro" class="drop compacto">
+              <textarea id="dc-roteiro" rows="5" placeholder="Cole o roteiro aqui ou solte um arquivo"></textarea>
+              <div class="linha-botoes">
+                <button type="button" id="btn-dc-roteiro-arquivo">Carregar arquivo…</button>
+                <button type="button" id="btn-dc-roteiro-limpar">Limpar roteiro</button>
+              </div>
+              <small id="dc-roteiro-info" class="sub"></small>
+            </div>
+          </div>
+          <div id="dc-resumo-roteiro" class="resumo-roteiro" hidden></div>
           <ul id="lista-decupar" class="lista-transcode"></ul>
           <div class="rodape-passo">
             <button id="btn-dc-limpar">Limpar lista</button>
             <div class="linha-botoes">
               <button id="btn-dc-cancelar" class="perigo" hidden>Cancelar</button>
+              <button id="btn-dc-conferir" disabled title="Transcreve os áudios e compara com o roteiro">Conferir com o roteiro</button>
               <button id="btn-dc-iniciar" class="primario" disabled>Decupar</button>
             </div>
           </div>
