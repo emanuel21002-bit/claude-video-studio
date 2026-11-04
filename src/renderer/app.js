@@ -203,6 +203,8 @@ function renderAbasTimeline(lista) {
   const abas = $('#ed-abas');
   const atual = lista.find((p) => p.id === estado.projetoId);
   const irmas = atual ? lista.filter((p) => (p.grupo?.id ?? p.id) === (atual.grupo?.id ?? atual.id)) : [];
+  estado.irmasIds = irmas.map((p) => p.id);
+  $('#btn-render-todos').hidden = irmas.length < 2;
   abas.hidden = irmas.length < 2;
   abas.innerHTML = '';
   if (abas.hidden) return;
@@ -621,6 +623,14 @@ api.aoAgente(async (e) => {
     estado.naFila.delete(e.id);
   }
   if (['fila', 'inicio', 'parado'].includes(e.tipo)) carregarProjetos();
+  // Exportação de todos os vídeos da pasta: o progresso geral aparece na barra, seja qual for o vídeo aberto.
+  if (e.tipo === 'lote') {
+    if (estado.lote && e.etapa) {
+      const geral = (e.indice - 1 + (e.progresso ?? 0)) / e.total;
+      progresso(geral, `Exportando ${e.indice} de ${e.total}: ${e.nome} — ${e.etapa}`);
+    }
+    return;
+  }
   if (e.id !== estado.projetoId) return;
 
   switch (e.tipo) {
@@ -665,17 +675,51 @@ api.aoAgente(async (e) => {
       await TL.recarregar();
       break;
     case 'render':
-      if (e.etapa) progresso(e.progresso, `${e.etapa} — ${Math.round((e.progresso ?? 0) * 100)}%`);
+      if (e.etapa && !estado.lote) progresso(e.progresso, `${e.etapa} — ${Math.round((e.progresso ?? 0) * 100)}%`);
       if (e.concluido) {
-        progresso(1, 'Render concluído');
+        if (!estado.lote) progresso(1, 'Render concluído');
         await TL.recarregar();
         mostrarVideo(e.concluido);
         renderListaRenders(await api.projeto(e.id));
       }
-      if (e.falhou) progresso(0, 'Render falhou: ' + e.falhou);
+      if (e.falhou && !estado.lote) progresso(0, 'Render falhou: ' + e.falhou);
       break;
   }
 });
+
+async function renderTodos() {
+  const botao = $('#btn-render-todos');
+  if (estado.lote) {
+    api.cancelarRenderTodos(estado.lote);
+    return;
+  }
+  // Vídeos que o Claude ainda está montando ficam de fora: o render pegaria a timeline pela metade.
+  const ids = (estado.irmasIds ?? []).filter((id) => !estado.trabalhando.has(id));
+  const ocupados = (estado.irmasIds ?? []).length - ids.length;
+  if (!ids.length) return addMsg('erro', 'Nenhum vídeo desta pasta está pronto para exportar: o Claude ainda está montando.');
+  await TL.salvarAgora();
+  estado.lote = 'lote-' + Date.now();
+  botao.textContent = 'Cancelar exportação';
+  $('#btn-render').disabled = true;
+  progresso(0, `Exportando 1 de ${ids.length}…`);
+  try {
+    const r = await api.renderizarTodos({ ids, chave: estado.lote });
+    const falhas = r.resultados.filter((x) => !x.ok);
+    const feitos = r.resultados.length - falhas.length;
+    progresso(r.cancelado ? 0 : 1, r.cancelado ? `Exportação cancelada: ${feitos} de ${r.total} prontos` : `Exportação concluída: ${feitos} de ${r.total} vídeos`);
+    for (const f of falhas) addMsg('erro', `Não exportou "${f.nome}": ${f.erro}`);
+    if (ocupados) addMsg('info', `${ocupados} vídeo${ocupados > 1 ? 's' : ''} da pasta ficou de fora porque o Claude ainda está montando.`);
+    if (feitos && !r.cancelado) addMsg('info', `${feitos} vídeo${feitos > 1 ? 's' : ''} exportado${feitos > 1 ? 's' : ''}, um por vez, na pasta renders de cada um.`);
+  } catch (e) {
+    addMsg('erro', 'A exportação em sequência falhou: ' + e.message.split('\n')[0]);
+  } finally {
+    estado.lote = null;
+    botao.textContent = 'Exportar todos';
+    definirTrabalhando(estado.trabalhando.has(estado.projetoId));
+    carregarProjetos();
+    if (estado.projetoId) renderListaRenders(await api.projeto(estado.projetoId));
+  }
+}
 
 async function renderManual() {
   const id = estado.projetoId;
@@ -1019,6 +1063,7 @@ async function renderEstilosUmaVez() {
   renderEstilos();
   segmentado($('#seg-motor'), estado.config.renderMotor, async (v) => (estado.config = await api.salvarConfig({ renderMotor: v })));
   segmentado($('#seg-modo'), estado.config.renderModo, async (v) => (estado.config = await api.salvarConfig({ renderModo: v })));
+  $('#btn-render-todos').onclick = renderTodos;
   $('#render-qualidade').value = estado.config.renderQualidade ?? 'alta';
   $('#render-sem-audio').checked = !!estado.config.renderSemAudio;
   $('#render-resolucao').onchange = async (e) => (estado.config = await api.salvarConfig({ renderResolucao: Number(e.target.value) }));

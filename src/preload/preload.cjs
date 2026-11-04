@@ -33,6 +33,8 @@ contextBridge.exposeInMainWorld('studio', {
   enviarChat: chamar('chat:enviar'),
   cancelar: chamar('chat:cancelar'),
   renderizar: chamar('render'),
+  renderizarTodos: chamar('render:todos'),
+  cancelarRenderTodos: chamar('render:cancelar-todos'),
   lerTimeline: chamar('timeline:ler'),
   salvarTimeline: chamar('timeline:salvar'),
   previaTimeline: chamar('timeline:previa'),

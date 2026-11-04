@@ -341,6 +341,41 @@ ipcMain.handle('render', async (_e, { id, modo, formato }) => {
   }
 });
 
+// Exporta uma lista de vídeos (as timelines de uma pasta) um depois do outro, com as opções de render salvas.
+const lotesRender = new Map(); // chave -> AbortController
+
+ipcMain.handle('render:todos', async (_e, { ids, chave }) => {
+  const controle = new AbortController();
+  lotesRender.set(chave, controle);
+  const resultados = [];
+  try {
+    for (const [i, id] of ids.entries()) {
+      if (controle.signal.aborted) break;
+      const nome = lerProjeto(id).nome;
+      const lote = (e) => enviar('agente', { id, tipo: 'lote', indice: i + 1, total: ids.length, nome, ...e });
+      lote({ etapa: 'Começando', progresso: 0 });
+      try {
+        const r = await renderizar(id, {}, (e) => {
+          enviar('agente', { id, tipo: 'render', ...e });
+          if (e.etapa) lote({ etapa: e.etapa, progresso: e.progresso ?? 0 });
+        }, controle.signal);
+        enviar('agente', { id, tipo: 'render', concluido: r.preview ?? r.arquivo });
+        resultados.push({ id, nome, ok: true, arquivo: r.arquivo });
+      } catch (e) {
+        const motivo = e.message.split('\n')[0];
+        enviar('agente', { id, tipo: 'render', falhou: motivo });
+        resultados.push({ id, nome, ok: false, erro: motivo });
+        if (controle.signal.aborted) break;
+      }
+    }
+  } finally {
+    lotesRender.delete(chave);
+  }
+  return { resultados, cancelado: controle.signal.aborted, total: ids.length };
+});
+
+ipcMain.handle('render:cancelar-todos', (_e, chave) => lotesRender.get(chave)?.abort());
+
 // ---------- timeline ----------
 
 ipcMain.handle('timeline:ler', (_e, id) => lerTimeline(id));
