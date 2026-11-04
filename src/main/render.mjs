@@ -134,11 +134,37 @@ export async function pastaPublica(id, t, destino, opts = {}) {
 }
 
 // Recodifica com o encoder da GPU. O contêiner sai pela extensão do destino (.mp4 ou .mov).
-function argsGpu(encoder, entrada, saida) {
+// Qualidade -> valor do QP/CQ do encoder da GPU, do CRF do x264 e da nota 0-100 do Filmcraft.
+const QUALIDADES = {
+  alta: { qp: 19, crf: 16, nota: 90 },
+  media: { qp: 24, crf: 21, nota: 70 },
+  baixa: { qp: 29, crf: 26, nota: 50 },
+};
+const qualidadeDe = (q) => QUALIDADES[q] ?? QUALIDADES.alta;
+
+// O encoder tem o QP/CQ fixo em 19 nos args: troca pelo da qualidade pedida.
+function argsDoEncoder(encoder, q) {
+  const { qp } = qualidadeDe(q);
+  const a = [...encoder.args];
+  for (const [i, v] of a.entries()) {
+    if (['-cq', '-qp_i', '-qp_p'].includes(v)) a[i + 1] = String(qp);
+    if (v === '-qp_b') a[i + 1] = String(qp + 2);
+  }
+  return a;
+}
+
+// Escala em relação ao tamanho do projeto: 1 = original. A resolução pedida é o lado menor do quadro.
+function escalaDoRender(projeto, resolucao) {
+  const lado = Math.min(projeto.largura ?? 0, projeto.altura ?? 0);
+  if (!resolucao || !lado) return 1;
+  return Math.round((resolucao / lado) * 1000) / 1000;
+}
+
+function argsGpu(encoder, entrada, saida, { qualidade, semAudio } = {}) {
   return [
     '-y', '-hide_banner', '-i', entrada,
-    ...encoder.args,
-    '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '320k',
+    ...argsDoEncoder(encoder, qualidade),
+    '-pix_fmt', 'yuv420p', ...(semAudio ? ['-an'] : ['-c:a', 'aac', '-b:a', '320k']),
     '-movflags', '+faststart', saida,
   ];
 }
@@ -146,9 +172,9 @@ function argsGpu(encoder, entrada, saida) {
 // ---------- um render por vez ----------
 
 // Tudo o que muda o resultado. Igual ao do último render, o arquivo já existente serve.
-function impressao(id, projeto, modo, formato) {
+function impressao(id, projeto, modo, formato, ext) {
   const dir = caminhoProjeto(id);
-  const h = crypto.createHash('sha1').update(`${modo}|${formato}|${projeto.engine}|${carregar().renderMotor}`);
+  const h = crypto.createHash('sha1').update(`${modo}|${formato}|${projeto.engine}|${carregar().renderMotor}|${ext.resolucao}|${ext.qualidade}|${ext.semAudio}`);
   const incluir = (pasta) => {
     for (const e of fs.readdirSync(pasta, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       const c = path.join(pasta, e.name);
@@ -186,7 +212,12 @@ export function renderizar(id, opcoes = {}, onEvento, sinal) {
   const s = carregar();
   const modo = opcoes.modo ?? s.renderModo;
   const formato = opcoes.formato ?? s.renderFormato;
-  const chave = `${id}|${modo}|${formato}`;
+  const ext = {
+    resolucao: opcoes.resolucao ?? s.renderResolucao ?? 0,
+    qualidade: opcoes.qualidade ?? s.renderQualidade ?? 'alta',
+    semAudio: opcoes.semAudio ?? s.renderSemAudio ?? false,
+  };
+  const chave = `${id}|${modo}|${formato}|${ext.resolucao}|${ext.qualidade}|${ext.semAudio}`;
   if (emAndamento.has(chave)) {
     onEvento?.({ etapa: 'Este render já está rodando', progresso: 0 });
     return emAndamento.get(chave);
@@ -195,13 +226,13 @@ export function renderizar(id, opcoes = {}, onEvento, sinal) {
     if (sinal?.aborted) throw new Error('Render cancelado.');
     const projeto = lerProjeto(id);
     if (projeto.timeline) escreverModelo(projeto);
-    const marca = impressao(id, projeto, modo, formato);
+    const marca = impressao(id, projeto, modo, formato, ext);
     const ultimo = projeto.renders[0];
     if (ultimo?.impressao === marca && fs.existsSync(ultimo.arquivo)) {
       onEvento?.({ etapa: 'Nada mudou desde o último render', progresso: 1 });
       return { arquivo: ultimo.arquivo, preview: ultimo.preview, segundos: 0, reaproveitado: true };
     }
-    return executarRender(id, { modo, formato, marca }, onEvento, sinal);
+    return executarRender(id, { modo, formato, marca, ...ext }, onEvento, sinal);
   });
   filaRender = trabalho;
   emAndamento.set(chave, trabalho);
@@ -214,7 +245,7 @@ export function renderizar(id, opcoes = {}, onEvento, sinal) {
 const LIMITE_FILMCRAFT = 60 * 60 * 1000;
 
 // Composição e decodificação na GPU, em um passo só; textos, legendas e blocos vêm do Remotion como camada.
-async function exportarPeloFilmcraft(id, saida, { modo, formato }, opts) {
+async function exportarPeloFilmcraft(id, saida, { modo, formato, escala, qualidade, semAudio }, opts) {
   const { prepararProjetoFilmcraft, cli } = await import('./filmcraft.mjs');
   const projetoFc = path.join(path.dirname(opts.env.TEMP), `${path.basename(opts.env.TEMP)}.fcproj`);
   opts.onEvento?.({ etapa: 'Preparando textos e legendas', progresso: 0.02 });
@@ -223,17 +254,22 @@ async function exportarPeloFilmcraft(id, saida, { modo, formato }, opts) {
     if (opts.sinal?.aborted) throw new Error('Render cancelado.');
     await etapa('Exportando pelo Filmcraft', cli(), [
       '--project', projetoFc, 'export', saida, '--format', formato === 'mov' ? 'prores' : 'h264', '--gpu-rendering', modo === 'gpu' ? 'auto' : 'off',
+      ...(escala !== 1 ? ['--scale', String(escala)] : []),
+      ...(formato === 'mov' ? [] : ['--quality', String(qualidadeDe(qualidade).nota)]),
+      ...(semAudio ? ['--no-audio'] : []),
     ], { ...opts, peso: [0.4, 1], limiteSemSaida: LIMITE_FILMCRAFT });
   } finally {
     fs.rmSync(projetoFc, { force: true });
   }
 }
 
-async function executarRender(id, { modo, formato, marca }, onEvento, sinal) {
+async function executarRender(id, { modo, formato, marca, resolucao, qualidade, semAudio }, onEvento, sinal) {
   const s = carregar();
   const encoder = ENCODERS_GPU[await encoderGpu()];
   if (!encoder) modo = 'cpu';
   const projeto = lerProjeto(id);
+  const escala = escalaDoRender(projeto, resolucao);
+  const { crf } = qualidadeDe(qualidade);
   if (projeto.timeline) {
     const erros = validarTimeline(id, lerTimeline(id));
     if (erros.length) throw new Error('A timeline tem problemas:\n' + erros.join('\n'));
@@ -256,7 +292,7 @@ async function executarRender(id, { modo, formato, marca }, onEvento, sinal) {
     const { filmcraftDisponivel } = await import('./filmcraft.mjs');
     if (filmcraftDisponivel()) {
       try {
-        await exportarPeloFilmcraft(id, saida, { modo, formato }, opts);
+        await exportarPeloFilmcraft(id, saida, { modo, formato, escala, qualidade, semAudio }, opts);
         motor = 'filmcraft';
       } catch (e) {
         if (sinal?.aborted) {
@@ -280,20 +316,21 @@ async function executarRender(id, { modo, formato, marca }, onEvento, sinal) {
         ? await pastaPublica(id, lerTimeline(id), path.join(tmp, 'publico'), opts)
         : path.join('projetos', id, 'assets');
       // A RX 570 tem 4 GB: mais quadros ao mesmo tempo não acelera e estoura o limite de busca de cada quadro.
-      const base = [cli, 'render', entrada, 'Main', '--public-dir', publica, '--concurrency=2', '--timeout=120000'];
+      const base = [cli, 'render', entrada, 'Main', '--public-dir', publica, '--concurrency=2', '--timeout=120000',
+        ...(escala !== 1 ? [`--scale=${escala}`] : []), ...(semAudio ? ['--muted'] : [])];
       if (modo === 'gpu') {
         // Chrome desenha os quadros com a GPU (ANGLE); intermediário rápido e quase sem perda; final no encoder da GPU.
         const inter = path.join(tmp, 'inter.mp4');
         await etapa('Renderizando quadros (GPU)', s.nodePath,
           [...base, inter, '--gl=angle', '--codec=h264', '--crf=12', '--x264-preset=veryfast'],
           { ...opts, peso: [0.1, 0.85] });
-        await etapa(`Codificando com ${encoder.nome}`, s.ffmpegPath, argsGpu(encoder, inter, saida), { ...opts, peso: [0.85, 1] });
+        await etapa(`Codificando com ${encoder.nome}`, s.ffmpegPath, argsGpu(encoder, inter, saida, { qualidade, semAudio }), { ...opts, peso: [0.85, 1] });
       } else if (formato === 'mov') {
         await etapa('Renderizando (CPU, ProRes)', s.nodePath,
           [...base, saida, '--gl=swangle', '--codec=prores', '--prores-profile=hq'], { ...opts, peso: [0.1, 1] });
       } else {
         await etapa('Renderizando (CPU)', s.nodePath,
-          [...base, saida, '--gl=swangle', '--codec=h264', '--crf=18'], { ...opts, peso: [0.1, 1] });
+          [...base, saida, '--gl=swangle', '--codec=h264', `--crf=${crf}`], { ...opts, peso: [0.1, 1] });
       }
     } else {
       const bin = hyperframesBin();
@@ -311,6 +348,19 @@ async function executarRender(id, { modo, formato, marca }, onEvento, sinal) {
           [bin, 'render', dir, '-o', saida, ...gpuFlags], opts);
       }
     }
+    if (projeto.engine !== 'remotion' && motor !== 'filmcraft' && (escala !== 1 || semAudio)) {
+      const ajustado = path.join(tmp, 'ajustado' + path.extname(saida));
+      const par = (x) => Math.max(2, Math.round((x * escala) / 2) * 2);
+      const video = formato === 'mov'
+        ? ['-c:v', 'prores_ks', '-profile:v', '3', '-pix_fmt', 'yuv422p10le']
+        : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(crf), '-pix_fmt', 'yuv420p'];
+      await etapa('Ajustando resolução e áudio', s.ffmpegPath, [
+        '-y', '-hide_banner', '-i', saida,
+        ...(escala !== 1 ? ['-vf', `scale=${par(projeto.largura)}:${par(projeto.altura)}:flags=lanczos`] : []),
+        ...video, ...(semAudio ? ['-an'] : ['-c:a', 'aac', '-b:a', '320k']), ajustado,
+      ], { ...opts, peso: [0.95, 1] });
+      fs.copyFileSync(ajustado, saida);
+    }
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -324,7 +374,7 @@ async function executarRender(id, { modo, formato, marca }, onEvento, sinal) {
     await transcodificar(saida, { formato: 'mp4', modo: encoder ? 'gpu' : 'cpu', saida: preview });
   }
   const atual = lerProjeto(id);
-  atual.renders.unshift({ arquivo: saida, preview, modo, motor, formato, data: new Date().toISOString(), segundos, impressao: marca });
+  atual.renders.unshift({ arquivo: saida, preview, modo, motor, formato, resolucao: escala === 1 ? null : Math.round(projeto.largura * escala) + 'x' + Math.round(projeto.altura * escala), qualidade, semAudio, data: new Date().toISOString(), segundos, impressao: marca });
   gravarProjeto(atual);
   onEvento?.({ etapa: 'Pronto', progresso: 1 });
   return { arquivo: saida, preview, segundos };

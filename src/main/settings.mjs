@@ -22,6 +22,9 @@ export const PADRAO = {
   renderModo: 'gpu', // gpu | cpu
   renderMotor: 'filmcraft', // filmcraft | remotion
   renderFormato: 'mp4', // mp4 | mov
+  renderResolucao: 0, // lado menor em pixels (720, 1080, 1440, 2160); 0 = a resolução do projeto
+  renderQualidade: 'alta', // alta | media | baixa
+  renderSemAudio: false,
 };
 
 let atual = null;

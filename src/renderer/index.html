@@ -224,6 +224,20 @@
                 <button data-v="mp4">MP4</button>
                 <button data-v="mov">MOV</button>
               </div>
+              <details class="opcoes-render">
+                <summary title="Resolução, qualidade e áudio do arquivo final">Opções</summary>
+                <div class="opcoes-render-corpo">
+                  <label>Resolução <select id="render-resolucao"></select></label>
+                  <label>Qualidade
+                    <select id="render-qualidade">
+                      <option value="alta">Alta</option>
+                      <option value="media">Média</option>
+                      <option value="baixa">Baixa (arquivo menor)</option>
+                    </select>
+                  </label>
+                  <label class="check"><input type="checkbox" id="render-sem-audio" /> Sem áudio</label>
+                </div>
+              </details>
               <button id="btn-render" class="primario">Renderizar</button>
               <div class="progresso"><div id="prog-barra"></div><span id="prog-txt">Pronto</span></div>
             </div>

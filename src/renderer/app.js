@@ -571,11 +571,25 @@ async function abrirProjeto(id) {
     $('#player').removeAttribute('src');
     $('#player-vazio').hidden = false;
   }
+  preencherResolucoes(p);
   renderListaRenders(p);
   if (p.timeline) await TL.abrir(p);
   definirTrabalhando(estado.trabalhando.has(id));
   progresso(0, estado.naFila.has(id) ? 'Na fila: aguardando os vídeos anteriores' : estado.trabalhando.has(id) ? 'Claude trabalhando…' : 'Pronto');
   carregarProjetos();
+}
+
+// Resolução pelo lado menor; os rótulos mostram o tamanho real conforme o formato do projeto.
+function preencherResolucoes(p) {
+  const sel = $('#render-resolucao');
+  const w = p?.largura || 1080;
+  const h = p?.altura || 1920;
+  const lado = Math.min(w, h);
+  const tam = (l) => `${Math.round((w * l) / lado)}×${Math.round((h * l) / lado)}`;
+  const opcoes = [[0, `Original (${w}×${h})`], ...[720, 1080, 1440, 2160].filter((l) => l !== lado).map((l) => [l, `${l}p (${tam(l)})${l === 2160 ? ' · 4K' : ''}`])];
+  const atual = Number(estado.config?.renderResolucao) || 0;
+  sel.replaceChildren(...opcoes.map(([v, t]) => new Option(t, String(v))));
+  sel.value = opcoes.some(([v]) => v === atual) ? String(atual) : '0';
 }
 
 function renderListaRenders(p) {
@@ -1005,6 +1019,11 @@ async function renderEstilosUmaVez() {
   renderEstilos();
   segmentado($('#seg-motor'), estado.config.renderMotor, async (v) => (estado.config = await api.salvarConfig({ renderMotor: v })));
   segmentado($('#seg-modo'), estado.config.renderModo, async (v) => (estado.config = await api.salvarConfig({ renderModo: v })));
+  $('#render-qualidade').value = estado.config.renderQualidade ?? 'alta';
+  $('#render-sem-audio').checked = !!estado.config.renderSemAudio;
+  $('#render-resolucao').onchange = async (e) => (estado.config = await api.salvarConfig({ renderResolucao: Number(e.target.value) }));
+  $('#render-qualidade').onchange = async (e) => (estado.config = await api.salvarConfig({ renderQualidade: e.target.value }));
+  $('#render-sem-audio').onchange = async (e) => (estado.config = await api.salvarConfig({ renderSemAudio: e.target.checked }));
   segmentado($('#seg-saida'), estado.config.renderFormato, async (v) => (estado.config = await api.salvarConfig({ renderFormato: v })));
   iniciar();
 }

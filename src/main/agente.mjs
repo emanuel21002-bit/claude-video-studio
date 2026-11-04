@@ -146,6 +146,8 @@ export async function conversar(id, mensagem, onEvento) {
         {
           modo: z.enum(['gpu', 'cpu']).optional().describe('Só passe se o usuário pediu explicitamente GPU ou CPU.'),
           formato: z.enum(['mp4', 'mov']).optional().describe('Só passe se o usuário pediu explicitamente MP4 ou MOV.'),
+          resolucao: z.number().int().min(360).max(4320).optional().describe('Lado menor do quadro em pixels (720, 1080, 1440, 2160). Só passe se o usuário pediu; por padrão vale a escolha dele no app.'),
+          qualidade: z.enum(['alta', 'media', 'baixa']).optional().describe('Só passe se o usuário pediu.'),
         },
         async (args) => {
           try {
