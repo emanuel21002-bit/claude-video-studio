@@ -693,6 +693,9 @@ async function renderTodos() {
     api.cancelarRenderTodos(estado.lote);
     return;
   }
+  // Os vídeos vão direto para a pasta escolhida, em vez de ficarem só dentro de cada projeto.
+  const pastaSaida = await api.pastaSaida();
+  if (!pastaSaida) return;
   // Vídeos que o Claude ainda está montando ficam de fora: o render pegaria a timeline pela metade.
   const ids = (estado.irmasIds ?? []).filter((id) => !estado.trabalhando.has(id));
   const ocupados = (estado.irmasIds ?? []).length - ids.length;
@@ -703,13 +706,13 @@ async function renderTodos() {
   $('#btn-render').disabled = true;
   progresso(0, `Exportando 1 de ${ids.length}…`);
   try {
-    const r = await api.renderizarTodos({ ids, chave: estado.lote });
+    const r = await api.renderizarTodos({ ids, chave: estado.lote, pastaSaida, modo: estado.config.renderModo, formato: estado.config.renderFormato });
     const falhas = r.resultados.filter((x) => !x.ok);
     const feitos = r.resultados.length - falhas.length;
     progresso(r.cancelado ? 0 : 1, r.cancelado ? `Exportação cancelada: ${feitos} de ${r.total} prontos` : `Exportação concluída: ${feitos} de ${r.total} vídeos`);
     for (const f of falhas) addMsg('erro', `Não exportou "${f.nome}": ${f.erro}`);
     if (ocupados) addMsg('info', `${ocupados} vídeo${ocupados > 1 ? 's' : ''} da pasta ficou de fora porque o Claude ainda está montando.`);
-    if (feitos && !r.cancelado) addMsg('info', `${feitos} vídeo${feitos > 1 ? 's' : ''} exportado${feitos > 1 ? 's' : ''}, um por vez, na pasta renders de cada um.`);
+    if (feitos && !r.cancelado) addMsg('info', `${feitos} vídeo${feitos > 1 ? 's' : ''} exportado${feitos > 1 ? 's' : ''}, um por vez, em ${pastaSaida}.`);
   } catch (e) {
     addMsg('erro', 'A exportação em sequência falhou: ' + e.message.split('\n')[0]);
   } finally {

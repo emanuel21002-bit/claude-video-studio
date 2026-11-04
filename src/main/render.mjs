@@ -203,6 +203,15 @@ function impressao(id, projeto, modo, formato, ext) {
   return h.digest('hex');
 }
 
+// Nome de arquivo do vídeo exportado para uma pasta escolhida: o nome do projeto, sem caracteres que o Windows recusa.
+const nomeDoVideo = (p) => (p.nome || 'video').replace(/[<>:"/\\|?*\x00-\x1f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) || 'video';
+
+function caminhoLivre(pasta, base, formato) {
+  let c = path.join(pasta, `${base}.${formato}`);
+  for (let i = 2; fs.existsSync(c); i++) c = path.join(pasta, `${base} (${i}).${formato}`);
+  return c;
+}
+
 let filaRender = Promise.resolve();
 const emAndamento = new Map(); // "id|modo|formato" -> promessa
 
@@ -217,7 +226,8 @@ export function renderizar(id, opcoes = {}, onEvento, sinal) {
     qualidade: opcoes.qualidade ?? s.renderQualidade ?? 'alta',
     semAudio: opcoes.semAudio ?? s.renderSemAudio ?? false,
   };
-  const chave = `${id}|${modo}|${formato}|${ext.resolucao}|${ext.qualidade}|${ext.semAudio}`;
+  const pastaSaida = opcoes.pastaSaida ?? null;
+  const chave = `${id}|${modo}|${formato}|${ext.resolucao}|${ext.qualidade}|${ext.semAudio}|${pastaSaida ?? ''}`;
   if (emAndamento.has(chave)) {
     onEvento?.({ etapa: 'Este render já está rodando', progresso: 0 });
     return emAndamento.get(chave);
@@ -230,9 +240,16 @@ export function renderizar(id, opcoes = {}, onEvento, sinal) {
     const ultimo = projeto.renders[0];
     if (ultimo?.impressao === marca && fs.existsSync(ultimo.arquivo)) {
       onEvento?.({ etapa: 'Nada mudou desde o último render', progresso: 1 });
-      return { arquivo: ultimo.arquivo, preview: ultimo.preview, segundos: 0, reaproveitado: true };
+      let arquivo = ultimo.arquivo;
+      // Já existe um render igual: só vai uma cópia para a pasta escolhida.
+      if (pastaSaida && path.resolve(path.dirname(arquivo)) !== path.resolve(pastaSaida)) {
+        arquivo = caminhoLivre(pastaSaida, nomeDoVideo(projeto), formato);
+        fs.mkdirSync(pastaSaida, { recursive: true });
+        fs.copyFileSync(ultimo.arquivo, arquivo);
+      }
+      return { arquivo, preview: ultimo.preview, segundos: 0, reaproveitado: true };
     }
-    return executarRender(id, { modo, formato, marca, ...ext }, onEvento, sinal);
+    return executarRender(id, { modo, formato, marca, pastaSaida, ...ext }, onEvento, sinal);
   });
   filaRender = trabalho;
   emAndamento.set(chave, trabalho);
@@ -263,7 +280,7 @@ async function exportarPeloFilmcraft(id, saida, { modo, formato, escala, qualida
   }
 }
 
-async function executarRender(id, { modo, formato, marca, resolucao, qualidade, semAudio }, onEvento, sinal) {
+async function executarRender(id, { modo, formato, marca, pastaSaida, resolucao, qualidade, semAudio }, onEvento, sinal) {
   const s = carregar();
   const encoder = ENCODERS_GPU[await encoderGpu()];
   if (!encoder) modo = 'cpu';
@@ -277,7 +294,10 @@ async function executarRender(id, { modo, formato, marca, resolucao, qualidade, 
   }
   const dir = caminhoProjeto(id);
   const quando = carimbo();
-  const saida = path.join(dir, 'renders', `${projeto.id.split('-').slice(1).join('-') || 'video'}-${quando}.${formato}`);
+  const saida = pastaSaida
+    ? caminhoLivre(pastaSaida, nomeDoVideo(projeto), formato)
+    : path.join(dir, 'renders', `${projeto.id.split('-').slice(1).join('-') || 'video'}-${quando}.${formato}`);
+  fs.mkdirSync(path.dirname(saida), { recursive: true });
   // Temporários no mesmo disco dos projetos: o C: costuma estar cheio e os arquivos ligados não cruzam discos.
   const raizTmp = path.join(dirs().ws, '.tmp');
   // Só um render roda por vez: o que estiver aqui sobrou de um app fechado no meio do render.

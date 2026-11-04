@@ -347,7 +347,7 @@ ipcMain.handle('render', async (_e, { id, modo, formato }) => {
 // Exporta uma lista de vídeos (as timelines de uma pasta) um depois do outro, com as opções de render salvas.
 const lotesRender = new Map(); // chave -> AbortController
 
-ipcMain.handle('render:todos', async (_e, { ids, chave }) => {
+ipcMain.handle('render:todos', async (_e, { ids, chave, pastaSaida, modo, formato }) => {
   const controle = new AbortController();
   lotesRender.set(chave, controle);
   const resultados = [];
@@ -358,7 +358,7 @@ ipcMain.handle('render:todos', async (_e, { ids, chave }) => {
       const lote = (e) => enviar('agente', { id, tipo: 'lote', indice: i + 1, total: ids.length, nome, ...e });
       lote({ etapa: 'Começando', progresso: 0 });
       try {
-        const r = await renderizar(id, {}, (e) => {
+        const r = await renderizar(id, { pastaSaida, modo, formato }, (e) => {
           enviar('agente', { id, tipo: 'render', ...e });
           if (e.etapa) lote({ etapa: e.etapa, progresso: e.progresso ?? 0 });
         }, controle.signal);
