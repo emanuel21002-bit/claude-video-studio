@@ -84,16 +84,16 @@ ${p.timeline ? '- mcp__studio__resumo_timeline — a timeline sem as palavras da
 ECONOMIA (cada imagem e cada arquivo lido é reenviado em todos os turnos; siga sempre):
 - Conversão de vídeo (codec, formato, compressão) não é com você: o app converte os materiais na importação e tem um conversor próprio. Nunca rode ffmpeg nem HandBrake; se um material não abrir, avise o usuário.
 - Veja os clipes com mcp__studio__ver_materiais, nunca extraindo quadros com ffmpeg nem lendo imagens soltas. Só peça clipes específicos para decidir um corte difícil.
-- Confira o vídeo com mcp__studio__ver_quadros, que lê direto da timeline sem renderizar. Peça no máximo 8 momentos por vez.
-- O render leva minutos e só roda uma vez: chame mcp__studio__renderizar só depois de conferir os quadros e corrigir tudo, ou quando o usuário pedir. Nunca renderize para conferir.
+- PARE ANTES DE CONFERIR: o usuário confere e renderiza sozinho, para poupar créditos. Não use mcp__studio__ver_quadros nem mcp__studio__renderizar por conta própria; só use se o usuário pedir explicitamente. Ao terminar a montagem, avise que está pronta para conferência.
+- RITMO: cada cena/clipe fica de 1 a 2 segundos na tela, para o vídeo não ficar acelerado nem poluído. Nunca deixe cenas com menos de 1 s nem passe de 2 s sem pedido do usuário.
 - Nunca renderize pelo CLI nem por Bash, e nunca rode nada em segundo plano. Se o render falhar, descubra a causa e mude algo antes de chamar de novo; não repita a mesma chamada. Se a chamada vier interrompida, avise o usuário em vez de insistir.
 - Depois da primeira montagem, use mcp__studio__resumo_timeline e mcp__studio__editar_timeline. Não leia nem reescreva timeline.json inteiro.
 - O briefing já traz a transcrição: não leia transcricao.json. Faça várias alterações de uma vez e leia um arquivo só uma vez.
 
 COMO TRABALHAR:
 - Responda sempre em português do Brasil, curto e direto: o usuário vê suas mensagens num chat ao lado do player.
-- Na primeira montagem: leia o briefing, monte o vídeo completo, confira com ver_quadros, corrija o que estiver errado e só então renderize uma vez.
-${p.timeline ? '- Em pedidos de alteração: altere só o que foi pedido na timeline e diga em uma ou duas frases o que mudou. A prévia ao vivo do app já mostra a mudança; só renderize quando o usuário pedir.\n- Mensagens podem trazer [Timeline: …] com a posição do cursor e o item selecionado: é a isso que o usuário se refere com "aqui" ou "esse".' : '- Em pedidos de alteração: altere só o que foi pedido, renderize de novo e diga em uma ou duas frases o que mudou.'}
+- Na primeira montagem: leia o briefing, monte o vídeo completo (cenas de 1 a 2 s) e pare: não confira com ver_quadros nem renderize, o usuário faz isso.
+${p.timeline ? '- Em pedidos de alteração: altere só o que foi pedido na timeline e diga em uma ou duas frases o que mudou. A prévia ao vivo do app já mostra a mudança; só renderize quando o usuário pedir.\n- Mensagens podem trazer [Timeline: …] com a posição do cursor e o item selecionado: é a isso que o usuário se refere com "aqui" ou "esse".' : '- Em pedidos de alteração: altere só o que foi pedido, sem renderizar nem conferir (o usuário faz isso), e diga em uma ou duas frases o que mudou.'}
 `.trim();
 }
 
@@ -341,7 +341,7 @@ function guardarSessao(id, sessionId) {
 }
 
 export function primeiraMensagem(p, salvarEstilo, referencia) {
-  let m = `Leia projetos/${p.id}/BRIEFING.md e monte o vídeo completo no estilo pedido. Confira com mcp__studio__ver_quadros, corrija, renderize uma vez com mcp__studio__renderizar e me diga em poucas linhas o que montou.`;
+  let m = `Leia projetos/${p.id}/BRIEFING.md e monte o vídeo completo no estilo pedido, com cenas de 1 a 2 segundos cada. Não confira com mcp__studio__ver_quadros nem renderize: eu faço isso. Me diga em poucas linhas o que montou.`;
   if (p.lote) m += ` Este é o vídeo ${p.lote.indice} de ${p.lote.total} de um lote: mesmos materiais, cada vídeo com sua narração.`;
   if (referencia) m += ` Para o lote ter a mesma identidade, leia antes (só leitura) projetos/${referencia}/src/blocos.tsx e o estilo de alguns itens de projetos/${referencia}/timeline.json com Grep, e siga o mesmo visual, adaptando os cortes e a escolha das cenas a esta narração.`;
   if (salvarEstilo) m += ' No final, salve o estilo com mcp__studio__salvar_estilo, com um nome curto que o descreva.';

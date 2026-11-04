@@ -842,11 +842,11 @@ const MODELOS = [
   ['claude-fable-5-1', 'Fable 5.1'],
 ];
 
-// Os dois seletores (chat e configurações) mostram o mesmo modelo salvo.
+// Os seletores (chat, estilo e configurações) mostram o mesmo modelo salvo.
 function preencherModelos() {
   const atual = estado.config?.modeloClaude;
   const lista = MODELOS.some(([v]) => v === atual) || !atual ? MODELOS : [...MODELOS, [atual, atual]];
-  for (const sel of [$('#chat-modelo'), $('#cfg-modelo')]) {
+  for (const sel of [$('#chat-modelo'), $('#cfg-modelo'), $('#estilo-modelo')]) {
     sel.replaceChildren(...lista.map(([v, t]) => new Option(t, v)));
     sel.value = atual ?? MODELOS[0][0];
   }
@@ -920,10 +920,12 @@ async function oferecerFilaInterrompida() {
 function ligar() {
   renderEstilosUmaVez();
   ligarTranscode();
-  $('#chat-modelo').onchange = async (e) => {
-    estado.config = await api.salvarConfig({ modeloClaude: e.target.value });
-    preencherModelos();
-  };
+  for (const id of ['#chat-modelo', '#estilo-modelo']) {
+    $(id).onchange = async (e) => {
+      estado.config = await api.salvarConfig({ modeloClaude: e.target.value });
+      preencherModelos();
+    };
+  }
   $('#btn-sel-referencia').onclick = async () => adicionarReferencias(await api.escolher({ tipo: 'referencia', multiplos: true }));
   areaDeSoltar($('#drop-referencia'), adicionarReferencias);
   $('#btn-novo').onclick = novoVideo;
