@@ -909,6 +909,127 @@ function ligarTranscode() {
   areaDeSoltar($('#drop-transcode'), adicionarTranscode);
 }
 
+// ---------- decupagem de narrações ----------
+
+const dc = { itens: [], pausa: 0.15, sobreposicao: 0.2, limiar: -35, velocidade: 1.2, formato: 'wav', aprimorar: true, normalizar: true, ganho: 4, pasta: null, rodando: false };
+const EXT_AUDIOS = /\.(mp3|wav|m4a|aac|ogg|flac|opus|wma)$/i;
+
+const tempo = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+
+function abrirDecupar() {
+  TL.fechar();
+  estado.projetoId = null;
+  carregarProjetos();
+  renderDecupar();
+  mostrarVista('decupar');
+}
+
+async function adicionarDecupar(caminhos) {
+  const novos = caminhos.filter((c) => EXT_AUDIOS.test(c) && !dc.itens.some((i) => i.arquivo === c));
+  if (!novos.length) return;
+  const infos = await api.infoAudios(novos);
+  for (const info of infos) if (info.duracao > 0) dc.itens.push({ ...info, status: 'aguardando', progresso: 0 });
+  renderDecupar();
+}
+
+function renderDecupar() {
+  const ul = $('#lista-decupar');
+  ul.innerHTML = '';
+  dc.itens.forEach((it) => {
+    const li = document.createElement('li');
+    li.innerHTML = `<div class="tc-nome"><span></span><small></small></div><span class="selo"></span><span class="tc-status"></span><div class="barra"></div>`;
+    li.querySelector('.tc-nome span').textContent = nomeArquivo(it.arquivo);
+    li.querySelector('small').textContent = it.status === 'pronto' ? `${it.cortes} cortes · ${tempo(it.antes)} → ${tempo(it.depois)}` : tempo(it.duracao);
+    li.querySelector('.selo').textContent = nomeArquivo(it.arquivo).split('.').pop().toUpperCase();
+    const st = li.querySelector('.tc-status');
+    st.className = 'tc-status ' + (it.status === 'decupando' ? '' : it.status);
+    st.textContent = { aguardando: 'Na fila', decupando: `${Math.round(it.progresso * 100)}%`, pronto: `Pronto (${it.segundos}s) — abrir`, erro: 'Erro: ' + (it.erro ?? '') }[it.status];
+    st.title = it.erro ?? '';
+    if (it.status === 'pronto') st.onclick = () => api.mostrarNaPasta(it.saida);
+    li.querySelector('.barra').style.width = `${Math.round(it.progresso * 100)}%`;
+    ul.append(li);
+  });
+  const pendentes = dc.itens.some((i) => i.status === 'aguardando' || i.status === 'erro');
+  $('#btn-dc-iniciar').disabled = dc.rodando || !pendentes;
+  $('#btn-dc-cancelar').hidden = !dc.rodando;
+  $('#btn-dc-limpar').disabled = dc.rodando;
+  $('#dc-pasta').textContent = dc.pasta ?? 'Mesma pasta do original';
+  $('#btn-dc-pasta-limpar').hidden = !dc.pasta;
+}
+
+api.aoDecupar((e) => {
+  const it = dc.itens.filter((i) => i.naFila)[e.indice];
+  if (!it) return;
+  Object.assign(it, e);
+  renderDecupar();
+});
+
+async function iniciarDecupar() {
+  dc.itens.forEach((i) => (i.naFila = i.status === 'aguardando' || i.status === 'erro'));
+  const fila = dc.itens.filter((i) => i.naFila);
+  fila.forEach((i) => Object.assign(i, { status: 'aguardando', progresso: 0, erro: null }));
+  dc.rodando = true;
+  renderDecupar();
+  const resultados = await api.decuparAudios({
+    arquivos: fila.map((i) => i.arquivo),
+    opcoes: {
+      pausa: dc.pausa,
+      sobreposicao: dc.sobreposicao,
+      limiar: dc.limiar,
+      velocidade: dc.velocidade,
+      formato: dc.formato,
+      aprimorar: dc.aprimorar,
+      normalizar: dc.normalizar,
+      ganho: dc.ganho,
+      pastaSaida: dc.pasta,
+    },
+  });
+  fila.forEach((i, n) => Object.assign(i, resultados[n], { naFila: false }));
+  dc.rodando = false;
+  renderDecupar();
+}
+
+function ligarDecupar() {
+  $('#btn-decupar').onclick = abrirDecupar;
+  $('#btn-sel-decupar').onclick = async () => adicionarDecupar(await api.escolher({ tipo: 'narracao', multiplos: true }));
+  const numero = (id, chave, min, max) => {
+    const el = $(id);
+    el.value = dc[chave];
+    el.onchange = () => {
+      const v = Number(el.value);
+      dc[chave] = Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : dc[chave];
+      el.value = dc[chave];
+    };
+  };
+  numero('#dc-pausa', 'pausa', 0, 1);
+  numero('#dc-sobreposicao', 'sobreposicao', 0.05, 0.6);
+  numero('#dc-limiar', 'limiar', -60, -15);
+  numero('#dc-ganho', 'ganho', 0, 12);
+  $('#dc-velocidade').value = String(dc.velocidade);
+  $('#dc-velocidade').onchange = (e) => (dc.velocidade = Number(e.target.value));
+  $('#dc-aprimorar').checked = dc.aprimorar;
+  $('#dc-aprimorar').onchange = (e) => (dc.aprimorar = e.target.checked);
+  $('#dc-normalizar').checked = dc.normalizar;
+  $('#dc-normalizar').onchange = (e) => (dc.normalizar = e.target.checked);
+  segmentado($('#seg-dc-formato'), dc.formato, (v) => (dc.formato = v));
+  $('#btn-dc-iniciar').onclick = iniciarDecupar;
+  $('#btn-dc-cancelar').onclick = () => api.cancelarDecupagem();
+  $('#btn-dc-limpar').onclick = () => {
+    dc.itens = [];
+    renderDecupar();
+  };
+  $('#btn-dc-pasta').onclick = async () => {
+    const p = await api.pastaSaida();
+    if (p) dc.pasta = p;
+    renderDecupar();
+  };
+  $('#btn-dc-pasta-limpar').onclick = () => {
+    dc.pasta = null;
+    renderDecupar();
+  };
+  areaDeSoltar($('#drop-decupar'), adicionarDecupar);
+}
+
 // ---------- configurações ----------
 
 const CAMPOS = {
@@ -1006,6 +1127,7 @@ async function oferecerFilaInterrompida() {
 function ligar() {
   renderEstilosUmaVez();
   ligarTranscode();
+  ligarDecupar();
   for (const id of ['#chat-modelo', '#estilo-modelo']) {
     $(id).onchange = async (e) => {
       estado.config = await api.salvarConfig({ modeloClaude: e.target.value });

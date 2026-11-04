@@ -10,6 +10,7 @@ import { listarMateriais,
   workspacePronto, prepararWorkspace, criarProjeto, listarProjetos, lerProjeto, gravarProjeto,
   escreverBriefing, caminhoProjeto, tipoDe, resolverNarracoes,
 } from './workspace.mjs';
+import { decuparAudio } from './decupar.mjs';
 import { whisperDisponivel, transcrever, transcreverArquivo } from './transcricao.mjs';
 import { renderizar } from './render.mjs';
 import { conversar, cancelar, primeiraMensagem, claudeExe } from './agente.mjs';
@@ -427,6 +428,35 @@ ipcMain.handle('transcode:iniciar', async (_e, { arquivos, formato, modo, pastaS
 });
 
 ipcMain.handle('transcode:cancelar', () => conversaoAtual?.abort());
+
+// ---------- decupagem de narrações ----------
+
+let decupagemAtual = null;
+
+ipcMain.handle('decupar:info', async (_e, arquivos) =>
+  Promise.all(arquivos.map(async (a) => ({ arquivo: a, duracao: (await infoVideo(a)).duracao }))),
+);
+
+ipcMain.handle('decupar:iniciar', async (_e, { arquivos, opcoes }) => {
+  decupagemAtual = new AbortController();
+  const sinal = decupagemAtual.signal;
+  const resultados = arquivos.map(() => ({ status: 'aguardando', progresso: 0 }));
+  for (let i = 0; i < arquivos.length; i++) {
+    if (sinal.aborted) break;
+    enviar('decupar', { indice: i, status: 'decupando', progresso: 0 });
+    try {
+      const r = await decuparAudio(arquivos[i], opcoes, (p) => enviar('decupar', { indice: i, status: 'decupando', progresso: p }), sinal);
+      resultados[i] = { status: 'pronto', progresso: 1, ...r };
+    } catch (e) {
+      resultados[i] = sinal.aborted ? { status: 'aguardando', progresso: 0 } : { status: 'erro', progresso: 0, erro: e.message.split('\n')[0] };
+    }
+    enviar('decupar', { indice: i, ...resultados[i] });
+  }
+  decupagemAtual = null;
+  return resultados;
+});
+
+ipcMain.handle('decupar:cancelar', () => decupagemAtual?.abort());
 
 app.whenReady().then(criarJanela);
 app.on('window-all-closed', () => app.quit());

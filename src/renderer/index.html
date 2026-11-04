@@ -23,6 +23,7 @@
       <aside class="lateral">
         <button id="btn-novo" class="primario largo">+ Novo vídeo</button>
         <button id="btn-transcode" class="largo ferramenta">⇄ Converter vídeos</button>
+        <button id="btn-decupar" class="largo ferramenta">✂ Decupar áudios</button>
         <h3>Projetos</h3>
         <ul id="lista-projetos" class="lista-projetos"></ul>
       </aside>
@@ -175,6 +176,64 @@
             <div class="linha-botoes">
               <button id="btn-tc-cancelar" class="perigo" hidden>Cancelar</button>
               <button id="btn-tc-iniciar" class="primario" disabled>Converter</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Decupagem de narrações -->
+        <section id="v-decupar" class="vista">
+          <h1>Decupar áudios</h1>
+          <p class="sub">Corta as pausas de cada narração e sobrepõe as emendas, como no CapCut: cada trecho entra um pouco antes de o anterior terminar, e a fala fica fluida em vez de travada. Cada áudio vira um arquivo novo, o original não muda.</p>
+          <div id="drop-decupar" class="drop">
+            <div class="drop-txt">Solte os áudios aqui</div>
+            <div class="linha-botoes"><button id="btn-sel-decupar">Selecionar áudios</button></div>
+          </div>
+          <div class="opcoes-transcode">
+            <label>Pausa que sobra (s)
+              <input id="dc-pausa" type="number" min="0" max="1" step="0.05" class="tc-numero" title="Respiro máximo entre as falas depois do corte" />
+            </label>
+            <label>Sobreposição (s)
+              <input id="dc-sobreposicao" type="number" min="0.05" max="0.6" step="0.05" class="tc-numero" title="Quanto um trecho entra no anterior (0,2 s = 6 frames a 30 fps)" />
+            </label>
+            <label>Silêncio abaixo de (dB)
+              <input id="dc-limiar" type="number" min="-60" max="-15" step="1" class="tc-numero" title="Mais perto de -60 só corta silêncio total; mais perto de -15 corta até fala baixa" />
+            </label>
+            <label>Velocidade
+              <select id="dc-velocidade">
+                <option value="1">1x</option>
+                <option value="1.1">1,1x</option>
+                <option value="1.2">1,2x</option>
+                <option value="1.3">1,3x</option>
+                <option value="1.5">1,5x</option>
+              </select>
+            </label>
+            <label>Formato
+              <div class="segmentado" id="seg-dc-formato">
+                <button data-v="wav">WAV</button>
+                <button data-v="mp3">MP3</button>
+                <button data-v="m4a">M4A</button>
+              </div>
+            </label>
+          </div>
+          <div class="opcoes-transcode">
+            <label class="check"><input type="checkbox" id="dc-aprimorar" /> Aprimorar a voz (filtro de graves, ruído e compressão leve)</label>
+            <label class="check"><input type="checkbox" id="dc-normalizar" /> Normalizar o volume e dar ganho de
+              <input id="dc-ganho" type="number" min="0" max="12" step="1" class="tc-numero" /> dB
+            </label>
+            <label>Salvar em
+              <div class="linha-pasta">
+                <span id="dc-pasta">Mesma pasta do original</span>
+                <button id="btn-dc-pasta">Escolher…</button>
+                <button id="btn-dc-pasta-limpar" hidden>Usar a do original</button>
+              </div>
+            </label>
+          </div>
+          <ul id="lista-decupar" class="lista-transcode"></ul>
+          <div class="rodape-passo">
+            <button id="btn-dc-limpar">Limpar lista</button>
+            <div class="linha-botoes">
+              <button id="btn-dc-cancelar" class="perigo" hidden>Cancelar</button>
+              <button id="btn-dc-iniciar" class="primario" disabled>Decupar</button>
             </div>
           </div>
         </section>
