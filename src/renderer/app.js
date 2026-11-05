@@ -25,6 +25,8 @@ const urlArquivo = (p) => 'file:///' + encodeURI(p.replace(/\\/g, '/')).replace(
 const nomeArquivo = (p) => p.split(/[\\/]/).pop();
 
 function mostrarVista(nome) {
+  // Saindo da criação de projeto: guarda o que já foi preenchido.
+  if (estado.vista === 'wizard' && nome !== 'wizard') salvarRascunhoAgora();
   estado.vista = nome;
   $$('.vista').forEach((v) => v.classList.toggle('ativa', v.id === 'v-' + nome));
 }
@@ -344,12 +346,175 @@ function definirSoMotion(sim) {
   if (estado.catalogo) escolherEstilo(sim ? 'minimalista' : estado.estiloId);
 }
 
+// ---------- pré-projetos (rascunhos da criação) ----------
+
+const CHAVE_RASCUNHOS = 'preProjetos';
+
+function lerRascunhos() {
+  try {
+    const l = JSON.parse(localStorage.getItem(CHAVE_RASCUNHOS) ?? '[]');
+    return Array.isArray(l) ? l : [];
+  } catch {
+    return [];
+  }
+}
+
+function gravarRascunhos(lista) {
+  try {
+    localStorage.setItem(CHAVE_RASCUNHOS, JSON.stringify(lista));
+  } catch {}
+}
+
+// Tudo o que o assistente guarda: o estado da tela mais os campos digitados.
+function coletarRascunho() {
+  return {
+    nome: $('#nome-video').value,
+    textoEstilo: $('#texto-estilo').value,
+    salvarEstilo: $('#salvar-estilo').checked,
+    duracao: $('#duracao-motion').value,
+    materiais: estado.materiais,
+    pastas: estado.pastas,
+    narracoes: estado.narracoes,
+    referencias: estado.referencias,
+    audiosInstrucao: estado.audiosInstrucao,
+    roteiros: estado.roteiros,
+    semNarracao: estado.semNarracao,
+    soMotion: estado.soMotion,
+    estiloId: estado.estiloId,
+    engine: estado.engine,
+    formato: estado.formato,
+    passo: Number($('.passo.ativo')?.dataset.passo) || 1,
+  };
+}
+
+const temConteudo = (d) =>
+  !!(d.nome.trim() || d.textoEstilo.trim() || d.materiais.length || d.narracoes.length || d.referencias.length || d.audiosInstrucao.length || d.roteiros.length || d.soMotion);
+
+let ultimoRascunho = '';
+
+function salvarRascunhoAgora() {
+  if (!estado.pronto || estado.vista !== 'wizard') return;
+  const dados = coletarRascunho();
+  const json = JSON.stringify(dados);
+  if (json === ultimoRascunho) return;
+  ultimoRascunho = json;
+  const lista = lerRascunhos();
+  const i = lista.findIndex((r) => r.id === estado.rascunhoId);
+  if (!temConteudo(dados)) {
+    if (i >= 0) {
+      lista.splice(i, 1);
+      estado.rascunhoId = null;
+    }
+  } else {
+    estado.rascunhoId ??= 'r' + Date.now().toString(36);
+    const r = { id: estado.rascunhoId, atualizadoEm: Date.now(), dados };
+    if (i >= 0) lista[i] = r;
+    else lista.unshift(r);
+  }
+  gravarRascunhos(lista);
+  renderRascunhos();
+}
+
+function descartarRascunho(id) {
+  if (!id) return;
+  gravarRascunhos(lerRascunhos().filter((r) => r.id !== id));
+  if (estado.rascunhoId === id) estado.rascunhoId = null;
+  ultimoRascunho = '';
+  renderRascunhos();
+}
+
+function quandoFoi(ms) {
+  const min = Math.round((Date.now() - ms) / 60000);
+  if (min < 1) return 'agora';
+  if (min < 60) return `há ${min} min`;
+  if (min < 1440) return `há ${Math.round(min / 60)} h`;
+  return new Date(ms).toLocaleDateString('pt-BR');
+}
+
+function renderRascunhos() {
+  const lista = lerRascunhos();
+  $('#bloco-rascunhos').hidden = !lista.length;
+  const ul = $('#lista-rascunhos');
+  ul.replaceChildren(
+    ...lista.map((r) => {
+      const d = r.dados;
+      const li = document.createElement('li');
+      li.className = 'rascunho' + (r.id === estado.rascunhoId && estado.vista === 'wizard' ? ' ativo' : '');
+      li.innerHTML = '<div class="rascunho-txt"><div class="p-nome"></div><div class="p-meta"></div></div><button type="button" class="rascunho-x" title="Descartar este pré-projeto">×</button>';
+      li.querySelector('.p-nome').textContent = d.nome.trim() || 'Projeto sem nome';
+      const partes = [
+        d.soMotion ? 'só motion' : `${d.materiais.length} material${d.materiais.length === 1 ? '' : 'is'}`,
+        d.narracoes.length && `${d.narracoes.length} narração${d.narracoes.length === 1 ? '' : 'ões'}`,
+        `passo ${d.passo}/3`,
+        quandoFoi(r.atualizadoEm),
+      ];
+      li.querySelector('.p-meta').textContent = partes.filter(Boolean).join(' · ');
+      li.onclick = () => abrirRascunho(r.id);
+      li.querySelector('.rascunho-x').onclick = (ev) => {
+        ev.stopPropagation();
+        if (!confirm('Descartar este pré-projeto? Os arquivos originais não são apagados.')) return;
+        const eraAtual = r.id === estado.rascunhoId;
+        descartarRascunho(r.id);
+        if (eraAtual && estado.vista === 'wizard') novoVideo();
+      };
+      return li;
+    }),
+  );
+}
+
+function abrirRascunho(id) {
+  const r = lerRascunhos().find((x) => x.id === id);
+  if (!r || !estado.pronto) return;
+  salvarRascunhoAgora();
+  TL.fechar();
+  estado.projetoId = null;
+  const d = r.dados;
+  estado.rascunhoId = r.id;
+  estado.materiais = d.materiais ?? [];
+  estado.pastas = d.pastas ?? {};
+  estado.narracoes = d.narracoes ?? [];
+  estado.referencias = d.referencias ?? [];
+  estado.audiosInstrucao = d.audiosInstrucao ?? [];
+  estado.roteiros = d.roteiros ?? [];
+  estado.semNarracao = !!d.semNarracao;
+  $('#sem-narracao').checked = estado.semNarracao;
+  $('#nome-video').value = d.nome ?? '';
+  $('#texto-estilo').value = d.textoEstilo ?? '';
+  $('#salvar-estilo').checked = !!d.salvarEstilo;
+  $('#duracao-motion').value = d.duracao || 15;
+  definirSoMotion(!!d.soMotion);
+  escolherEstilo(d.estiloId);
+  estado.engine = d.engine ?? estado.engine;
+  estado.formato = d.formato ?? estado.formato;
+  segmentado($('#seg-engine'), estado.engine, (v) => (estado.engine = v));
+  segmentado($('#seg-formato'), estado.formato, (v) => (estado.formato = v));
+  renderRoteirosNovos();
+  renderReferencias();
+  renderAudioInstrucao();
+  renderMateriais();
+  renderNarracao();
+  irPasso(d.passo || 1);
+  ultimoRascunho = JSON.stringify(coletarRascunho());
+  mostrarVista('wizard');
+  carregarProjetos();
+  renderRascunhos();
+}
+
+// A cada segundo, enquanto o assistente está aberto, o que foi preenchido é guardado: trocar de aba ou abrir
+// outro projeto não perde nada, e o pré-projeto continua na lista da lateral mesmo depois de fechar o app.
+setInterval(salvarRascunhoAgora, 1000);
+window.addEventListener('beforeunload', salvarRascunhoAgora);
+
 function novoVideo() {
   if (!estado.pronto) {
     renderChecklist();
     mostrarVista('setup');
     return;
   }
+  // O que estava sendo preenchido fica guardado como pré-projeto; esta tela começa em branco.
+  salvarRascunhoAgora();
+  estado.rascunhoId = null;
+  ultimoRascunho = '';
   TL.fechar();
   estado.projetoId = null;
   estado.materiais = [];
@@ -375,6 +540,7 @@ function novoVideo() {
   irPasso(1);
   mostrarVista('wizard');
   carregarProjetos();
+  renderRascunhos();
 }
 
 const EXT_ROTEIRO = /\.(pdf|docx|odt|txt|md|rtf)$/i;
@@ -650,6 +816,7 @@ async function criar() {
       formato: estado.formato,
     });
     criados.forEach((p) => estado.trabalhando.add(p.id));
+    descartarRascunho(estado.rascunhoId);
     await abrirProjeto(criados[0].id);
   } catch (e) {
     addMsg('erro', 'Não consegui criar o projeto: ' + e.message);
@@ -1544,6 +1711,7 @@ async function iniciar() {
   if (!estado.ambiente.encoderGpu && estado.config.renderModo === 'gpu') {
     estado.config = await api.salvarConfig({ renderModo: 'cpu' });
   }
+  renderRascunhos();
   if (estado.projetoId) abrirProjeto(estado.projetoId);
   else novoVideo();
   oferecerFilaInterrompida();

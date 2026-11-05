@@ -608,3 +608,11 @@ body.redimensionando video, body.redimensionando .previa-host { pointer-events: 
 .ra-etapa { color: var(--acento-2); font-size: 12px; white-space: nowrap; }
 .ra-barra { grid-column: 1 / -1; height: 3px; border-radius: 2px; background: var(--painel-2); overflow: hidden; }
 .ra-barra > div { height: 100%; width: 0; background: var(--acento); transition: width 0.3s; }
+
+/* Pré-projetos (rascunhos) na lateral */
+.lista-rascunhos li.rascunho { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; border-left: 3px solid var(--roxo); }
+.rascunho-txt { min-width: 0; flex: 1; }
+.lista-rascunhos .p-nome { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lista-rascunhos li.rascunho.ativo { background: var(--painel-2); outline: 1px solid var(--borda); }
+.lista-rascunhos .rascunho-x { flex: none; padding: 0 6px; font-size: 16px; line-height: 1.2; background: none; border: none; color: var(--fraco); }
+.lista-rascunhos .rascunho-x:hover { color: var(--erro); }
