@@ -292,7 +292,11 @@ async function exportarPeloFilmcraft(id, saida, { modo, codec, formato, escala, 
     ...(fps && !hevc ? { frameRate: { num: fps, den: 1 } } : {}),
   };
   try {
-    await prepararProjetoFilmcraft(id, projetoFc, (l) => opts.onEvento?.({ log: l }));
+    await prepararProjetoFilmcraft(id, projetoFc, (l) => {
+      opts.onEvento?.({ log: l });
+      // O app mostra se a camada de textos foi reaproveitada ou está sendo renderizada.
+      if (/reaproveitando|Renderizando textos/.test(l)) opts.onEvento?.({ etapa: l.replace(/ para o Filmcraft/, '').replace(/…$/, ''), progresso: 0.05 });
+    });
     if (opts.sinal?.aborted) throw new Error('Render cancelado.');
     await etapa('Exportando pelo Filmcraft', cli(), [
       '--project', projetoFc, 'export', destino, '--format', codec === 'prores' ? 'prores' : 'h264', '--gpu-rendering', modo === 'gpu' ? 'auto' : 'off',

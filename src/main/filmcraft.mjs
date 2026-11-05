@@ -24,6 +24,32 @@ const projetoFc = (id) => path.join(pasta(id), 'projeto.fcproj');
 
 const temCamada = (i) => !i.arquivo;
 
+const CAMADAS_GUARDADAS = 4;
+
+// Tudo o que muda o desenho da camada: os itens gráficos, o código do modelo e dos blocos e os arquivos que os blocos citam
+// (logo, selo, música de fundo). Mexer só nos cortes dos vídeos não muda nada disso.
+function hashDaCamada(id, soGraficos) {
+  const src = path.join(caminhoTimeline(id), 'src');
+  const h = crypto.createHash('sha1').update(JSON.stringify(soGraficos));
+  let codigo = '';
+  for (const n of ['index.ts', 'Root.tsx', 'TimelineVideo.tsx', 'blocos.tsx']) {
+    const c = path.join(src, n);
+    if (!fs.existsSync(c)) continue;
+    const txt = fs.readFileSync(c, 'utf8');
+    codigo += txt;
+    h.update(n).update(txt);
+  }
+  const assets = caminhoAssets(id);
+  if (fs.existsSync(assets)) {
+    for (const e of fs.readdirSync(assets, { withFileTypes: true })) {
+      if (!e.isFile() || !codigo.includes(e.name)) continue;
+      const info = fs.statSync(path.join(assets, e.name));
+      h.update(`${e.name}:${info.size}:${info.mtimeMs}`);
+    }
+  }
+  return h.digest('hex');
+}
+
 // Texto, legendas e blocos são desenhados pelo Remotion: vão como um vídeo transparente, só para referência.
 async function renderizarCamada(id, t, onLinha) {
   const soGraficos = {
@@ -33,15 +59,19 @@ async function renderizarCamada(id, t, onLinha) {
   };
   const itens = soGraficos.trilhas.flatMap((tr) => tr.itens);
   if (!itens.length) return null;
-  const blocos = path.join(caminhoTimeline(id), 'src', 'blocos.tsx');
-  const hash = crypto.createHash('sha1')
-    .update(JSON.stringify(soGraficos))
-    .update(fs.existsSync(blocos) ? fs.readFileSync(blocos) : '')
-    .digest('hex');
+  const hash = hashDaCamada(id, soGraficos);
   const saida = path.join(pasta(id), `camada-${hash.slice(0, 12)}.mov`);
   const duracao = Math.max(...itens.map((i) => i.inicio + i.duracao));
-  if (fs.existsSync(saida)) return { arquivo: saida, duracao };
-  for (const n of fs.readdirSync(pasta(id))) if (/^camada-.*\.mov$/.test(n)) fs.rmSync(path.join(pasta(id), n), { force: true });
+  if (fs.existsSync(saida)) {
+    // Mesmo texto, legenda e efeito de antes: nada a renderizar. Marca o uso para o arquivo não ser descartado.
+    fs.utimesSync(saida, new Date(), new Date());
+    onLinha?.('Textos, legendas e efeitos iguais aos da última vez: reaproveitando a camada pronta.');
+    return { arquivo: saida, duracao };
+  }
+  // Guarda as últimas camadas: voltar a uma versão anterior (desfazer uma troca de cor, por exemplo) não renderiza de novo.
+  const antigas = fs.readdirSync(pasta(id)).filter((n) => /^camada-.*\.mov$/.test(n))
+    .map((n) => ({ n, t: fs.statSync(path.join(pasta(id), n)).mtimeMs })).sort((a, b) => b.t - a.t);
+  for (const { n } of antigas.slice(CAMADAS_GUARDADAS - 1)) fs.rmSync(path.join(pasta(id), n), { force: true });
   const props = path.join(pasta(id), 'camada-props.json');
   fs.writeFileSync(props, JSON.stringify({ timeline: soGraficos }));
   onLinha?.('Renderizando textos, legendas e efeitos para o Filmcraft…');
