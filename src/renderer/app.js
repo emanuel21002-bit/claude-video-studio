@@ -17,6 +17,7 @@ const estado = {
   trabalhando: new Set(),
   naFila: new Set(),
   referencias: [],
+  roteiros: [],
   audiosInstrucao: [],
 };
 
@@ -128,7 +129,7 @@ function logSetup(l) {
 
 // ---------- projetos ----------
 
-// Cada projeto é uma pasta com uma ou mais timelines (os vídeos de um lote ficam na mesma pasta).
+// Cada projeto tem um conjunto de materiais e uma ou mais timelines.
 function pastasDe(lista) {
   const pastas = new Map();
   for (const p of lista) {
@@ -136,14 +137,11 @@ function pastasDe(lista) {
     if (!pastas.has(id)) pastas.set(id, { id, nome: p.grupo?.nome ?? p.nome, timelines: [] });
     pastas.get(id).timelines.push(p);
   }
-  for (const f of pastas.values()) {
-    f.timelines.sort((a, b) => (a.lote?.indice ?? 0) - (b.lote?.indice ?? 0) || a.criadoEm.localeCompare(b.criadoEm));
-  }
+  for (const f of pastas.values()) f.timelines.sort((a, b) => a.ordem - b.ordem);
   return [...pastas.values()]; // a lista já vem da mais nova para a mais antiga
 }
 
-// Dentro da pasta o nome do vídeo perde o prefixo da pasta: "Detailer 03.11 — Narração 1" vira "Narração 1".
-const rotuloTimeline = (f, p) => (p.nome.startsWith(f.nome + ' — ') ? p.nome.slice(f.nome.length + 3) : p.nome);
+const rotuloTimeline = (_f, p) => p.rotulo;
 
 const situacaoDe = (p) => (estado.naFila.has(p.id) ? 'na fila' : estado.trabalhando.has(p.id) ? 'montando' : '');
 
@@ -198,14 +196,14 @@ async function carregarProjetos() {
   renderAbasTimeline(lista);
 }
 
-// Abas com as timelines da pasta aberta, no topo do editor.
+// Abas com as timelines do projeto aberto, no topo do editor.
 function renderAbasTimeline(lista) {
   const abas = $('#ed-abas');
   const atual = lista.find((p) => p.id === estado.projetoId);
-  const irmas = atual ? lista.filter((p) => (p.grupo?.id ?? p.id) === (atual.grupo?.id ?? atual.id)) : [];
+  const irmas = atual ? lista.filter((p) => p.projetoId === atual.projetoId) : [];
   estado.irmasIds = irmas.map((p) => p.id);
   $('#btn-render-todos').hidden = irmas.length < 2;
-  abas.hidden = irmas.length < 2;
+  abas.hidden = !atual;
   abas.innerHTML = '';
   if (abas.hidden) return;
   const pasta = pastasDe(irmas)[0];
@@ -213,9 +211,113 @@ function renderAbasTimeline(lista) {
     const b = document.createElement('button');
     b.className = 'aba-timeline' + (p.id === atual.id ? ' ativo' : '');
     b.textContent = rotuloTimeline(pasta, p);
-    b.title = p.nome;
+    b.title = `${p.rotulo} (clique duplo para renomear)`;
     b.onclick = () => p.id !== atual.id && abrirProjeto(p.id);
+    b.ondblclick = () => renomearAba(b, p);
     abas.append(b);
+  }
+  const acao = (rotulo, titulo, fn) => {
+    const b = document.createElement('button');
+    b.className = 'aba-acao';
+    b.textContent = rotulo;
+    b.title = titulo;
+    b.onclick = fn;
+    abas.append(b);
+  };
+  acao('+ Nova', 'Nova timeline em branco, com os mesmos materiais do projeto', () => criarTimelineNoProjeto(api.novaTimeline));
+  acao('Duplicar', 'Nova timeline com uma cópia desta montagem. Os materiais não são copiados.', () => criarTimelineNoProjeto(api.duplicarTimeline));
+  if (irmas.length > 1) acao('Excluir', 'Exclui esta timeline e os renders dela. Os materiais continuam no projeto.', excluirTimelineAtual);
+}
+
+async function criarTimelineNoProjeto(acao) {
+  const id = estado.projetoId;
+  if (estado.trabalhando.has(id)) return addMsg('erro', 'Espere o Claude terminar antes de criar outra timeline a partir desta.');
+  await TL.salvarAgora();
+  try {
+    const nova = await acao(id);
+    await abrirProjeto(nova.id);
+  } catch (e) {
+    addMsg('erro', 'Não consegui criar a timeline: ' + e.message.split('\n')[0]);
+  }
+}
+
+function renomearAba(botao, p) {
+  const campo = document.createElement('input');
+  campo.className = 'aba-renomear';
+  campo.value = p.rotulo;
+  let feito = false;
+  const concluir = async (salvar) => {
+    if (feito) return;
+    feito = true;
+    const novo = campo.value.trim();
+    if (salvar && novo && novo !== p.rotulo) {
+      try {
+        await api.renomearTimeline({ id: p.id, rotulo: novo });
+      } catch (e) {
+        addMsg('erro', 'Não consegui renomear: ' + e.message.split('\n')[0]);
+      }
+    }
+    if (p.id === estado.projetoId) $('#ed-nome').textContent = (await api.projeto(p.id)).nome;
+    carregarProjetos();
+  };
+  campo.onkeydown = (ev) => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter') concluir(true);
+    if (ev.key === 'Escape') concluir(false);
+  };
+  campo.onblur = () => concluir(true);
+  botao.replaceWith(campo);
+  campo.select();
+}
+
+// Renomeia o projeto inteiro (todas as timelines dele) direto no título.
+function renomearProjetoAtual() {
+  const id = estado.projetoId;
+  const titulo = $('#ed-nome');
+  if (!id || titulo.querySelector('input')) return;
+  const nomeAtual = estado.listaProjetos?.find((x) => x.id === id)?.grupo?.nome ?? titulo.textContent;
+  const campo = document.createElement('input');
+  campo.className = 'ed-nome-campo';
+  campo.value = nomeAtual;
+  campo.maxLength = 80;
+  let feito = false;
+  const concluir = async (salvar) => {
+    if (feito) return;
+    feito = true;
+    const novo = campo.value.trim();
+    if (salvar && novo && novo !== nomeAtual) {
+      try {
+        await api.renomearProjeto({ id, nome: novo });
+      } catch (e) {
+        addMsg('erro', 'Não consegui renomear: ' + e.message.split('\n')[0]);
+      }
+    }
+    if (estado.projetoId === id) titulo.textContent = (await api.projeto(id)).nome;
+    carregarProjetos();
+  };
+  campo.onkeydown = (ev) => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter') concluir(true);
+    if (ev.key === 'Escape') concluir(false);
+  };
+  campo.onblur = () => concluir(true);
+  titulo.replaceChildren(campo);
+  campo.select();
+}
+
+async function excluirTimelineAtual() {
+  const id = estado.projetoId;
+  const irmas = estado.irmasIds ?? [];
+  const p = await api.projeto(id);
+  if (!confirm(`Excluir a timeline "${p.rotulo}" e os renders dela?\n\nOs materiais continuam no projeto.`)) return;
+  // Fecha antes: o salvamento automático não pode recriar a timeline excluída.
+  await TL.fechar();
+  try {
+    await api.excluirTimeline(id);
+    await abrirProjeto(irmas[irmas.indexOf(id) - 1] ?? irmas.find((x) => x !== id));
+  } catch (e) {
+    addMsg('erro', 'Não consegui excluir: ' + e.message.split('\n')[0]);
+    await abrirProjeto(id);
   }
 }
 
@@ -255,6 +357,8 @@ function novoVideo() {
   estado.narracoes = [];
   estado.referencias = [];
   estado.audiosInstrucao = [];
+  estado.roteiros = [];
+  renderRoteirosNovos();
   renderReferencias();
   renderAudioInstrucao();
   estado.semNarracao = false;
@@ -273,7 +377,36 @@ function novoVideo() {
   carregarProjetos();
 }
 
-async function adicionarMateriais(caminhos) {
+const EXT_ROTEIRO = /\.(pdf|docx|odt|txt|md|rtf)$/i;
+
+function adicionarRoteirosNovos(caminhos) {
+  for (const c of caminhos) if (!estado.roteiros.includes(c)) estado.roteiros.push(c);
+  renderRoteirosNovos();
+}
+
+function renderRoteirosNovos() {
+  const el = $('#lista-roteiro-material');
+  el.innerHTML = '';
+  estado.roteiros.forEach((c, i) => {
+    const d = document.createElement('div');
+    d.className = 'chip-referencia';
+    d.innerHTML = '<span></span><button type="button" title="Remover">×</button>';
+    d.querySelector('span').textContent = nomeArquivo(c);
+    d.title = c;
+    d.querySelector('button').onclick = () => {
+      estado.roteiros.splice(i, 1);
+      renderRoteirosNovos();
+    };
+    el.append(d);
+  });
+}
+
+async function adicionarMateriais(todos) {
+  if (!todos.length) return;
+  // Documento solto junto com os vídeos é roteiro.
+  const documentos = todos.filter((c) => EXT_ROTEIRO.test(c));
+  if (documentos.length) adicionarRoteirosNovos(documentos);
+  const caminhos = todos.filter((c) => !EXT_ROTEIRO.test(c));
   if (!caminhos.length) return;
   const achados = await api.listarMateriais(caminhos);
   for (const { caminho, pasta } of achados) {
@@ -313,16 +446,14 @@ function renderMateriais() {
     g.append(grade);
     secoes.set(pasta, grade);
   }
-  estado.materiais.forEach(async (c, i) => {
+  // Só os nomes, sem miniatura: carregar o preview de vários vídeos pesados (HDR, HEVC) travava a tela.
+  estado.materiais.forEach((c) => {
     const d = document.createElement('div');
     d.className = 'mat';
-    d.innerHTML = `<div class="thumb"></div><div class="mat-nome"></div><button class="remover" title="Remover">×</button>`;
+    d.innerHTML = `<span class="mat-icone"></span><div class="mat-nome"></div><button class="remover" title="Remover">×</button>`;
     d.querySelector('.mat-nome').textContent = nomeArquivo(c);
-    const tipo = await api.tipoArquivo(c);
-    const thumb = d.querySelector('.thumb');
-    if (tipo === 'imagem') thumb.innerHTML = `<img src="${urlArquivo(c)}" />`;
-    else if (tipo === 'video') thumb.innerHTML = `<video src="${urlArquivo(c)}#t=0.5" muted preload="metadata"></video>`;
-    else thumb.textContent = '♪';
+    d.querySelector('.mat-nome').title = c;
+    d.querySelector('.mat-icone').textContent = /.(png|jpe?g|webp|gif|svg)$/i.test(c) ? '🖼' : /.(mp3|wav|m4a|aac|ogg|flac|opus)$/i.test(c) ? '♪' : '🎬';
     d.querySelector('.remover').onclick = () => {
       estado.materiais.splice(estado.materiais.indexOf(c), 1);
       renderMateriais();
@@ -509,6 +640,7 @@ async function criar() {
       pastas: estado.pastas,
       referencias: estado.referencias,
       audiosInstrucao: estado.audiosInstrucao,
+      roteiros: estado.roteiros,
       narracoes: estado.soMotion || estado.semNarracao ? [] : estado.narracoes.map((n) => ({ nome: n.nome, arquivos: n.arquivos })),
       duracaoMotion: estado.soMotion ? Math.max(1, Math.min(600, Number($('#duracao-motion').value) || 15)) : null,
       estiloId: estado.estiloId,
@@ -687,15 +819,104 @@ api.aoAgente(async (e) => {
   }
 });
 
+// ---------- janela de exportação ----------
+
+const DICAS_CODEC = {
+  hevc: 'Arquivo cerca de 40% menor na mesma qualidade. Depois de pronto, é mais pesado para reabrir e editar.',
+  h264: 'Toca em qualquer aparelho e programa. Arquivo maior que o HEVC.',
+  prores: 'Para continuar editando em outro programa. Arquivo muito grande, sem escolha de taxa de bits.',
+};
+
+let aoFecharExportar = null;
+
+function escolhasExportar() {
+  return {
+    codec: $('#exp-codec').value,
+    formato: $('#exp-formato').value,
+    qualidade: $('#render-qualidade').value,
+    resolucao: Number($('#render-resolucao').value),
+    fps: Number($('#exp-fps').value),
+    semAudio: $('#render-sem-audio').checked,
+  };
+}
+
+async function atualizarExportar() {
+  const prores = $('#exp-codec').value === 'prores';
+  // ProRes só existe em MOV e não tem taxa de bits para escolher.
+  if (prores) $('#exp-formato').value = 'mov';
+  $('#exp-formato').disabled = prores;
+  $('#render-qualidade').disabled = prores;
+  $('#exp-dica-codec').textContent = DICAS_CODEC[$('#exp-codec').value];
+  const e = await api.estimarRender({ id: estado.projetoId, ...escolhasExportar() }).catch(() => null);
+  if (!e?.duracao) return ($('#exp-resumo').textContent = '');
+  const mb = e.megabytes >= 1000 ? `${(e.megabytes / 1000).toFixed(1)} GB` : `${Math.round(e.megabytes)} MB`;
+  $('#exp-resumo').textContent = `Duração: ${Math.round(e.duracao)} s | Tamanho: cerca de ${mb}${$('#exp-linha-nome').hidden ? ' por vídeo' : ''}`;
+}
+
+// Resolve com as escolhas, ou null se cancelou. Na primeira vez vêm as especificações que o usuário usa no CapCut.
+async function abrirExportar({ lote }) {
+  const c = estado.config;
+  const primeira = !c.renderCodec;
+  const p = await api.projeto(estado.projetoId);
+  preencherResolucoes(p);
+  $('#exp-titulo').textContent = lote ? 'Exportar todos os vídeos da pasta' : `Exportar - ${p.nome}`;
+  $('#exp-linha-nome').hidden = lote;
+  $('#exp-nome').value = p.nome ?? '';
+  $('#exp-pasta').value = c.renderPasta ?? '';
+  $('#exp-pasta').placeholder = lote ? 'Escolha a pasta' : 'Pasta renders do projeto';
+  $('#exp-codec').value = primeira ? 'hevc' : c.renderCodec;
+  $('#exp-formato').value = primeira ? 'mov' : c.renderFormato;
+  $('#render-qualidade').value = primeira || c.renderQualidade === 'media' ? 'recomendado' : c.renderQualidade;
+  $('#render-sem-audio').checked = !!c.renderSemAudio;
+  $('#exp-fps').replaceChildren(new Option(`Original (${p.fps} fps)`, '0'), ...[24, 25, 30, 50, 60].filter((f) => f !== p.fps).map((f) => new Option(`${f} fps`, String(f))));
+  $('#exp-fps').value = [...$('#exp-fps').options].some((o) => Number(o.value) === c.renderFps) ? String(c.renderFps) : '0';
+  $('#exp-linha-motor').hidden = !estado.ambiente?.filmcraft;
+
+  const capa = TL.capa?.();
+  const video = $('#exp-capa');
+  video.parentElement.style.aspectRatio = `${p.largura} / ${p.altura}`;
+  if (capa) video.src = `${capa.url}#t=${capa.tempo}`;
+  atualizarExportar();
+  const dlg = $('#dlg-exportar');
+  dlg.showModal();
+  return new Promise((ok) => {
+    aoFecharExportar = (r) => {
+      aoFecharExportar = null;
+      video.removeAttribute('src');
+      video.load();
+      dlg.close();
+      ok(r);
+    };
+  });
+}
+
+async function confirmarExportar() {
+  const lote = $('#exp-linha-nome').hidden;
+  let pasta = $('#exp-pasta').value;
+  if (lote && !pasta) {
+    pasta = await api.pastaSaida();
+    if (!pasta) return;
+    $('#exp-pasta').value = pasta;
+  }
+  const e = escolhasExportar();
+  // A próxima exportação começa com as mesmas escolhas.
+  estado.config = await api.salvarConfig({
+    renderCodec: e.codec, renderFormato: e.formato, renderQualidade: e.qualidade, renderResolucao: e.resolucao, renderFps: e.fps, renderSemAudio: e.semAudio, renderPasta: pasta,
+  });
+  aoFecharExportar?.({ ...e, nome: $('#exp-nome').value, pastaSaida: pasta || null, modo: estado.config.renderModo, motor: estado.config.renderMotor });
+}
+
 async function renderTodos() {
   const botao = $('#btn-render-todos');
   if (estado.lote) {
     api.cancelarRenderTodos(estado.lote);
     return;
   }
-  // Os vídeos vão direto para a pasta escolhida, em vez de ficarem só dentro de cada projeto.
-  const pastaSaida = await api.pastaSaida();
-  if (!pastaSaida) return;
+  const escolhas = await abrirExportar({ lote: true });
+  if (!escolhas) return;
+  // Cada vídeo sai com o próprio nome.
+  const { nome: _nome, ...opcoes } = escolhas;
+  const { pastaSaida } = escolhas;
   // Vídeos que o Claude ainda está montando ficam de fora: o render pegaria a timeline pela metade.
   const ids = (estado.irmasIds ?? []).filter((id) => !estado.trabalhando.has(id));
   const ocupados = (estado.irmasIds ?? []).length - ids.length;
@@ -706,7 +927,7 @@ async function renderTodos() {
   $('#btn-render').disabled = true;
   progresso(0, `Exportando 1 de ${ids.length}…`);
   try {
-    const r = await api.renderizarTodos({ ids, chave: estado.lote, pastaSaida, modo: estado.config.renderModo, formato: estado.config.renderFormato });
+    const r = await api.renderizarTodos({ ids, chave: estado.lote, ...opcoes });
     const falhas = r.resultados.filter((x) => !x.ok);
     const feitos = r.resultados.length - falhas.length;
     progresso(r.cancelado ? 0 : 1, r.cancelado ? `Exportação cancelada: ${feitos} de ${r.total} prontos` : `Exportação concluída: ${feitos} de ${r.total} vídeos`);
@@ -726,11 +947,13 @@ async function renderTodos() {
 
 async function renderManual() {
   const id = estado.projetoId;
+  const escolhas = await abrirExportar({ lote: false });
+  if (!escolhas) return;
   await TL.salvarAgora();
   definirTrabalhando(true);
   progresso(0, 'Iniciando render…');
   try {
-    await api.renderizar({ id, modo: estado.config.renderModo, formato: estado.config.renderFormato });
+    await api.renderizar({ id, ...escolhas });
   } catch (e) {
     addMsg('erro', 'Render falhou. Peça ao Claude para corrigir: "o render falhou, corrija".');
   }
@@ -932,10 +1155,14 @@ function abrirDecupar() {
 }
 
 async function adicionarDecupar(caminhos) {
-  const novos = caminhos.filter((c) => EXT_AUDIOS.test(c) && !dc.itens.some((i) => i.arquivo === c));
-  if (!novos.length) return;
-  const infos = await api.infoAudios(novos);
-  for (const info of infos) if (info.duracao > 0) dc.itens.push({ ...info, status: 'aguardando', progresso: 0 });
+  // Arquivos soltos entram um a um; cada pasta vira um item só, com os áudios dela como partes da mesma narração.
+  const infos = await api.infoAudios(caminhos);
+  let achou = false;
+  for (const info of infos) {
+    achou = true;
+    if (info.duracao > 0 && !dc.itens.some((i) => i.arquivo === info.arquivo)) dc.itens.push({ ...info, status: 'aguardando', progresso: 0 });
+  }
+  $('#dc-aviso').textContent = !achou && caminhos.length ? 'Não achei áudios nessa seleção.' : '';
   renderDecupar();
 }
 
@@ -1012,9 +1239,11 @@ function renderDecupar() {
   dc.itens.forEach((it) => {
     const li = document.createElement('li');
     li.innerHTML = `<div class="tc-nome"><span></span><small></small></div><span class="selo"></span><span class="tc-status"></span><div class="barra"></div>`;
-    li.querySelector('.tc-nome span').textContent = nomeArquivo(it.arquivo);
-    li.querySelector('small').textContent = it.status === 'pronto' ? `${it.cortes} cortes · ${tempo(it.antes)} → ${tempo(it.depois)}` : tempo(it.duracao);
-    li.querySelector('.selo').textContent = nomeArquivo(it.arquivo).split('.').pop().toUpperCase();
+    li.querySelector('.tc-nome span').textContent = it.pasta ? it.nome : nomeArquivo(it.arquivo);
+    const partes = it.pasta ? `${it.arquivos.length} áudio${it.arquivos.length === 1 ? '' : 's'} juntados · ` : '';
+    li.querySelector('small').textContent = partes + (it.status === 'pronto' ? `${it.cortes} cortes · ${tempo(it.antes)} → ${tempo(it.depois)}` : tempo(it.duracao));
+    li.querySelector('.selo').textContent = it.pasta ? 'PASTA' : nomeArquivo(it.arquivo).split('.').pop().toUpperCase();
+    if (it.pasta) li.querySelector('.tc-nome').title = it.arquivos.map(nomeArquivo).join('\n');
     const st = li.querySelector('.tc-status');
     st.className = 'tc-status ' + (it.status === 'decupando' ? '' : it.status);
     st.textContent = { aguardando: 'Na fila', decupando: `${Math.round(it.progresso * 100)}%`, pronto: `Pronto (${it.segundos}s) — abrir`, erro: 'Erro: ' + (it.erro ?? '') }[it.status];
@@ -1075,7 +1304,7 @@ async function conferirDecupar() {
   dc.itens.forEach((i) => Object.assign(i, { conf: null, confProgresso: 0 }));
   renderDecupar();
   try {
-    const r = await api.conferirAudios({ arquivos: dc.itens.map((i) => i.arquivo), roteiro });
+    const r = await api.conferirAudios({ arquivos: dc.itens.map((i) => i.arquivos), roteiro });
     dc.itens.forEach((i, n) => Object.assign(i, { conf: r.resultados[n], confProgresso: null }));
     if (!r.cancelado) dc.semAudio = r.semAudio;
   } catch (e) {
@@ -1104,7 +1333,7 @@ async function iniciarDecupar() {
   dc.rodando = true;
   renderDecupar();
   const resultados = await api.decuparAudios({
-    arquivos: fila.map((i) => i.arquivo),
+    itens: fila.map((i) => ({ arquivo: i.arquivo, arquivos: i.arquivos, pasta: !!i.pasta })),
     opcoes: {
       pausa: dc.pausa,
       sobreposicao: dc.sobreposicao,
@@ -1125,6 +1354,7 @@ async function iniciarDecupar() {
 function ligarDecupar() {
   $('#btn-decupar').onclick = abrirDecupar;
   $('#btn-sel-decupar').onclick = async () => adicionarDecupar(await api.escolher({ tipo: 'narracao', multiplos: true }));
+  $('#btn-sel-decupar-pastas').onclick = async () => adicionarDecupar(await api.escolherPastas());
   const numero = (id, chave, min, max) => {
     const el = $(id);
     el.value = dc[chave];
@@ -1178,6 +1408,7 @@ function ligarDecupar() {
 
 const CAMPOS = {
   'cfg-modelo': 'modeloClaude',
+  'cfg-esforco': 'esforcoClaude',
   'cfg-apikey': 'apiKey',
   'cfg-workspace': 'workspaceDir',
   'cfg-whisper': 'whisperDir',
@@ -1203,8 +1434,24 @@ function preencherModelos() {
   }
 }
 
+const ESFORCOS = [
+  ['low', 'Baixo'],
+  ['medium', 'Médio'],
+  ['high', 'Alto'],
+  ['xhigh', 'Extra'],
+];
+
+function preencherEsforcos() {
+  const atual = estado.config?.esforcoClaude ?? 'high';
+  for (const sel of [$('#chat-esforco'), $('#cfg-esforco')]) {
+    sel.replaceChildren(...ESFORCOS.map(([v, t]) => new Option(sel.id === 'chat-esforco' ? `Esforço: ${t}` : t, v)));
+    sel.value = atual;
+  }
+}
+
 function abrirConfig() {
   preencherModelos();
+  preencherEsforcos();
   for (const [el, k] of Object.entries(CAMPOS)) $('#' + el).value = estado.config[k] ?? '';
   $('#dlg-config').showModal();
 }
@@ -1240,6 +1487,7 @@ window.addEventListener('drop', (e) => e.preventDefault());
 async function iniciar() {
   estado.config = await api.lerConfig();
   preencherModelos();
+  preencherEsforcos();
   estado.catalogo ??= await api.catalogo();
   const pronto = await verificarAmbiente();
   estado.pronto = pronto;
@@ -1272,12 +1520,18 @@ function ligar() {
   renderEstilosUmaVez();
   ligarTranscode();
   ligarDecupar();
+  $('#chat-esforco').onchange = async (e) => {
+    estado.config = await api.salvarConfig({ esforcoClaude: e.target.value });
+    preencherEsforcos();
+  };
   for (const id of ['#chat-modelo', '#estilo-modelo']) {
     $(id).onchange = async (e) => {
       estado.config = await api.salvarConfig({ modeloClaude: e.target.value });
       preencherModelos();
     };
   }
+  $('#btn-renomear-projeto').onclick = renomearProjetoAtual;
+  $('#ed-nome').ondblclick = renomearProjetoAtual;
   $('#btn-sel-referencia').onclick = async () => adicionarReferencias(await api.escolher({ tipo: 'referencia', multiplos: true }));
   areaDeSoltar($('#drop-referencia'), adicionarReferencias);
   $('#btn-sel-audio-instrucao').onclick = async () => adicionarAudiosInstrucao(await api.escolher({ tipo: 'audioInstrucao', multiplos: true }));
@@ -1320,6 +1574,8 @@ function ligar() {
     if (e.key === 'Enter' && !e.shiftKey) enviarChat(e);
   });
   areaDeSoltar($('#drop-materiais'), adicionarMateriais);
+  $('#btn-sel-roteiro-material').onclick = async () => adicionarRoteirosNovos(await api.escolher({ tipo: 'roteiro', multiplos: true }));
+  areaDeSoltar($('#drop-roteiro-material'), (caminhos) => adicionarRoteirosNovos(caminhos.filter((c) => EXT_ROTEIRO.test(c))));
   areaDeSoltar($('#drop-narracao'), adicionarNarracoes);
 }
 
@@ -1330,12 +1586,18 @@ async function renderEstilosUmaVez() {
   segmentado($('#seg-motor'), estado.config.renderMotor, async (v) => (estado.config = await api.salvarConfig({ renderMotor: v })));
   segmentado($('#seg-modo'), estado.config.renderModo, async (v) => (estado.config = await api.salvarConfig({ renderModo: v })));
   $('#btn-render-todos').onclick = renderTodos;
-  $('#render-qualidade').value = estado.config.renderQualidade ?? 'alta';
-  $('#render-sem-audio').checked = !!estado.config.renderSemAudio;
-  $('#render-resolucao').onchange = async (e) => (estado.config = await api.salvarConfig({ renderResolucao: Number(e.target.value) }));
-  $('#render-qualidade').onchange = async (e) => (estado.config = await api.salvarConfig({ renderQualidade: e.target.value }));
-  $('#render-sem-audio').onchange = async (e) => (estado.config = await api.salvarConfig({ renderSemAudio: e.target.checked }));
-  segmentado($('#seg-saida'), estado.config.renderFormato, async (v) => (estado.config = await api.salvarConfig({ renderFormato: v })));
+  ['#exp-codec', '#exp-formato', '#render-qualidade', '#render-resolucao', '#exp-fps'].forEach((c) => ($(c).onchange = atualizarExportar));
+  $('#exp-cancelar').onclick = () => aoFecharExportar?.(null);
+  $('#exp-confirmar').onclick = confirmarExportar;
+  // Esc fecha a janela: vale como cancelar.
+  $('#dlg-exportar').addEventListener('cancel', (e) => {
+    e.preventDefault();
+    aoFecharExportar?.(null);
+  });
+  $('#exp-btn-pasta').onclick = async () => {
+    const pasta = await api.pastaSaida();
+    if (pasta) $('#exp-pasta').value = pasta;
+  };
   iniciar();
 }
 

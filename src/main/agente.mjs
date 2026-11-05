@@ -4,12 +4,12 @@ import { createRequire } from 'node:module';
 import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { carregar } from './settings.mjs';
-import { dirs, lerProjeto, gravarProjeto, hyperframesBin } from './workspace.mjs';
+import { dirs, lerProjeto, gravarProjeto, hyperframesBin, relTimeline, relAssets } from './workspace.mjs';
 import { renderizar } from './render.mjs';
 import { folhaDeQuadros, folhaDeMateriais, folhaDeReferencia, resumoTimeline, editarTimeline, resumirErro } from './ferramentas.mjs';
 const imagem = (arquivo) => ({ type: 'image', data: fs.readFileSync(arquivo).toString('base64'), mimeType: 'image/jpeg' });
 import { salvarEstilo } from './presets.mjs';
-import { gerarLegendas } from './timeline.mjs';
+import { gerarLegendas, resumoLegendas } from './timeline.mjs';
 
 const require = createRequire(import.meta.url);
 
@@ -24,7 +24,7 @@ export function claudeExe() {
 }
 
 function regrasEngine(p) {
-  const rel = `projetos/${p.id}`;
+  const rel = relTimeline(p.id);
   if (p.timeline) {
     return `ENGINE: Remotion com TIMELINE. O vídeo é o arquivo ${rel}/timeline.json: o usuário edita o mesmo arquivo numa timeline visual no app e vê a prévia ao vivo. Monte e altere o vídeo editando esse JSON; não crie outra composição.
 
@@ -42,14 +42,14 @@ Itens visuais também aceitam: x, y (deslocamento em px a partir do centro), esc
 - efeitos: { cor: {exposicao (-5 a 5), contraste (-100 a 100), saturacao (0 a 200, normal 100), temperatura (-100 a 100), matiz (-100 a 100)}, desfoque: {raio}, corte: {esquerda, cima, direita, baixo} (em %), vinheta: {quantidade} (-100 a 100; negativo escurece), pb: true, inverter: true, espelhoH: true, espelhoV: true }.
 - transicoes fica na trilha (video ou sobreposicao), não no item: [{ id, tipo, duracao, alinhamento: centro|inicio|fim, de, para, direcao: esq|dir|cima|baixo }]. "de" é o id do item que sai e "para" o do que entra; os dois precisam se encostar. Sem um deles, a transição só abre ou só fecha. Tipos desenhados na prévia e no render: cross_dissolve, dip_to_black, dip_to_white, flash, push, whip, slide, linear_wipe, iris_round, cross_zoom. Centralizada, ela usa duracao/2 a mais de arquivo nos dois clipes: deixe essa sobra (corteInicio de quem entra e o que resta do arquivo de quem sai), senão o corte fica seco.
 - filmcraft em um item ou transição guarda dados que só existem no Filmcraft: não edite nem apague.
-estilo: fonte (Montserrat|Inter|Poppins|Roboto|Anton|Bebas Neue|Oswald|Playfair Display), tamanho, peso, cor, corDestaque (cor da palavra falada na legenda), contorno, contornoLargura, sombra, fundo, alinhamento, maiusculas, entrelinha.
-- arquivo é só o nome dentro de assets/. Se uma skill pedir para escrever código Remotion, aplique o visual dela por aqui, com blocos para o que for específico.
+estilo: fonte (Montserrat|Inter|Poppins|Roboto|Anton|Bebas Neue|Oswald|Playfair Display|Red Hat Display|Red Hat Text), tamanho, peso, cor, corDestaque (cor da palavra falada na legenda), contorno, contornoLargura, sombra, fundo, alinhamento, maiusculas, entrelinha.
+- arquivo é só o nome dentro de ${relAssets(p.id)}/. Se uma skill pedir para escrever código Remotion, aplique o visual dela por aqui, com blocos para o que for específico.
 - Para as legendas use mcp__studio__gerar_legendas, não escreva palavra por palavra. Depois de cortar ou mover a narração, gere de novo.`;
   }
   if (p.engine === 'remotion') {
     return `ENGINE: Remotion 4 (React + TypeScript).
 - O código fica em ${rel}/src/. Root.tsx registra a <Composition id="Main"> com width=${p.largura}, height=${p.altura}, fps=${p.fps}. Ajuste durationInFrames à duração final.
-- Os materiais são servidos pela pasta ${rel}/assets: use staticFile('<arquivo>') (só o nome do arquivo).
+- Os materiais são servidos pela pasta ${relAssets(p.id)}: use staticFile('<arquivo>') (só o nome do arquivo).
 - Vídeos com <OffthreadVideo>, imagens com <Img>, áudio com <Audio>. Fontes com @remotion/google-fonts. Transições com @remotion/transitions.
 - Pacotes disponíveis: remotion, @remotion/google-fonts, @remotion/media-utils, @remotion/transitions, react. Não instale nada.
 - Para checar se compila sem renderizar, rode: node node_modules/@remotion/cli/remotion-cli.js compositions ${rel}/src/index.ts`;
@@ -63,13 +63,15 @@ estilo: fonte (Montserrat|Inter|Poppins|Roboto|Anton|Bebas Neue|Oswald|Playfair 
 }
 
 function promptSistema(p) {
-  const rel = `projetos/${p.id}`;
+  const rel = relTimeline(p.id);
   return `
 Você está dentro do Editor Jaborizador da Silva, um app de edição automática de vídeo. Você é o editor: monta, ajusta e exporta o vídeo do usuário.
 
-PROJETO ATUAL: ${rel}/  (trabalhe somente dentro desta pasta)
-- ${rel}/BRIEFING.md — materiais, narração transcrita com tempos e o estilo pedido. Leia primeiro.
+TIMELINE ATUAL: ${rel}/  (trabalhe somente dentro desta pasta)
+MATERIAIS DO PROJETO: ${relAssets(p.id)}/  (uma pasta só, compartilhada com as outras timelines do projeto. Pode acrescentar arquivos, sempre com nome novo; nunca apague nem sobrescreva os que já existem)
+${p.migradoDe ? `Se o histórico desta conversa citar projetos/${p.migradoDe}/, o projeto foi reorganizado: o que estava lá agora está nas duas pastas acima.\n` : ''}- ${rel}/BRIEFING.md — materiais, narração transcrita com tempos e o estilo pedido. Leia primeiro.
 - ${rel}/transcricao.json — tempos por palavra, para legendas sincronizadas.
+${p.roteiros?.length ? `- projetos/${p.projetoId}/roteiro/ (${p.roteiros.map((r) => r.arquivo).join(', ')}) — o roteiro do usuário, base do vídeo: a sequência das cenas segue a ordem dele, cada cena mostra o que está sendo dito, e a grafia de nomes e preços vem dele. Pode ter os roteiros de vários áudios: use só o trecho desta narração. Se o BRIEFING já traz o trecho, não abra estes arquivos.\n` : ''}
 - ${rel}/projeto.json — gerado pelo app; não edite.
 
 ${regrasEngine(p)}
@@ -82,7 +84,7 @@ ${p.referencias?.length ? '- mcp__studio__ver_referencia — estuda o material d
 ${p.timeline ? '- mcp__studio__resumo_timeline — a timeline sem as palavras das legendas; com ids, os itens completos.\n- mcp__studio__editar_timeline — altera, adiciona ou remove itens pelo id.\n' : ''}${p.timeline ? '- mcp__studio__gerar_legendas — cria a trilha de legendas a partir da transcrição, seguindo os pedaços de narração que estão na timeline.\n' : ''}- mcp__studio__salvar_estilo — guarda o estilo deste vídeo como preset reutilizável no app. Use quando o usuário pedir para salvar o estilo. Escreva as instruções como receita completa e concreta (fontes, tamanhos, posições, cores em hex, ritmo de cortes, transições, efeitos), para outro vídeo sair igual sem ver este código.
 
 ECONOMIA (cada imagem e cada arquivo lido é reenviado em todos os turnos; siga sempre):
-- Conversão de vídeo (codec, formato, compressão) não é com você: o app converte os materiais na importação e tem um conversor próprio. Nunca rode ffmpeg nem HandBrake; se um material não abrir, avise o usuário.
+- Conversão de vídeo (codec, formato, compressão) não é com você: o app cuida dos materiais (a cópia leve da prévia é feita por ele) e tem um conversor próprio. Nunca rode ffmpeg nem HandBrake; se um material não abrir, avise o usuário.
 - Veja os clipes com mcp__studio__ver_materiais, nunca extraindo quadros com ffmpeg nem lendo imagens soltas. Só peça clipes específicos para decidir um corte difícil.
 - PARE ANTES DE CONFERIR: o usuário confere e renderiza sozinho, para poupar créditos. Não use mcp__studio__ver_quadros nem mcp__studio__renderizar por conta própria; só use se o usuário pedir explicitamente. Ao terminar a montagem, avise que está pronta para conferência.
 - RITMO: cada cena/clipe fica de 1 a 2 segundos na tela, para o vídeo não ficar acelerado nem poluído. Nunca deixe cenas com menos de 1 s nem passe de 2 s sem pedido do usuário.
@@ -235,7 +237,7 @@ export async function conversar(id, mensagem, onEvento) {
         },
         async (args) => {
           try {
-            return { content: [{ type: 'text', text: `${gerarLegendas(id, args)} legendas criadas.` }] };
+            return { content: [{ type: 'text', text: resumoLegendas(gerarLegendas(id, args)) }] };
           } catch (e) {
             return { content: [{ type: 'text', text: e.message }], isError: true };
           }
@@ -283,7 +285,7 @@ export async function conversar(id, mensagem, onEvento) {
     }
     // A conversão de materiais é do conversor do app (ffmpeg direto, sem gastar tokens): o Claude não converte por conta própria.
     if (/(^|[\s;&|"'\\/])ffmpeg(\.exe)?(\s|"|'|$)|\bHandBrakeCLI\b/i.test(comando)) {
-      return negar('Não converta nem processe vídeos com ffmpeg: o app já converte os materiais na importação (H.265 vira H.264) e tem o conversor próprio. Se um material não abre, diga isso ao usuário em vez de convertê-lo.');
+      return negar('Não converta nem processe vídeos com ffmpeg: o app cuida dos materiais (cópia leve da prévia, HDR) e tem o conversor próprio. Se um material não abre, diga isso ao usuário em vez de convertê-lo.');
     }
     return {};
   };
@@ -294,6 +296,7 @@ export async function conversar(id, mensagem, onEvento) {
       options: {
         cwd: dirs().ws,
         model: s.modeloClaude,
+        effort: ['low', 'medium', 'high', 'xhigh'].includes(s.esforcoClaude) ? s.esforcoClaude : 'high',
         resume: projeto.sessionId ?? undefined,
         abortController: controle,
         pathToClaudeCodeExecutable: claudeExe(),
@@ -343,9 +346,9 @@ function guardarSessao(id, sessionId) {
 }
 
 export function primeiraMensagem(p, salvarEstilo, referencia) {
-  let m = `Leia projetos/${p.id}/BRIEFING.md e monte o vídeo completo no estilo pedido, com cenas de 1 a 2 segundos cada. Não confira com mcp__studio__ver_quadros nem renderize: eu faço isso. Me diga em poucas linhas o que montou.`;
+  let m = `Leia ${relTimeline(p.id)}/BRIEFING.md e monte o vídeo completo no estilo pedido, com cenas de 1 a 2 segundos cada. Não confira com mcp__studio__ver_quadros nem renderize: eu faço isso. Me diga em poucas linhas o que montou.`;
   if (p.lote) m += ` Este é o vídeo ${p.lote.indice} de ${p.lote.total} de um lote: mesmos materiais, cada vídeo com sua narração.`;
-  if (referencia) m += ` Para o lote ter a mesma identidade, leia antes (só leitura) projetos/${referencia}/src/blocos.tsx e o estilo de alguns itens de projetos/${referencia}/timeline.json com Grep, e siga o mesmo visual, adaptando os cortes e a escolha das cenas a esta narração.`;
+  if (referencia) m += ` Para o lote ter a mesma identidade, leia antes (só leitura) ${relTimeline(referencia)}/src/blocos.tsx e o estilo de alguns itens de ${relTimeline(referencia)}/timeline.json com Grep, e siga o mesmo visual, adaptando os cortes e a escolha das cenas a esta narração.`;
   if (salvarEstilo) m += ' No final, salve o estilo com mcp__studio__salvar_estilo, com um nome curto que o descreva.';
   return m;
 }

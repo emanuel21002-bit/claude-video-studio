@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { carregar } from './settings.mjs';
 import { rodar, rodarOuFalhar } from './proc.mjs';
-import { dirs, caminhoProjeto, lerProjeto } from './workspace.mjs';
+import { dirs, caminhoProjeto, caminhoTimeline, caminhoAssets, lerProjeto } from './workspace.mjs';
 import { lerTimeline, gravarTimeline, escreverModelo, novoId } from './timeline.mjs';
 import { pastaPublica, extrairQuadros } from './render.mjs';
 
@@ -32,7 +32,7 @@ async function grade(pasta, padrao, colunas, total, saida) {
 // Quadros pedidos, tirados direto da timeline: conferir não exige renderizar o vídeo inteiro.
 export async function folhaDeQuadros(id, segundos) {
   const projeto = lerProjeto(id);
-  const dir = caminhoProjeto(id);
+  const dir = caminhoTimeline(id);
   const previa = path.join(dir, '.previa');
   const pasta = path.join(previa, 'quadros');
   fs.rmSync(pasta, { recursive: true, force: true });
@@ -77,8 +77,8 @@ export async function folhaDeQuadros(id, segundos) {
 const POR_PAGINA = 30;
 export async function folhaDeMateriais(id, { arquivos, pagina = 1 } = {}) {
   const projeto = lerProjeto(id);
-  const assets = path.join(caminhoProjeto(id), 'assets');
-  const pasta = path.join(caminhoProjeto(id), '.previa', 'materiais');
+  const assets = caminhoAssets(id);
+  const pasta = path.join(caminhoTimeline(id), '.previa', 'materiais');
   fs.rmSync(pasta, { recursive: true, force: true });
   fs.mkdirSync(pasta, { recursive: true });
   const visuais = projeto.materiais.filter((m) => m.tipo !== 'audio' && (!arquivos?.length || arquivos.includes(m.arquivo)));
@@ -115,7 +115,7 @@ export async function folhaDeReferencia(id, { arquivo, momentos } = {}) {
   const ref = arquivo ? refs.find((r) => r.arquivo === arquivo) : refs[0];
   if (!ref) throw new Error(`Referência "${arquivo}" não existe. Disponíveis: ${refs.map((r) => r.arquivo).join(', ')}`);
   const origem = path.join(caminhoProjeto(id), 'referencia', ref.arquivo);
-  const pasta = path.join(caminhoProjeto(id), '.previa', 'referencia');
+  const pasta = path.join(caminhoTimeline(id), '.previa', 'referencia');
   fs.rmSync(pasta, { recursive: true, force: true });
   fs.mkdirSync(pasta, { recursive: true });
 

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { carregar } from './settings.mjs';
 import { rodar } from './proc.mjs';
 import { infoVideo } from './transcodificar.mjs';
+import { unirAudios } from './workspace.mjs';
 import { PADRAO, lerSilencios, calcularSegmentos, montarFiltro } from './decupar-nucleo.mjs';
 
 export const FORMATOS_DECUPAGEM = {
@@ -12,8 +13,9 @@ export const FORMATOS_DECUPAGEM = {
   m4a: ['-c:a', 'aac', '-b:a', '192k'],
 };
 
-function nomeSaida(entrada, formato, pastaSaida) {
-  const base = path.basename(entrada, path.extname(entrada));
+// `entrada` pode ser um arquivo ou uma pasta (narração em vários áudios): o resultado fica ao lado, com o nome dela.
+function nomeSaida(entrada, formato, pastaSaida, ehPasta) {
+  const base = ehPasta ? path.basename(entrada) : path.basename(entrada, path.extname(entrada));
   const dir = pastaSaida || path.dirname(entrada);
   let saida = path.join(dir, `${base} (decupado).${formato}`);
   for (let i = 2; fs.existsSync(saida); i++) saida = path.join(dir, `${base} (decupado ${i}).${formato}`);
@@ -21,7 +23,24 @@ function nomeSaida(entrada, formato, pastaSaida) {
 }
 
 // Tira as pausas da narração e sobrepõe as emendas (ver decupar-nucleo.mjs). Devolve { saida, cortes, antes, depois, segundos }.
+// `entrada` é um arquivo ou { pasta, arquivos }: os arquivos da pasta são juntados, na ordem, antes de decupar.
 export async function decuparAudio(entrada, opcoes = {}, onProgresso, sinal) {
+  const grupo = typeof entrada === 'object' ? entrada : null;
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cvs-decupar-'));
+  try {
+    let origem = grupo ? grupo.arquivos[0] : entrada;
+    if (grupo && grupo.arquivos.length > 1) {
+      origem = path.join(tmp, 'narracao-junta.wav');
+      await unirAudios(grupo.arquivos, origem);
+    }
+    const r = await decuparUm(origem, opcoes, onProgresso, sinal, tmp, grupo ? { pasta: grupo.pasta } : null);
+    return r;
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+async function decuparUm(entrada, opcoes, onProgresso, sinal, tmp, grupo) {
   const o = { ...PADRAO, formato: 'wav', ...opcoes };
   const codec = FORMATOS_DECUPAGEM[o.formato];
   if (!codec) throw new Error(`Formato desconhecido: ${o.formato}`);
@@ -41,10 +60,9 @@ export async function decuparAudio(entrada, opcoes = {}, onProgresso, sinal) {
 
   const segs = calcularSegmentos(lerSilencios(linhas, antes), antes, o);
   const esperado = Math.max(1, (segs.reduce((s, [a, b]) => s + (b - a), 0) - (segs.length - 1) * o.sobreposicao) / (o.velocidade || 1));
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cvs-decupar-'));
   const script = path.join(tmp, 'filtro.txt');
   fs.writeFileSync(script, montarFiltro(segs, o));
-  const saida = nomeSaida(entrada, o.formato, o.pastaSaida);
+  const saida = grupo ? nomeSaida(grupo.pasta, o.formato, o.pastaSaida, true) : nomeSaida(entrada, o.formato, o.pastaSaida);
   fs.mkdirSync(path.dirname(saida), { recursive: true });
   try {
     // ffmpeg 7 e anteriores usam -filter_complex_script; o 8 em diante, -/filter_complex.
@@ -64,8 +82,6 @@ export async function decuparAudio(entrada, opcoes = {}, onProgresso, sinal) {
   } catch (e) {
     fs.rmSync(saida, { force: true });
     throw e;
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
   }
   const depois = (await infoVideo(saida)).duracao;
   return { saida, cortes: segs.length - 1, antes, depois, segundos: Math.round((Date.now() - inicio) / 1000) };

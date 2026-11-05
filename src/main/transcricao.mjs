@@ -3,7 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { carregar } from './settings.mjs';
 import { rodarOuFalhar } from './proc.mjs';
-import { caminhoProjeto } from './workspace.mjs';
+import { caminhoTimeline, caminhoAssets } from './workspace.mjs';
 
 // Versões novas do whisper.cpp usam whisper-cli.exe (o main.exe delas é só um aviso de descontinuação).
 function whisperExe() {
@@ -19,8 +19,8 @@ export function whisperDisponivel() {
 // Transcreve a narração do projeto com whisper.cpp e grava transcricao.json
 // { segmentos: [{inicio, fim, texto}], palavras: [{inicio, fim, texto}] } em segundos.
 export async function transcrever(projeto, onLinha) {
-  const dir = caminhoProjeto(projeto.id);
-  const resultado = await transcreverArquivo(path.join(dir, 'assets', projeto.narracao.arquivo), onLinha);
+  const dir = caminhoTimeline(projeto.id);
+  const resultado = await transcreverArquivo(path.join(caminhoAssets(projeto.id), projeto.narracao.arquivo), onLinha);
   fs.writeFileSync(path.join(dir, 'transcricao.json'), JSON.stringify(resultado, null, 2));
   onLinha?.(`Transcrição pronta: ${resultado.segmentos.length} frases.`);
   return resultado;

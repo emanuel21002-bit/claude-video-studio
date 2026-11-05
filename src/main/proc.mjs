@@ -1,8 +1,13 @@
 import { spawn } from 'node:child_process';
+import os from 'node:os';
+
+// Exportações em andamento: trabalho de fundo pesado (cópias leves) espera, para não disputar GPU e CPU com elas.
+export const trabalhoPesado = { renders: 0 };
 
 // Roda um processo e entrega cada linha de saída (stdout + stderr) para onLinha.
 // Resolve com { codigo, cauda } — cauda são as últimas linhas, para mensagens de erro.
-export function rodar(cmd, args, { cwd, env, onLinha, sinal, shell = false } = {}) {
+// baixa: roda com prioridade abaixo do normal, para trabalho de fundo não travar a janela do app.
+export function rodar(cmd, args, { cwd, env, onLinha, sinal, shell = false, baixa = false } = {}) {
   return new Promise((resolve, reject) => {
     const filho = spawn(cmd, args, {
       cwd,
@@ -10,6 +15,11 @@ export function rodar(cmd, args, { cwd, env, onLinha, sinal, shell = false } = {
       shell,
       windowsHide: true,
     });
+    if (baixa && filho.pid) {
+      try {
+        os.setPriority(filho.pid, os.constants.priority.PRIORITY_BELOW_NORMAL);
+      } catch {}
+    }
     const cauda = [];
     let resto = '';
     const ler = (buf) => {

@@ -18,14 +18,21 @@ export const PADRAO = {
   nodePath: 'node',
   ffmpegPath: 'ffmpeg',
   modeloClaude: 'claude-opus-5-5',
+  esforcoClaude: 'high', // low | medium | high | xhigh
   apiKey: '',
   renderModo: 'gpu', // gpu | cpu
   renderMotor: 'filmcraft', // filmcraft | remotion
   renderFormato: 'mp4', // mp4 | mov
   renderResolucao: 0, // lado menor em pixels (720, 1080, 1440, 2160); 0 = a resolução do projeto
-  renderQualidade: 'alta', // alta | media | baixa
+  renderQualidade: 'recomendado', // alta | recomendado | baixa (taxa de bits)
+  renderCodec: null, // h264 | hevc | prores; null = ainda não escolhido na janela de exportação
+  renderFps: 0, // 0 = o do projeto
+  renderPasta: '', // vazio = renders/ da timeline
   renderSemAudio: false,
 };
+
+// Arquivo próprio do app, ao lado das configurações.
+export const arquivoDoApp = (nome) => path.join(app.getPath('userData'), nome);
 
 let atual = null;
 

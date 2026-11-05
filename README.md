@@ -40,14 +40,34 @@ O instalador é autossuficiente: leva a pasta `recursos\` (fora do git, montada 
 
 Na primeira abertura o app copia as engines e as skills para `Documentos\Claude Video Studio`, sem internet. Quem for usar só precisa entrar com a própria conta Claude (Pro ou superior) ou colar uma chave de API.
 
+## Projetos e timelines
+
+Um projeto tem um único conjunto de materiais e quantas timelines precisar, como no Filmcraft ou no CapCut. Criar um vídeo com várias narrações gera um projeto com uma timeline por narração. As abas no topo do editor criam (+ Nova), duplicam, renomeiam (clique duplo) e excluem timelines; nada disso copia ou apaga materiais.
+
+```
+projetos/<projeto>/
+  projeto.json        materiais e dados de todas as timelines
+  assets/             materiais e narrações, uma cópia só
+  referencia/, instrucoes/
+  .cache/             miniaturas, proxies e cópias leves, refeitas quando faltam
+  timelines/<timeline>/
+    timeline.json, BRIEFING.md, transcricao.json, src/, renders/, filmcraft/, .previa/
+```
+
+No código, o `id` que circula é o da timeline, `<projeto>/<timeline>`. `lerProjeto(id)` devolve a timeline já com os dados do projeto, e `gravarProjeto` separa de volta.
+
+Na primeira abertura, `src/main/migracao.mjs` converte projetos do formato antigo (uma pasta com cópia dos materiais por timeline). Ele não apaga nada: os materiais entram por hard link e as pastas antigas vão para `projetos-antigos/`. O espaço só volta quando essa pasta é apagada. Conteúdo igual vira um arquivo só; nomes iguais com conteúdo diferente, como as narrações, ganham um sufixo, e as referências são atualizadas.
+
+Testes da migração: `npm test`.
+
 ## Timeline
 
 Projetos Remotion têm uma timeline editável com prévia ao vivo, sem precisar renderizar. Projetos HyperFrames seguem pelo chat.
 
-- `timeline.json` no projeto é a fonte da verdade: o usuário edita pela timeline, o Claude edita o arquivo, e a mesma composição (`src/TimelineVideo.tsx`) desenha a prévia e o render.
+- `timeline.json` é a fonte da verdade de cada timeline: o usuário edita pela timeline, o Claude edita o arquivo, e a mesma composição (`src/TimelineVideo.tsx`) desenha a prévia e o render.
 - A prévia é o Remotion Player empacotado com esbuild em `.previa/previa.js`. Editar a timeline só troca os dados; o pacote é refeito quando `src/` muda.
 - Efeitos sob medida ficam em `src/blocos.tsx`, o único arquivo de `src/` que o Claude escreve. Os outros vêm de `src/main/modelo-timeline/`.
-- Vídeos que o Chromium não toca (ProRes) ganham uma cópia VP9 em `.previa/proxy/` só para a prévia; o render usa o original.
+- Vídeos que o Chromium não toca (ProRes) ganham uma cópia VP9 em `.cache/proxy/` do projeto só para a prévia; o render usa o original.
 - Enquanto o Claude trabalha, a timeline fica travada; quando ele para, o app relê o arquivo e a versão anterior vai para o desfazer.
 
 Recursos de edição, com os nomes de parâmetro no `timeline.json`:
@@ -55,13 +75,13 @@ Recursos de edição, com os nomes de parâmetro no `timeline.json`:
 - **Keyframes** (`keyframes`): posição, escala, rotação, opacidade e números dos efeitos, com curvas linear, suave, entrada, saída e segurar.
 - **Mesclagem** (`mesclagem`) e **efeitos** (`efeitos`): correção de cor, desfoque, recorte, vinheta, preto e branco, inverter e espelhar.
 - **Transições** (`trilha.transicoes`): dissolver, fade, flash, empurrar, chicote, deslizar, cortina, íris e zoom.
-- **Materiais**: a aba ao lado do player lista os arquivos do projeto, com as pastas e subpastas de onde vieram. Os arquivos ficam todos em `assets/` e a pasta é o campo `pasta` de cada material. Arrastar para uma trilha adiciona; soltar sobre um clipe substitui o arquivo dele e mantém lugar, efeitos e animações; o botão ⇄ substitui em todos os clipes.
+- **Materiais**: a aba ao lado do player lista os arquivos do projeto, com as pastas e subpastas de onde vieram, mais as narrações das outras timelines. Os arquivos ficam todos em `assets/` do projeto e a pasta é o campo `pasta` de cada material. Arrastar para uma trilha adiciona; soltar sobre um clipe substitui o arquivo dele e mantém lugar, efeitos e animações; o botão ⇄ substitui em todos os clipes.
 - **Formato**: 9:16, 16:9, 1:1 e 4:5 na barra da timeline. Posições, textos e larguras acompanham o quadro novo.
 - **Ferramentas**: selecionar (V), ripple (B), roll (N), slip (Y), slide (U), velocidade (R) e navalha (C).
 
 ## Filmcraft
 
-`src/main/otio.mjs` converte `timeline.json` em OpenTimelineIO e de volta; `src/main/filmcraft.mjs` chama o Filmcraft. "Abrir no Filmcraft" gera `filmcraft/projeto.fcproj` no projeto; o usuário salva lá e "Trazer" recebe as edições. `timeline.json` segue como a fonte da verdade, e a sincronia acontece nesses dois botões, não em tempo real.
+`src/main/otio.mjs` converte `timeline.json` em OpenTimelineIO e de volta; `src/main/filmcraft.mjs` chama o Filmcraft. "Abrir no Filmcraft" gera `filmcraft/projeto.fcproj` na pasta da timeline; o usuário salva lá e "Trazer" recebe as edições. `timeline.json` segue como a fonte da verdade, e a sincronia acontece nesses dois botões, não em tempo real.
 
 - Vão e voltam: cortes, trilhas, velocidade, volume, keyframes, mesclagem, os efeitos acima e as transições. Na volta, o que não mudou mantém os campos do app (`zoom`, `entrada`, `saida`).
 - Só lá: efeitos e modos sem equivalente ficam em `item.filmcraft` e voltam intactos na próxima ida, mas a prévia e o render do app não os desenham, e o app avisa. Tipos de transição desconhecidos viram dissolve na prévia.
@@ -70,21 +90,25 @@ Recursos de edição, com os nomes de parâmetro no `timeline.json`:
 
 ## Render
 
-O vídeo final pode sair pelo Filmcraft (padrão, se estiver em `recursos\filmcraft`) ou pelo Remotion, no botão ao lado de GPU/CPU. Pelo Filmcraft, textos, legendas e blocos são renderizados pelo Remotion como uma camada transparente, guardada enquanto não mudam, e ele monta o resto em um passo só. Se ele falhar, o app exporta pelo Remotion. A prévia ao vivo é sempre do Remotion, e a correção de cor pode ter pequenas diferenças entre os dois.
+O botão **Renderizar** abre a janela de exportação: nome, pasta, resolução, taxa de bits, codec, formato, fps e áudio. As escolhas ficam salvas para a próxima.
+
+O vídeo final pode sair pelo Filmcraft (padrão, se estiver em `recursos\filmcraft`) ou pelo Remotion, na mesma janela. Pelo Filmcraft, textos, legendas e blocos são renderizados pelo Remotion como uma camada transparente, guardada enquanto não mudam, e ele monta o resto em um passo só. Se ele falhar, o app exporta pelo Remotion. A prévia ao vivo é sempre do Remotion, e a correção de cor pode ter pequenas diferenças entre os dois.
 
 Só roda um render por vez. Pedir o mesmo render enquanto ele roda não inicia outro, e pedir de novo sem nada mudar devolve o arquivo pronto.
 
 | Modo | Remotion | HyperFrames |
 |---|---|---|
-| GPU | Chrome com ANGLE (GPU) + codificação final em NVENC (`h264_nvenc`) ou AMF (`h264_amf`) | `--gpu --browser-gpu` |
-| CPU | SwiftShader + x264 (MP4) ou ProRes HQ (MOV) | `--no-browser-gpu` |
+| GPU | Chrome com ANGLE (GPU) + codificação final em NVENC ou AMF, H.264 ou HEVC | `--gpu --browser-gpu` |
+| CPU | SwiftShader + x264 ou x265, ou ProRes HQ | `--no-browser-gpu` |
 
-O app testa os encoders ao abrir, com uma codificação real, porque o ffmpeg lista NVENC e AMF mesmo sem a placa: usa NVENC, senão AMF (placas AMD), senão CPU. O AMF usa QP constante 19, com a qualidade do x264 CRF 18 em arquivos cerca de 3x maiores (medido na RX 570).
+O app testa os encoders ao abrir, com uma codificação real, porque o ffmpeg lista NVENC e AMF mesmo sem a placa: usa NVENC, senão AMF (placas AMD), senão CPU. 
 
-MOV em GPU sai em H.264 dentro de .mov; ProRes só existe em CPU.
+A taxa de bits segue a resolução e o fps: o Recomendado em 1080x1920 a 30 fps dá 10 Mbit/s em H.264 e 6 Mbit/s em HEVC. H.264 e HEVC saem em MP4 ou MOV; ProRes, só em MOV.
+
+O Filmcraft não tem codificador de HEVC no Windows: ele monta o vídeo em H.264 com folga de qualidade, e o ffmpeg converte no fim, na placa de vídeo ou, se ela recusar, na CPU.
 
 ## Estrutura
 
-- `src/main/` — processo principal: `agente.mjs` (Claude + ferramentas `renderizar` e `ver_quadros`), `render.mjs`, `transcricao.mjs`, `workspace.mjs` (projetos, scaffold, briefing), `presets.mjs` (estilos).
+- `src/main/` — processo principal: `agente.mjs` (Claude + ferramentas `renderizar` e `ver_quadros`), `render.mjs`, `transcricao.mjs`, `workspace.mjs` (projetos, timelines, scaffold, briefing), `migracao.mjs` (formato antigo para o novo), `presets.mjs` (estilos).
 - `src/renderer/` — interface (HTML/CSS/JS puro).
-- Cada vídeo vira `Documentos\Claude Video Studio\projetos\<id>\` com `assets/`, `BRIEFING.md`, `transcricao.json`, o código da composição e `renders/`.
+- Os projetos ficam em `Documentos\Claude Video Studio\projetos\`, no formato descrito em [Projetos e timelines](#projetos-e-timelines).

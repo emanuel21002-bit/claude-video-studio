@@ -1,10 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { carregar } from './settings.mjs';
-import { rodar } from './proc.mjs';
-import { dirs, caminhoProjeto, lerProjeto, gravarProjeto, importarMaterial, listarMateriais } from './workspace.mjs';
-import { infoVideo } from './transcodificar.mjs';
+import { rodar, trabalhoPesado } from './proc.mjs';
+import { dirs, caminhoTimeline, caminhoAssets, caminhoCache, lerProjeto, gravarProjeto, importarMaterial, listarMateriais, textoDosRoteiros } from './workspace.mjs';
+import { corrigirPalavras } from './conferir-nucleo.mjs';
+import { infoVideo, TONEMAP, TONEMAP_GPU, ENCODERS_GPU, encoderGpu } from './transcodificar.mjs';
 import { FORMATOS } from './presets.mjs';
 
 const aqui = path.dirname(fileURLToPath(import.meta.url));
@@ -23,7 +25,7 @@ export const MESCLAGENS = ['normal', 'multiply', 'screen', 'overlay', 'darken', 
 let contador = 0;
 export const novoId = (prefixo = 'i') => `${prefixo}${Date.now().toString(36)}${(contador++).toString(36)}`;
 
-const arquivoTimeline = (id) => path.join(caminhoProjeto(id), 'timeline.json');
+const arquivoTimeline = (id) => path.join(caminhoTimeline(id), 'timeline.json');
 
 export function lerTimeline(id) {
   return JSON.parse(fs.readFileSync(arquivoTimeline(id), 'utf8'));
@@ -34,7 +36,7 @@ export function validarTimeline(id, t) {
   const erros = [];
   if (!t || !Array.isArray(t.trilhas)) return ['timeline.json precisa ter "trilhas" (lista).'];
   for (const c of ['largura', 'altura', 'fps']) if (!(t[c] > 0)) erros.push(`"${c}" inválido.`);
-  const assets = path.join(caminhoProjeto(id), 'assets');
+  const assets = caminhoAssets(id);
   const vistos = new Set();
   for (const tr of t.trilhas) {
     const aceitos = TIPOS_POR_TRILHA[tr.tipo];
@@ -130,7 +132,7 @@ export function timelineInicial(p) {
 // Copia a composição padrão para o projeto. blocos.tsx é do projeto e nunca é sobrescrito.
 // Roda também ao abrir e ao renderizar: projetos antigos recebem a composição nova do app.
 export function escreverModelo(p) {
-  const src = path.join(caminhoProjeto(p.id), 'src');
+  const src = path.join(caminhoTimeline(p.id), 'src');
   fs.mkdirSync(src, { recursive: true });
   for (const nome of MODELO) {
     const destino = path.join(src, nome);
@@ -141,9 +143,10 @@ export function escreverModelo(p) {
   }
 }
 
-export function criarTimeline(p) {
+export function criarTimeline(p, { vazia } = {}) {
   escreverModelo(p);
-  fs.writeFileSync(arquivoTimeline(p.id), JSON.stringify(timelineInicial(p), null, 2));
+  const t = timelineInicial(vazia ? { ...p, materiais: [], narracao: null } : p);
+  fs.writeFileSync(arquivoTimeline(p.id), JSON.stringify(t, null, 2));
 }
 
 // ---------- legendas a partir da transcrição ----------
@@ -171,10 +174,21 @@ function agrupar(palavras, { maxPalavras, maxCaracteres }) {
 // se a narração foi cortada ou movida, as legendas acompanham.
 export function gerarLegendas(id, { maxPalavras = 4, maxCaracteres = 26, estilo, x, y } = {}) {
   const projeto = lerProjeto(id);
-  const caminho = path.join(caminhoProjeto(id), 'transcricao.json');
+  const caminho = path.join(caminhoTimeline(id), 'transcricao.json');
   if (!fs.existsSync(caminho)) throw new Error('Este projeto não tem transcrição.');
   if (!projeto.narracao) throw new Error('Este projeto não tem narração.');
-  const { palavras } = JSON.parse(fs.readFileSync(caminho, 'utf8'));
+  const transcritas = JSON.parse(fs.readFileSync(caminho, 'utf8')).palavras;
+  // Com roteiro, os tempos continuam vindo do áudio, mas a grafia e a pontuação vêm dele.
+  const roteiro = textoDosRoteiros(id);
+  let correcao = null;
+  if (roteiro) {
+    try {
+      correcao = corrigirPalavras(transcritas, roteiro);
+    } catch {
+      correcao = { usado: false, acerto: 0, palavras: transcritas };
+    }
+  }
+  const palavras = correcao?.usado ? correcao.palavras : transcritas;
   const t = lerTimeline(id);
   const trilha = t.trilhas.find((tr) => tr.tipo === 'legenda');
   if (!trilha) throw new Error('A timeline não tem trilha de legendas.');
@@ -219,7 +233,15 @@ export function gerarLegendas(id, { maxPalavras = 4, maxCaracteres = 26, estilo,
   });
   trilha.itens = itens;
   gravarTimeline(id, t);
-  return itens.length;
+  return { total: itens.length, roteiro: correcao && { usado: correcao.usado, acerto: correcao.acerto } };
+}
+
+// Frase pronta para o usuário e para o Claude.
+export function resumoLegendas({ total, roteiro }) {
+  if (!roteiro) return `${total} legendas criadas.`;
+  return roteiro.usado
+    ? `${total} legendas criadas com a grafia do roteiro (${roteiro.acerto}% do áudio igual a ele).`
+    : `${total} legendas criadas só pela transcrição: o roteiro enviado não bate com este áudio.`;
 }
 
 // ---------- prévia ao vivo ----------
@@ -234,37 +256,93 @@ function maisRecente(pasta) {
 // O player do app (Chromium) não toca ProRes e afins. Esses vídeos ganham uma cópia leve só para a prévia;
 // o render continua usando o original. VP9 porque mantém a transparência de selos e overlays.
 const CODECS_DO_PLAYER = ['h264', 'vp8', 'vp9', 'av1'];
-const caminhoProxy = (id, arquivo) => path.join(caminhoProjeto(id), '.previa', 'proxy', arquivo + '.webm');
+// Vídeo HDR (HLG/PQ de celular e câmera) também ganha cópia: nela as cores já vão para SDR BT.709, senão a prévia fica lavada.
+// O nome muda (.sdr) para não reaproveitar uma cópia antiga, feita sem o tone mapping.
+// Com transparência (ProRes 4444, selos e overlays) a cópia é VP9 na CPU; sem ela, H.264 na GPU, bem mais rápido.
+const caminhoProxy = (id, arquivo, { hdr = false, alpha = false } = {}) =>
+  path.join(caminhoCache(id), 'proxy', arquivo + (hdr ? '.sdr' : '') + (alpha ? '.webm' : '.mp4'));
+// Cópia que já existe: a de GPU (.mp4) ou, na falta dela, a de CPU (.webm).
+const proxyPronto = (id, v) => {
+  const mp4 = caminhoProxy(id, v.arquivo, { ...v, alpha: false });
+  const webm = caminhoProxy(id, v.arquivo, { ...v, alpha: true });
+  return [v.alpha ? null : mp4, webm].filter(Boolean).find((c) => fs.existsSync(c)) ?? null;
+};
+const TEM_ALPHA = /yuva|gbra|^(rgba|bgra|argb|abgr|yad|ayuv)/;
 
-async function videosSemSuporte(id) {
-  const p = lerProjeto(id);
-  const videos = p.materiais.filter((m) => m.tipo === 'video');
-  const infos = await Promise.all(videos.map((m) => infoVideo(path.join(caminhoProjeto(id), 'assets', m.arquivo))));
-  return videos.filter((_, n) => !CODECS_DO_PLAYER.includes(infos[n].codec)).map((m) => m.arquivo);
+// Acima disso o player até toca, mas decodificar 4K na prévia pesa muito mais que a cópia de 720p.
+const LADO_MAXIMO_NA_PREVIA = 1920;
+
+// O que a prévia precisa da cópia leve deste vídeo, ou null se toca direto.
+// grande: a cópia só deixa mais leve. Enquanto ela não fica pronta, a prévia usa o original.
+async function copiaNecessaria(id, arquivo) {
+  const i = await infoVideo(path.join(caminhoAssets(id), arquivo));
+  const grande = Math.max(i.largura ?? 0, i.altura ?? 0) > LADO_MAXIMO_NA_PREVIA;
+  if (!i.hdr && CODECS_DO_PLAYER.includes(i.codec) && !grande) return null;
+  return { arquivo, hdr: i.hdr, alpha: TEM_ALPHA.test(i.pixFmt ?? ''), grande: grande && !i.hdr && CODECS_DO_PLAYER.includes(i.codec) };
 }
 
-async function gerarProxy(id, arquivo) {
-  const saida = caminhoProxy(id, arquivo);
-  if (fs.existsSync(saida)) return saida;
+async function videosSemSuporte(id) {
+  const videos = lerProjeto(id).materiais.filter((m) => m.tipo === 'video');
+  return (await Promise.all(videos.map((m) => copiaNecessaria(id, m.arquivo)))).filter(Boolean);
+}
+
+async function gerarProxy(id, v) {
+  const existente = proxyPronto(id, v);
+  if (existente) return existente;
+  const saida = caminhoProxy(id, v.arquivo, v);
   fs.mkdirSync(path.dirname(saida), { recursive: true });
-  const parcial = saida + '.tmp.webm';
-  const r = await rodar(carregar().ffmpegPath, [
-    '-y', '-i', path.join(caminhoProjeto(id), 'assets', arquivo),
-    '-vf', "scale='min(720,iw)':-2", '-c:v', 'libvpx-vp9', '-pix_fmt', 'yuva420p', '-auto-alt-ref', '0',
-    '-deadline', 'realtime', '-cpu-used', '8', '-crf', '32', '-b:v', '0', '-c:a', 'libopus', parcial,
-  ]);
-  if (r.codigo !== 0) {
-    fs.rmSync(parcial, { force: true });
-    throw new Error(r.cauda);
+  const entrada = path.join(caminhoAssets(id), v.arquivo);
+  const ff = carregar().ffmpegPath;
+  const reduzir = "scale='min(720,iw)':-2";
+  const parcial = saida + (v.alpha ? '.tmp.webm' : '.tmp.mp4');
+  const tentativas = [];
+  const encoder = v.alpha ? null : ENCODERS_GPU[await encoderGpu()];
+  if (encoder) {
+    const gpu = (pre, filtro) => [
+      '-y', '-hide_banner', ...pre, '-i', entrada, '-map', '0:v:0', '-map', '0:a?', '-vf', filtro,
+      ...encoder.args, '-g', '15', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', parcial,
+    ];
+    // HDR: tone mapping na GPU (libplacebo/Vulkan); se não rolar, tone mapping na CPU e só a codificação na GPU.
+    if (v.hdr) {
+      tentativas.push(gpu(['-init_hw_device', 'vulkan'], reduzir + ',' + TONEMAP_GPU));
+      tentativas.push(gpu([], reduzir + ',' + TONEMAP));
+    } else tentativas.push(gpu(['-hwaccel', encoder.hwaccel], reduzir + ',format=yuv420p'), gpu([], reduzir + ',format=yuv420p'));
   }
-  fs.renameSync(parcial, saida);
-  return saida;
+  // Sem GPU, ou com transparência: VP9 na CPU, que mantém o canal alfa.
+  const webm = caminhoProxy(id, v.arquivo, { ...v, alpha: true }) + '.tmp.webm';
+  tentativas.push([
+    '-y', '-threads', '2', '-filter_threads', '2', '-i', entrada,
+    '-vf', reduzir + (v.hdr ? ',' + TONEMAP : ''), '-c:v', 'libvpx-vp9', '-pix_fmt', v.alpha ? 'yuva420p' : 'yuv420p', '-auto-alt-ref', '0',
+    '-deadline', 'realtime', '-cpu-used', '8', '-crf', '32', '-b:v', '0', '-c:a', 'libopus', webm,
+  ]);
+  let ultimo = '';
+  for (const args of tentativas) {
+    const r = await rodar(ff, args, { baixa: true });
+    const arq = args[args.length - 1];
+    if (r.codigo === 0 && fs.existsSync(arq)) {
+      const final = arq === parcial ? saida : caminhoProxy(id, v.arquivo, { ...v, alpha: true });
+      fs.renameSync(arq, final);
+      return final;
+    }
+    ultimo = r.cauda;
+    fs.rmSync(arq, { force: true });
+  }
+  throw new Error(ultimo);
+}
+
+// Pelo conteúdo: timelines com o mesmo código têm a mesma versão, e a tela reaproveita o pacote já carregado.
+const versoes = new Map();
+function versaoDoPacote(arquivo) {
+  const st = fs.statSync(arquivo);
+  const chave = `${arquivo}|${st.mtimeMs}|${st.size}`;
+  if (!versoes.has(chave)) versoes.set(chave, crypto.createHash('sha1').update(fs.readFileSync(arquivo)).digest('hex').slice(0, 16));
+  return versoes.get(chave);
 }
 
 // Empacota a composição para o player do app. Só refaz quando o código do projeto mudou.
 export async function prepararPrevia(id) {
   escreverModelo(lerProjeto(id));
-  const dir = caminhoProjeto(id);
+  const dir = caminhoTimeline(id);
   const saida = path.join(dir, '.previa', 'previa.js');
   const src = path.join(dir, 'src');
   if (!fs.existsSync(saida) || fs.statSync(saida).mtimeMs < maisRecente(src)) {
@@ -286,10 +364,23 @@ export async function prepararPrevia(id) {
   }
   // null = ainda sem cópia: a prévia mostra um aviso no lugar do vídeo até ela ficar pronta.
   const proxies = {};
-  for (const arquivo of await videosSemSuporte(id)) {
-    proxies[arquivo] = fs.existsSync(caminhoProxy(id, arquivo)) ? caminhoProxy(id, arquivo) : null;
+  for (const v of await videosSemSuporte(id)) {
+    const pronta = proxyPronto(id, v);
+    if (pronta || !v.grande) proxies[v.arquivo] = pronta;
   }
-  return { arquivo: saida, versao: fs.statSync(saida).mtimeMs, assets: path.join(dir, 'assets'), proxies };
+  return { arquivo: saida, versao: versaoDoPacote(saida), assets: caminhoAssets(id), proxies };
+}
+
+// Cópias leves uma por vez e em segundo plano (prioridade baixa), depois que o material já está na timeline.
+let filaProxy = Promise.resolve();
+export function gerarProxyDe(id, arquivo) {
+  const tarefa = filaProxy.then(async () => {
+    while (trabalhoPesado.renders > 0) await new Promise((ok) => setTimeout(ok, 2000));
+    const precisa = await copiaNecessaria(id, arquivo);
+    return precisa ? await gerarProxy(id, precisa) : null;
+  });
+  filaProxy = tarefa.catch(() => null);
+  return tarefa;
 }
 
 // ---------- mídia da timeline: miniaturas e forma de onda ----------
@@ -299,11 +390,11 @@ const PASSO_MINIATURA = (dur) => Math.max(1, Math.ceil(dur / 150));
 // Gera (uma vez) a tira de miniaturas do vídeo ou a forma de onda do áudio.
 export async function midiaDoArquivo(id, arquivo) {
   const p = lerProjeto(id);
-  const dir = caminhoProjeto(id);
-  const entrada = path.join(dir, 'assets', arquivo);
-  const pasta = path.join(dir, '.previa', 'midia');
+  const entrada = path.join(caminhoAssets(id), arquivo);
+  // Miniaturas e formas de onda são do arquivo, não da timeline: valem para o projeto todo.
+  const pasta = path.join(caminhoCache(id), 'midia');
   fs.mkdirSync(pasta, { recursive: true });
-  const m = [...p.materiais, ...(p.narracao ? [{ ...p.narracao, tipo: 'audio' }] : [])].find((x) => x.arquivo === arquivo);
+  const m = [...p.materiais, ...p.narracoes.map((n) => ({ ...n, tipo: 'audio' }))].find((x) => x.arquivo === arquivo);
   const duracao = m?.duracao ?? 0;
   const ff = carregar().ffmpegPath;
   const base = { arquivo, duracao, tipo: m?.tipo };
@@ -314,16 +405,21 @@ export async function midiaDoArquivo(id, arquivo) {
     const altura = 44;
     const larguraQuadro = Math.round(altura * ((m.largura ?? 16) / (m.altura ?? 9)) / 2) * 2;
     const saida = path.join(pasta, `${arquivo}.tira.jpg`);
+    const precisa = await copiaNecessaria(id, arquivo);
     // Só keyframes é bem mais rápido, mas falha em vídeos com poucos deles; aí decodifica tudo.
     for (const rapido of [['-skip_frame', 'nokey'], []]) {
       if (fs.existsSync(saida)) break;
       await rodar(ff, [
-        '-y', ...rapido, '-i', entrada, '-an',
-        '-vf', `fps=1/${passo},scale=${larguraQuadro}:${altura},tile=${quadros}x1`,
+        '-y', ...rapido, '-threads', '2', '-i', entrada, '-an',
+        '-vf', `fps=1/${passo},scale=${larguraQuadro}:${altura}${precisa?.hdr ? ',' + TONEMAP : ''},tile=${quadros}x1`,
         '-frames:v', '1', '-q:v', '6', saida,
-      ]);
+      ], { baixa: true });
     }
-    const proxy = (await videosSemSuporte(id)).includes(arquivo) ? await gerarProxy(id, arquivo).catch(() => null) : null;
+    // A cópia leve NÃO é feita aqui: demora e travava o app logo depois de enviar o material.
+    // A tela pede depois, uma por vez, com gerarProxyDe.
+    const pronta = precisa ? proxyPronto(id, precisa) : null;
+    const proxy = pronta;
+    base.precisaProxy = !!precisa && !pronta;
     return fs.existsSync(saida) ? { ...base, proxy, tira: saida, passo, larguraQuadro, altura, quadros } : { ...base, proxy };
   }
   if (m?.tipo === 'audio' && duracao > 0) {
@@ -334,7 +430,7 @@ export async function midiaDoArquivo(id, arquivo) {
         '-y', '-i', entrada,
         '-filter_complex', `aformat=channel_layouts=mono,showwavespic=s=${largura}x48:colors=#7fd1b9`,
         '-frames:v', '1', saida,
-      ]);
+      ], { baixa: true });
     }
     return fs.existsSync(saida) ? { ...base, onda: saida } : base;
   }
@@ -342,24 +438,33 @@ export async function midiaDoArquivo(id, arquivo) {
 }
 
 // Traz arquivos novos para o projeto e devolve os materiais prontos para entrar na timeline.
+// A pasta é a do projeto todo: o material novo aparece em todas as timelines.
 export async function importarParaProjeto(id, caminhos, onLinha) {
-  const p = lerProjeto(id);
-  const usados = new Set([...p.materiais.map((m) => m.arquivo), p.narracao?.arquivo].filter(Boolean));
+  const assets = caminhoAssets(id);
+  const inicial = lerProjeto(id);
+  const usados = new Set(fs.readdirSync(assets));
+  const conhecidos = new Map(inicial.materiais.map((m) => [m.original, m]));
+  const pastas = new Map();
   const novos = [];
+  const criados = [];
   for (const { caminho, pasta } of listarMateriais(caminhos)) {
     // O mesmo arquivo importado de novo não vira cópia; só atualiza a pasta quando veio de uma.
-    const existente = p.materiais.find((m) => m.original === caminho);
+    const existente = conhecidos.get(caminho);
     if (existente) {
-      if (pasta) existente.pasta = pasta;
-      novos.push(existente);
+      if (pasta) pastas.set(existente.arquivo, pasta);
+      novos.push(pasta ? { ...existente, pasta } : existente);
       continue;
     }
-    const m = await importarMaterial(caminho, path.join(caminhoProjeto(id), 'assets'), usados, onLinha);
+    const m = await importarMaterial(caminho, assets, usados, onLinha);
     if (!m) continue;
     if (pasta) m.pasta = pasta;
-    p.materiais.push(m);
+    conhecidos.set(caminho, m);
+    criados.push(m);
     novos.push(m);
   }
-  gravarProjeto(p);
+  // Relido só agora: a importação pode demorar, e o projeto é gravado por outras timelines enquanto isso.
+  const atual = lerProjeto(id);
+  atual.materiais = [...atual.materiais.map((m) => (pastas.has(m.arquivo) ? { ...m, pasta: pastas.get(m.arquivo) } : m)), ...criados];
+  gravarProjeto(atual);
   return novos;
 }

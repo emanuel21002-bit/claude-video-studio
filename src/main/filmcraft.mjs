@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { carregar } from './settings.mjs';
 import { recurso, temRecurso } from './recursos.mjs';
 import { rodar, rodarOuFalhar } from './proc.mjs';
-import { dirs, caminhoProjeto, lerProjeto, gravarProjeto } from './workspace.mjs';
+import { dirs, caminhoTimeline, caminhoAssets, relTimeline, lerProjeto, gravarProjeto } from './workspace.mjs';
 import { lerTimeline, gravarTimeline, escreverModelo, importarParaProjeto, novoId } from './timeline.mjs';
 import { paraOtio, deOtio, arquivosDeFora } from './otio.mjs';
 import { pastaPublica } from './render.mjs';
@@ -19,7 +19,7 @@ export const cli = () => recurso('filmcraft', 'filmcraft-cli.exe');
 
 export const filmcraftDisponivel = () => temRecurso('filmcraft', 'filmcraft.exe') && temRecurso('filmcraft', 'filmcraft-cli.exe');
 
-const pasta = (id) => path.join(caminhoProjeto(id), 'filmcraft');
+const pasta = (id) => path.join(caminhoTimeline(id), 'filmcraft');
 const projetoFc = (id) => path.join(pasta(id), 'projeto.fcproj');
 
 const temCamada = (i) => !i.arquivo;
@@ -33,7 +33,7 @@ async function renderizarCamada(id, t, onLinha) {
   };
   const itens = soGraficos.trilhas.flatMap((tr) => tr.itens);
   if (!itens.length) return null;
-  const blocos = path.join(caminhoProjeto(id), 'src', 'blocos.tsx');
+  const blocos = path.join(caminhoTimeline(id), 'src', 'blocos.tsx');
   const hash = crypto.createHash('sha1')
     .update(JSON.stringify(soGraficos))
     .update(fs.existsSync(blocos) ? fs.readFileSync(blocos) : '')
@@ -47,7 +47,7 @@ async function renderizarCamada(id, t, onLinha) {
   onLinha?.('Renderizando textos, legendas e efeitos para o Filmcraft…');
   const s = carregar();
   const { ws } = dirs();
-  const projeto = path.join('projetos', id);
+  const projeto = relTimeline(id);
   const parcial = saida + '.tmp.mov';
   const tmp = path.join(pasta(id), 'tmp');
   try {
@@ -68,18 +68,27 @@ async function renderizarCamada(id, t, onLinha) {
 
 const estado = (p) => p.filmcraft ?? {};
 
-// O Claude pode pôr em assets/ arquivos que não estão em materiais (logo, por exemplo). Sem o tamanho deles,
-// a escala no Filmcraft sairia errada.
-async function comTamanhos(projeto, t) {
-  const conhecidos = new Set(projeto.materiais.map((m) => m.arquivo));
-  const assets = path.join(caminhoProjeto(projeto.id), 'assets');
-  const extras = [];
+// Lê do arquivo o tamanho do que a timeline usa: o salvo em materiais pode faltar (logo que o Claude pôs em assets/)
+// ou ser anterior à leitura da rotação, e a escala no Filmcraft sairia errada. Também diz se há material HDR.
+// tamanhoAntigo: projeto salvo no Filmcraft antes disso, cujas escalas foram calculadas com o tamanho sem girar.
+async function comTamanhos(projeto, t, { tamanhoAntigo = false } = {}) {
+  const assets = caminhoAssets(projeto.id);
+  const medidos = new Map();
+  let hdr = false;
   for (const arquivo of new Set(t.trilhas.flatMap((tr) => tr.itens).map((i) => i.arquivo).filter(Boolean))) {
-    if (conhecidos.has(arquivo) || projeto.narracao?.arquivo === arquivo || !fs.existsSync(path.join(assets, arquivo))) continue;
-    const { largura, altura } = await infoVideo(path.join(assets, arquivo));
-    if (largura) extras.push({ arquivo, largura, altura });
+    if (projeto.narracao?.arquivo === arquivo || !fs.existsSync(path.join(assets, arquivo))) continue;
+    const info = await infoVideo(path.join(assets, arquivo));
+    hdr ||= info.hdr;
+    if (!info.largura) continue;
+    medidos.set(arquivo, tamanhoAntigo && info.girado ? { largura: info.altura, altura: info.largura } : { largura: info.largura, altura: info.altura });
   }
-  return { ...projeto, materiais: [...projeto.materiais, ...extras] };
+  const materiais = projeto.materiais.map((m) => {
+    if (tamanhoAntigo && m.largura) medidos.delete(m.arquivo);
+    return medidos.has(m.arquivo) ? { ...m, ...medidos.get(m.arquivo) } : m;
+  });
+  const conhecidos = new Set(materiais.map((m) => m.arquivo));
+  const extras = [...medidos].filter(([a]) => !conhecidos.has(a)).map(([arquivo, tam]) => ({ arquivo, ...tam }));
+  return { ...projeto, materiais: [...materiais, ...extras], hdr };
 }
 
 // Salvo no Filmcraft depois da última ida ou volta: abrir de novo descartaria essas edições.
@@ -91,7 +100,7 @@ function editadoLa(id) {
 
 function marcarSincronizado(id) {
   const p = lerProjeto(id);
-  p.filmcraft = { ...estado(p), sincronizadoEm: fs.statSync(projetoFc(id)).mtimeMs };
+  p.filmcraft = { ...estado(p), sincronizadoEm: fs.statSync(projetoFc(id)).mtimeMs, tamanhoGirado: true };
   gravarProjeto(p);
 }
 
@@ -102,7 +111,8 @@ export async function prepararProjetoFilmcraft(id, destino, onLinha) {
   const t = lerTimeline(id);
   fs.mkdirSync(pasta(id), { recursive: true });
   const camada = await renderizarCamada(id, t, onLinha);
-  const { otio, avisos } = paraOtio(t, await comTamanhos(projeto, t), { assets: path.join(caminhoProjeto(id), 'assets'), camada });
+  const comTam = await comTamanhos(projeto, t);
+  const { otio, avisos } = paraOtio(t, comTam, { assets: caminhoAssets(id), camada, hdr: comTam.hdr });
   const arqOtio = path.join(pasta(id), 'ida.otio');
   fs.writeFileSync(arqOtio, JSON.stringify(otio, null, 1));
   fs.rmSync(destino, { force: true });
@@ -118,7 +128,8 @@ export async function abrirNoFilmcraft(id, { descartar = false } = {}, onLinha) 
   const t = lerTimeline(id);
   fs.mkdirSync(pasta(id), { recursive: true });
   const camada = await renderizarCamada(id, t, onLinha);
-  const { otio, avisos } = paraOtio(t, await comTamanhos(projeto, t), { assets: path.join(caminhoProjeto(id), 'assets'), camada });
+  const comTam = await comTamanhos(projeto, t);
+  const { otio, avisos } = paraOtio(t, comTam, { assets: caminhoAssets(id), camada, hdr: comTam.hdr });
   const arqOtio = path.join(pasta(id), 'ida.otio');
   fs.writeFileSync(arqOtio, JSON.stringify(otio, null, 1));
   onLinha?.('Preparando o projeto do Filmcraft…');
@@ -142,7 +153,7 @@ export async function trazerDoFilmcraft(id, onLinha) {
   if (r.codigo !== 0 || !fs.existsSync(volta)) throw new Error('O Filmcraft não exportou o projeto:\n' + r.cauda);
   const otio = JSON.parse(fs.readFileSync(volta, 'utf8'));
   // Mídia nova que o usuário importou lá entra em assets/ como qualquer outro material.
-  const assets = path.join(caminhoProjeto(id), 'assets');
+  const assets = caminhoAssets(id);
   const mapaArquivos = {};
   for (const caminho of arquivosDeFora(otio, assets, pasta(id))) {
     if (!fs.existsSync(caminho)) continue;
@@ -150,7 +161,7 @@ export async function trazerDoFilmcraft(id, onLinha) {
     if (m) mapaArquivos[caminho] = m.arquivo;
   }
   const atual = lerTimeline(id);
-  const { timeline, avisos } = deOtio(otio, atual, await comTamanhos(lerProjeto(id), atual), { novoId, mapaArquivos, base: pasta(id) });
+  const { timeline, avisos } = deOtio(otio, atual, await comTamanhos(lerProjeto(id), atual, { tamanhoAntigo: !estado(lerProjeto(id)).tamanhoGirado }), { novoId, mapaArquivos, base: pasta(id) });
   gravarTimeline(id, timeline);
   marcarSincronizado(id);
   return { avisos };

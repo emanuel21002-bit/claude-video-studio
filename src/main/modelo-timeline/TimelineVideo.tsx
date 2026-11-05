@@ -9,6 +9,8 @@ import { loadFont as montserrat } from '@remotion/google-fonts/Montserrat';
 import { loadFont as oswald } from '@remotion/google-fonts/Oswald';
 import { loadFont as playfair } from '@remotion/google-fonts/PlayfairDisplay';
 import { loadFont as poppins } from '@remotion/google-fonts/Poppins';
+import { loadFont as redHatDisplay } from '@remotion/google-fonts/RedHatDisplay';
+import { loadFont as redHatText } from '@remotion/google-fonts/RedHatText';
 import { loadFont as roboto } from '@remotion/google-fonts/Roboto';
 import { blocos } from './blocos';
 
@@ -23,6 +25,8 @@ const FONTES: Record<string, () => { fontFamily: string }> = {
   Oswald: () => oswald('normal', { subsets: ['latin', 'latin-ext'], weights: ['400', '600', '700'] }),
   'Playfair Display': () => playfair('normal', { subsets: ['latin', 'latin-ext'], weights: ['400', '700'] }),
   Poppins: () => poppins('normal', { subsets: ['latin', 'latin-ext'], weights: ['400', '600', '800'] }),
+  'Red Hat Display': () => redHatDisplay('normal', { subsets: ['latin', 'latin-ext'], weights: ['400', '700', '900'] }),
+  'Red Hat Text': () => redHatText('normal', { subsets: ['latin', 'latin-ext'], weights: ['400', '500', '700'] }),
   Roboto: () => roboto('normal', { subsets: ['latin', 'latin-ext'], weights: ['400', '500', '700'] }),
 };
 
@@ -385,11 +389,38 @@ function Item({ item, fps, url, volumeTrilha, proxies, atraso = 0 }: { item: any
   return null;
 }
 
-const Trilha = ({ trilha, fps, url, proxies }: { trilha: any; fps: number; url: (a: string) => string; proxies?: Record<string, string | null> }) => {
+type PropsTrilha = { trilha: any; fps: number; url: (a: string) => string; proxies?: Record<string, string | null> };
+
+// Só na prévia: cada Sequence é refeita a cada quadro, mesmo fora da tela. Com janela, entram só os itens por perto.
+// A janela anda em blocos, para não refazer a lista a cada quadro; a folga cobre o tempo de preparar o próximo vídeo.
+const SEGUNDOS_JANELA = 4;
+const FOLGA_JANELA = 2;
+
+const TrilhaNaJanela: React.FC<PropsTrilha> = (props) => {
+  const { trilha, fps } = props;
+  const bloco = Math.floor(useCurrentFrame() / fps / SEGUNDOS_JANELA);
   const plano = useMemo(() => planoTransicoes(trilha), [trilha]);
+  const itens = useMemo(() => {
+    const de = bloco * SEGUNDOS_JANELA - FOLGA_JANELA;
+    const ate = (bloco + 1) * SEGUNDOS_JANELA + FOLGA_JANELA;
+    return ordemDesenho(trilha).filter((i: any) => {
+      const pl = plano.get(i.id);
+      return i.inicio + i.duracao + (pl?.estender ?? 0) >= de && i.inicio - (pl?.adiantar ?? 0) <= ate;
+    });
+  }, [trilha, plano, bloco]);
+  return <ItensDaTrilha {...props} itens={itens} plano={plano} />;
+};
+
+const Trilha: React.FC<PropsTrilha> = (props) => {
+  const plano = useMemo(() => planoTransicoes(props.trilha), [props.trilha]);
+  const itens = useMemo(() => ordemDesenho(props.trilha), [props.trilha]);
+  return <ItensDaTrilha {...props} itens={itens} plano={plano} />;
+};
+
+const ItensDaTrilha = React.memo(({ trilha, fps, url, proxies, itens, plano }: PropsTrilha & { itens: any[]; plano: Map<string, any> }) => {
   return (
     <>
-      {ordemDesenho(trilha).map((item: any) => {
+      {itens.map((item: any) => {
         const pl = plano.get(item.id);
         const adiantar = pl?.adiantar ?? 0;
         const inicio = item.inicio - adiantar;
@@ -410,10 +441,11 @@ const Trilha = ({ trilha, fps, url, proxies }: { trilha: any; fps: number; url: 
       })}
     </>
   );
-};
+});
 
-export const TimelineVideo: React.FC<{ timeline: any; baseAssets?: string; proxies?: Record<string, string | null> }> = ({ timeline, baseAssets, proxies }) => {
+export const TimelineVideo: React.FC<{ timeline: any; baseAssets?: string; proxies?: Record<string, string | null>; janela?: boolean }> = ({ timeline, baseAssets, proxies, janela }) => {
   const { fps } = useVideoConfig();
+  const Componente = janela ? TrilhaNaJanela : Trilha;
   const url = useMemo(
     () => (a: string) => (baseAssets ? baseAssets + encodeURIComponent(a) : staticFile(a)),
     [baseAssets],
@@ -421,7 +453,7 @@ export const TimelineVideo: React.FC<{ timeline: any; baseAssets?: string; proxi
   return (
     <AbsoluteFill style={{ backgroundColor: timeline.fundo ?? '#000' }}>
       {timeline.trilhas.map((trilha: any) =>
-        trilha.oculta ? null : <Trilha key={trilha.id} trilha={trilha} fps={fps} url={url} proxies={proxies} />,
+        trilha.oculta ? null : <Componente key={trilha.id} trilha={trilha} fps={fps} url={url} proxies={proxies} />,
       )}
     </AbsoluteFill>
   );

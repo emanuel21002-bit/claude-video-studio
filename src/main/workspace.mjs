@@ -4,9 +4,12 @@ import os from 'node:os';
 import { carregar } from './settings.mjs';
 import { rodar, rodarOuFalhar } from './proc.mjs';
 import { todosEstilos, FORMATOS } from './presets.mjs';
-import { infoVideo, transcodificar } from './transcodificar.mjs';
 import { recurso, temRecurso } from './recursos.mjs';
 import { criarTimeline } from './timeline.mjs';
+import { slug } from './migracao.mjs';
+import { tamanhoVisivel } from './otio.mjs';
+import { lerRoteiro } from './roteiro.mjs';
+import { trechoDoRoteiro } from './conferir-nucleo.mjs';
 
 const HYPERFRAMES_VERSAO = '0.8.217';
 
@@ -29,17 +32,29 @@ const PACOTE_WORKSPACE = {
 
 const CLAUDE_MD = `# Claude Video Studio — workspace
 
-Cada vídeo fica em \`projetos/<id>/\`:
+Cada projeto fica em \`projetos/<id>/\`, com um único conjunto de materiais e uma ou mais timelines:
 
-- \`projeto.json\` — dados do projeto (gerado pelo app, não edite)
-- \`BRIEFING.md\` — materiais, narração transcrita e estilo pedido
-- \`transcricao.json\` — narração com tempos por segmento e por palavra (segundos)
-- \`assets/\` — todos os materiais e a narração
-- \`renders/\` — vídeos exportados pelo app
+- \`projeto.json\` — dados do projeto e das timelines (gerado pelo app, não edite)
+- \`assets/\` — todos os materiais e as narrações, compartilhados entre as timelines
+- \`referencia/\`, \`instrucoes/\` — material de referência e áudios de instrução
+- \`roteiro/\` — roteiros enviados pelo usuário, em texto: base das legendas e da ordem das cenas
+- \`.cache/\` — miniaturas e cópias leves, refeitas quando faltam
+- \`timelines/<timeline>/\` — uma timeline:
+  - \`timeline.json\` — o vídeo (só em projetos Remotion)
+  - \`BRIEFING.md\` — materiais, narração transcrita e estilo pedido
+  - \`transcricao.json\` — narração com tempos por segmento e por palavra (segundos)
+  - \`renders/\` — vídeos exportados pelo app
 
-Projetos Remotion têm o código em \`projetos/<id>/src/\`; projetos HyperFrames têm \`index.html\` e \`compositions/\` na raiz do projeto.
+Timelines Remotion têm o código em \`timelines/<timeline>/src/\`; as HyperFrames têm \`index.html\` e \`compositions/\` na pasta da timeline.
+Nunca apague nem sobrescreva arquivos de \`assets/\`: outras timelines podem usá-los.
 As dependências (remotion, @remotion/*, react, hyperframes) já estão instaladas em \`node_modules\` deste workspace — nunca rode npm install dentro de um projeto.
 `;
+
+// Só atualiza o texto do workspace que já existe; as dependências ficam como estão.
+export function atualizarDocumentacao() {
+  const arq = path.join(dirs().ws, 'CLAUDE.md');
+  if (fs.existsSync(arq) && fs.readFileSync(arq, 'utf8') !== CLAUDE_MD) fs.writeFileSync(arq, CLAUDE_MD);
+}
 
 export function dirs() {
   const ws = carregar().workspaceDir;
@@ -181,8 +196,8 @@ async function sondarCompleto(arquivo) {
     const v = j.streams?.find((s) => s.codec_type === 'video');
     return {
       duracao: j.format?.duration ? Number(Number(j.format.duration).toFixed(2)) : null,
-      largura: v?.width ?? null,
-      altura: v?.height ?? null,
+      largura: tamanhoVisivel(v).largura,
+      altura: tamanhoVisivel(v).altura,
       temAudio: !!j.streams?.find((s) => s.codec_type === 'audio'),
     };
   } catch {
@@ -207,11 +222,20 @@ function nomeSeguro(nome, usados) {
 }
 
 // Hard link quando está no mesmo disco (instantâneo, sem ocupar espaço); senão copia.
-function trazerArquivo(origem, destino) {
+// No mesmo disco é um link, na hora. Em outro disco é cópia de verdade: vídeo 4K leva segundos ou minutos,
+// e copiar de forma síncrona deixaria o app inteiro em "Não respondendo". O nome final só existe com o arquivo completo.
+async function trazerArquivo(origem, destino) {
   try {
     fs.linkSync(origem, destino);
   } catch {
-    fs.copyFileSync(origem, destino);
+    const parcial = destino + '.parcial';
+    try {
+      await fs.promises.copyFile(origem, parcial);
+      await fs.promises.rename(parcial, destino);
+    } catch (e) {
+      await fs.promises.rm(parcial, { force: true });
+      throw e;
+    }
   }
 }
 
@@ -223,89 +247,108 @@ export function carimbo(d = new Date()) {
   return `${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}`;
 }
 
-export function caminhoProjeto(id) {
-  return path.join(dirs().projetos, id);
+// Um projeto é uma pasta com um conjunto de materiais e várias timelines. O id que circula pelo app é o da timeline,
+// "<projeto>/<timeline>"; lerProjeto devolve a timeline já com os dados do projeto, e gravarProjeto separa de volta.
+const separar = (id) => {
+  const [projeto, timeline] = String(id).split('/');
+  if (!projeto || !timeline) throw new Error(`Timeline inválida: ${id}`);
+  return { projeto, timeline };
+};
+
+export const caminhoProjeto = (id) => path.join(dirs().projetos, separar(id).projeto);
+export const caminhoAssets = (id) => path.join(caminhoProjeto(id), 'assets');
+export const caminhoCache = (id) => path.join(caminhoProjeto(id), '.cache');
+export const caminhoTimeline = (id) => path.join(caminhoProjeto(id), 'timelines', separar(id).timeline);
+// A partir do workspace, com barras normais, para os prompts do Claude e os CLIs.
+export const relAssets = (id) => `projetos/${separar(id).projeto}/assets`;
+export const relTimeline = (id) => `projetos/${separar(id).projeto}/timelines/${separar(id).timeline}`;
+
+const arquivoDoProjeto = (projetoId) => path.join(dirs().projetos, projetoId, 'projeto.json');
+const lerDoDisco = (projetoId) => JSON.parse(fs.readFileSync(arquivoDoProjeto(projetoId), 'utf8'));
+
+// Um arquivo só guarda todas as timelines do projeto: gravar pela metade não pode perder as outras.
+function gravarNoDisco(projeto) {
+  const destino = arquivoDoProjeto(projeto.id);
+  const parcial = destino + '.tmp';
+  const texto = JSON.stringify(projeto, null, 2);
+  fs.writeFileSync(parcial, texto);
+  try {
+    fs.renameSync(parcial, destino);
+  } catch {
+    // Antivírus ou indexador segurando o arquivo por um instante.
+    fs.writeFileSync(destino, texto);
+    fs.rmSync(parcial, { force: true });
+  }
+}
+
+const COMPARTILHADOS = ['materiais', 'referencias', 'audiosInstrucao', 'roteiros'];
+
+function vista(projeto, ordem) {
+  const t = projeto.timelines[ordem];
+  return {
+    ...t,
+    id: `${projeto.id}/${t.id}`,
+    timelineId: t.id,
+    projetoId: projeto.id,
+    projetoCriadoEm: projeto.criadoEm,
+    ordem,
+    // O nome completo vai para o arquivo exportado e o título; dentro do projeto, as abas mostram o rótulo.
+    nome: projeto.timelines.length > 1 ? `${projeto.nome} — ${t.rotulo}` : projeto.nome,
+    grupo: { id: projeto.id, nome: projeto.nome },
+    narracoes: projeto.timelines.map((x) => x.narracao).filter(Boolean),
+    ...Object.fromEntries(COMPARTILHADOS.map((c) => [c, projeto[c] ?? []])),
+  };
 }
 
 export function lerProjeto(id) {
-  return JSON.parse(fs.readFileSync(path.join(caminhoProjeto(id), 'projeto.json'), 'utf8'));
+  const { projeto: projetoId, timeline } = separar(id);
+  const projeto = lerDoDisco(projetoId);
+  const ordem = projeto.timelines.findIndex((t) => t.id === timeline);
+  if (ordem < 0) throw new Error(`A timeline "${timeline}" não existe mais neste projeto.`);
+  return vista(projeto, ordem);
 }
 
 export function gravarProjeto(p) {
-  fs.writeFileSync(path.join(caminhoProjeto(p.id), 'projeto.json'), JSON.stringify(p, null, 2));
+  const { id: _id, timelineId, projetoId, projetoCriadoEm: _c, ordem: _o, nome: _n, grupo: _g, narracoes: _nn, ...resto } = p;
+  const projeto = lerDoDisco(projetoId);
+  for (const c of COMPARTILHADOS) {
+    if (resto[c]) projeto[c] = resto[c];
+    delete resto[c];
+  }
+  const n = projeto.timelines.findIndex((t) => t.id === timelineId);
+  if (n < 0) throw new Error(`A timeline "${timelineId}" não existe mais neste projeto.`);
+  projeto.timelines[n] = { id: timelineId, ...resto };
+  gravarNoDisco(projeto);
   return p;
 }
 
-// Cada projeto (uma timeline) pertence a uma pasta: { grupo: { id, nome } }. Os vídeos de um lote dividem a pasta;
-// um vídeo avulso tem a pasta só para ele. Projetos antigos, sem `grupo`, são agrupados aqui uma vez e gravados.
-function migrarGrupos(lista) {
-  const abertos = new Map(); // chave do lote -> { grupo, proximo }
-  for (const p of [...lista].filter((x) => !x.grupo).sort((a, b) => a.criadoEm.localeCompare(b.criadoEm))) {
-    let grupo;
-    if (p.lote) {
-      const prefixo = p.nome.includes(' — ') ? p.nome.split(' — ')[0] : p.nome;
-      const chave = `${prefixo}|${p.lote.total}`;
-      const aberto = abertos.get(chave);
-      if (aberto && aberto.proximo === p.lote.indice) {
-        grupo = aberto.grupo;
-        aberto.proximo++;
-      } else {
-        grupo = { id: p.id, nome: prefixo };
-        abertos.set(chave, { grupo, proximo: p.lote.indice + 1 });
-      }
-    } else {
-      grupo = { id: p.id, nome: p.nome };
-    }
-    p.grupo = grupo;
-    gravarProjeto(p);
-  }
-  return lista;
-}
-
+// Uma entrada por timeline, do projeto mais novo para o mais antigo.
 export function listarProjetos() {
   const { projetos } = dirs();
   if (!fs.existsSync(projetos)) return [];
-  const lista = fs
+  return fs
     .readdirSync(projetos)
-    .filter((id) => fs.existsSync(path.join(projetos, id, 'projeto.json')))
-    .map((id) => {
+    .filter((id) => !id.startsWith('.') && fs.existsSync(arquivoDoProjeto(id)))
+    .flatMap((id) => {
       try {
-        return lerProjeto(id);
+        const projeto = lerDoDisco(id);
+        return Array.isArray(projeto.timelines) ? projeto.timelines.map((_, n) => vista(projeto, n)) : [];
       } catch {
-        return null;
+        return [];
       }
     })
-    .filter(Boolean);
-  return migrarGrupos(lista).sort((a, b) => b.criadoEm.localeCompare(a.criadoEm));
+    .sort((a, b) => b.projetoCriadoEm.localeCompare(a.projetoCriadoEm) || a.ordem - b.ordem);
 }
 
-// Codecs que o Chrome dos renders decodifica bem; qualquer outro (H.265, ProRes, MPEG-2…) entra convertido.
-const CODECS_DO_CHROME = ['h264', 'vp8', 'vp9', 'av1'];
-
-// Copia um arquivo para assets/. O que o Chrome dos renders não decodifica de forma confiável (H.265 etc.) entra já em H.264,
-// pelo conversor do app (ffmpeg direto, sem passar pelo Claude).
-// "convertidos" guarda as conversões de um lote: o mesmo material não é convertido uma vez por vídeo.
-export async function importarMaterial(origem, assets, usados, onLinha, convertidos) {
+// Copia um arquivo para assets/ como está.
+export async function importarMaterial(origem, assets, usados, onLinha) {
   const tipo = tipoDe(origem);
   if (tipo === 'outro') return null;
-  if (convertidos?.has(origem)) {
-    const arquivo = nomeSeguro(path.basename(origem, path.extname(origem)) + '.mp4', usados);
-    trazerArquivo(convertidos.get(origem), path.join(assets, arquivo));
-    return { arquivo, original: origem, tipo, convertidoDe: 'hevc', ...(await sondarCompleto(path.join(assets, arquivo))) };
-  }
-  const codec = tipo === 'video' ? (await infoVideo(origem)).codec : null;
-  if (codec && !CODECS_DO_CHROME.includes(codec)) {
-    const arquivo = nomeSeguro(path.basename(origem, path.extname(origem)) + '.mp4', usados);
-    convertidos?.set(origem, path.join(assets, arquivo));
-    onLinha?.(`Convertendo ${path.basename(origem)} (${codec === 'hevc' ? 'H.265' : codec}) para H.264…`);
-    await transcodificar(origem, { formato: 'mp4', modo: carregar().renderModo, saida: path.join(assets, arquivo) }, (p) =>
-      onLinha?.(`Convertendo ${path.basename(origem)}… ${Math.round(p * 100)}%`),
-    );
-    return { arquivo, original: origem, tipo, convertidoDe: 'hevc', ...(await sondarCompleto(path.join(assets, arquivo))) };
-  }
+  // Não converte mais na importação (H.265, ProRes…): o arquivo entra como está e a cópia leve da prévia é feita depois,
+  // em segundo plano. O render do Remotion lê H.265 direto (OffthreadVideo usa ffmpeg).
   const arquivo = nomeSeguro(path.basename(origem), usados);
   onLinha?.(`Importando ${path.basename(origem)}…`);
-  trazerArquivo(origem, path.join(assets, arquivo));
+  await trazerArquivo(origem, path.join(assets, arquivo));
   return { arquivo, original: origem, tipo, ...(await sondarCompleto(origem)) };
 }
 
@@ -351,7 +394,7 @@ export async function resolverNarracoes(caminhos) {
 }
 
 // Uma narração em vários áudios vira um arquivo só, na ordem dada, para a transcrição e os cortes seguirem um único tempo.
-async function unirAudios(arquivos, saida) {
+export async function unirAudios(arquivos, saida) {
   const entradas = arquivos.flatMap((a) => ['-i', a]);
   const normalizados = arquivos.map((_, i) => `[${i}:a]aresample=48000,aformat=channel_layouts=stereo[a${i}]`).join(';');
   const juntar = arquivos.map((_, i) => `[a${i}]`).join('') + `concat=n=${arquivos.length}:v=0:a=1[saida]`;
@@ -360,39 +403,78 @@ async function unirAudios(arquivos, saida) {
   ]);
 }
 
-export async function criarProjeto({ nome, materiais, pastas, narracao, duracaoMotion, estiloId, estiloTexto, engine, formato, lote, grupo, referencias: refs, audiosInstrucao: audios, convertidos }, onLinha) {
+// Cria a pasta do projeto com os materiais. As timelines entram depois, com novaTimeline, usando estes mesmos arquivos.
+// ---------- roteiro ----------
+// Do projeto todo: um PDF com os roteiros de vários áudios serve, porque cada áudio é alinhado com o trecho dele.
+// Guardado como texto em roteiro/, fora de assets/: não é material do vídeo.
+
+async function guardarRoteiro(origem, pasta, usados) {
+  const texto = await lerRoteiro(origem);
+  fs.mkdirSync(pasta, { recursive: true });
+  const arquivo = nomeSeguro(`${path.parse(origem).name}.txt`, usados);
+  fs.writeFileSync(path.join(pasta, arquivo), texto);
+  return { arquivo, original: origem, nome: path.basename(origem), palavras: texto.split(/\s+/).length };
+}
+
+export async function adicionarRoteiros(id, caminhos) {
+  const pasta = path.join(caminhoProjeto(id), 'roteiro');
+  const inicial = lerProjeto(id).roteiros;
+  const usados = new Set(inicial.map((r) => r.arquivo));
+  const novos = [];
+  const erros = [];
+  for (const origem of caminhos) {
+    if (inicial.some((r) => r.original === origem)) continue;
+    try {
+      novos.push(await guardarRoteiro(origem, pasta, usados));
+    } catch (e) {
+      erros.push(`${path.basename(origem)}: ${e.message.split('\n')[0]}`);
+    }
+  }
+  const atual = lerProjeto(id);
+  atual.roteiros = [...atual.roteiros, ...novos];
+  gravarProjeto(atual);
+  return { roteiros: atual.roteiros, erros };
+}
+
+export function removerRoteiro(id, arquivo) {
+  const atual = lerProjeto(id);
+  if (!atual.roteiros.some((r) => r.arquivo === arquivo)) return atual.roteiros;
+  atual.roteiros = atual.roteiros.filter((r) => r.arquivo !== arquivo);
+  gravarProjeto(atual);
+  // Só o texto extraído: o arquivo original do usuário fica onde está.
+  fs.rmSync(path.join(caminhoProjeto(id), 'roteiro', path.basename(arquivo)), { force: true });
+  return atual.roteiros;
+}
+
+export function textoDosRoteiros(id) {
+  return lerProjeto(id).roteiros
+    .map((r) => {
+      try {
+        return fs.readFileSync(path.join(caminhoProjeto(id), 'roteiro', r.arquivo), 'utf8');
+      } catch {
+        return '';
+      }
+    })
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+export async function criarProjeto({ nome, materiais = [], pastas, referencias: refs, audiosInstrucao: audios, roteiros: arquivosRoteiro }, onLinha) {
   const agora = new Date();
-  const slug = (nome || 'video')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-zA-Z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .toLowerCase()
-    .slice(0, 40) || 'video';
-  // Vídeos de um lote nascem no mesmo segundo e podem ter pastas de mesmo nome.
-  let id = `${carimbo(agora)}-${slug}`;
-  for (let n = 2; fs.existsSync(caminhoProjeto(id)); n++) id = `${carimbo(agora)}-${slug}-${n}`;
-  const dir = caminhoProjeto(id);
+  const base = `${carimbo(agora)}-${slug(nome) || 'video'}`;
+  const { projetos } = dirs();
+  let id = base;
+  for (let n = 2; fs.existsSync(path.join(projetos, id)); n++) id = `${base}-${n}`;
+  const dir = path.join(projetos, id);
   const assets = path.join(dir, 'assets');
   fs.mkdirSync(assets, { recursive: true });
-  fs.mkdirSync(path.join(dir, 'renders'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'timelines'), { recursive: true });
 
   const usados = new Set();
   const itens = [];
   for (const origem of materiais) {
-    const m = await importarMaterial(origem, assets, usados, onLinha, convertidos);
+    const m = await importarMaterial(origem, assets, usados, onLinha);
     if (m) itens.push(pastas?.[origem] ? { ...m, pasta: pastas[origem] } : m);
-  }
-
-  let narr = null;
-  if (narracao?.length) {
-    onLinha?.('Importando narração…');
-    const varios = narracao.length > 1;
-    const arquivo = nomeSeguro('narracao' + (varios ? '.wav' : path.extname(narracao[0])), usados);
-    const destino = path.join(assets, arquivo);
-    if (varios) await unirAudios(narracao, destino);
-    else trazerArquivo(narracao[0], destino);
-    narr = { arquivo, original: narracao[0], partes: narracao, ...(await sondarCompleto(destino)) };
   }
 
   // Referências ficam fora de assets/: servem para o Claude estudar o estilo, não entram como material do vídeo.
@@ -406,7 +488,7 @@ export async function criarProjeto({ nome, materiais, pastas, narracao, duracaoM
       if (tipo !== 'video' && tipo !== 'imagem') continue;
       onLinha?.(`Guardando a referência ${path.basename(origem)}…`);
       const arquivo = nomeSeguro(path.basename(origem), usadosRef);
-      trazerArquivo(origem, path.join(pastaRef, arquivo));
+      await trazerArquivo(origem, path.join(pastaRef, arquivo));
       referencias.push({ arquivo, original: origem, tipo, ...(await sondarCompleto(origem)) });
     }
   }
@@ -420,40 +502,164 @@ export async function criarProjeto({ nome, materiais, pastas, narracao, duracaoM
     for (const origem of audios) {
       onLinha?.(`Guardando o áudio de referência ${path.basename(origem)}…`);
       const arquivo = nomeSeguro(path.basename(origem), usadosInstr);
-      trazerArquivo(origem, path.join(pastaInstr, arquivo));
+      await trazerArquivo(origem, path.join(pastaInstr, arquivo));
       audiosInstrucao.push({ arquivo, original: origem });
     }
   }
 
-  const estilos = todosEstilos();
-  const estilo = estilos.find((e) => e.id === estiloId) ?? estilos.at(-1);
-  const projeto = {
+  const roteiros = [];
+  const usadosRoteiro = new Set();
+  for (const origem of arquivosRoteiro ?? []) {
+    onLinha?.(`Lendo o roteiro ${path.basename(origem)}…`);
+    try {
+      roteiros.push(await guardarRoteiro(origem, path.join(dir, 'roteiro'), usadosRoteiro));
+    } catch (e) {
+      onLinha?.(`Não consegui ler o roteiro ${path.basename(origem)}: ${e.message.split('\n')[0]}`);
+    }
+  }
+
+  gravarNoDisco({
     id,
     nome: nome || 'Vídeo sem nome',
     criadoEm: agora.toISOString(),
+    versao: 2,
+    materiais: itens,
+    referencias,
+    audiosInstrucao,
+    roteiros,
+    timelines: [],
+  });
+  return id;
+}
+
+function pastaNovaDeTimeline(projeto, rotulo) {
+  const numeros = projeto.timelines.map((t) => parseInt(t.id, 10)).filter((n) => n > 0);
+  const n = Math.max(0, ...numeros) + 1;
+  return `${String(n).padStart(2, '0')}-${slug(rotulo, 30) || 'timeline'}`;
+}
+
+function registrarTimeline(projeto, entrada) {
+  projeto.timelines.push(entrada);
+  gravarNoDisco(projeto);
+  return vista(projeto, projeto.timelines.length - 1);
+}
+
+const proximoRotulo = (projeto) => {
+  const nomes = new Set(projeto.timelines.map((t) => t.rotulo));
+  let n = projeto.timelines.length + 1;
+  while (nomes.has(`Timeline ${n}`)) n++;
+  return `Timeline ${n}`;
+};
+
+// Uma timeline nova usa os materiais do projeto e só traz o que é dela: a narração.
+export async function novaTimeline(projetoId, { rotulo, narracao, duracaoMotion, estiloId, estiloTexto, engine, formato, lote, vazia }, onLinha) {
+  const assets = path.join(dirs().projetos, projetoId, 'assets');
+  let projeto = lerDoDisco(projetoId);
+  const nomeRotulo = rotulo || proximoRotulo(projeto);
+  const timelineId = pastaNovaDeTimeline(projeto, nomeRotulo);
+  const dir = path.join(dirs().projetos, projetoId, 'timelines', timelineId);
+  fs.mkdirSync(path.join(dir, 'renders'), { recursive: true });
+
+  let narr = null;
+  if (narracao?.length) {
+    onLinha?.('Importando narração…');
+    const varios = narracao.length > 1;
+    const usados = new Set(fs.readdirSync(assets));
+    const arquivo = nomeSeguro(`narracao-${nomeRotulo}` + (varios ? '.wav' : path.extname(narracao[0])), usados);
+    const destino = path.join(assets, arquivo);
+    if (varios) await unirAudios(narracao, destino);
+    else await trazerArquivo(narracao[0], destino);
+    narr = { arquivo, original: narracao[0], partes: narracao, ...(await sondarCompleto(destino)) };
+  }
+
+  const estilos = todosEstilos();
+  const estilo = estilos.find((e) => e.id === estiloId) ?? estilos.at(-1);
+  // Lido de novo: importar a narração leva tempo, e outra timeline pode ter gravado o projeto nesse meio-tempo.
+  projeto = lerDoDisco(projetoId);
+  const view = registrarTimeline(projeto, {
+    id: timelineId,
+    rotulo: nomeRotulo,
+    criadoEm: new Date().toISOString(),
     engine,
     formato,
     ...FORMATOS[formato],
     fps: 30,
-    // Projetos Remotion são editáveis na timeline; o HyperFrames segue pelo chat.
+    // Timelines Remotion são editáveis na timeline; o HyperFrames segue pelo chat.
     timeline: engine === 'remotion',
     estiloId: estilo.id,
     estiloNome: estilo.nome,
     estiloTexto: estiloTexto ?? '',
-    materiais: itens,
-    referencias,
-    audiosInstrucao,
     narracao: narr,
     duracaoMotion: duracaoMotion ?? null,
     lote: lote ?? null,
-    grupo: grupo ?? { id, nome: nome || 'Vídeo sem nome' },
     sessionId: null,
     renders: [],
     chat: [],
-  };
-  gravarProjeto(projeto);
-  scaffold(projeto);
-  return projeto;
+  });
+  scaffold(view, { vazia });
+  return view;
+}
+
+// Nova timeline a partir da aba do editor: em branco, nos mesmos formato e estilo da que está aberta.
+export async function timelineEmBranco(id) {
+  const atual = lerProjeto(id);
+  const view = await novaTimeline(atual.projetoId, {
+    estiloId: atual.estiloId,
+    estiloTexto: atual.estiloTexto,
+    engine: atual.engine,
+    formato: atual.formato,
+    vazia: true,
+  });
+  escreverBriefing(view, null);
+  return view;
+}
+
+// Cópia editável da montagem: só os dados da timeline, nunca os materiais. Conversa e renders começam do zero.
+export function duplicarTimeline(id) {
+  const atual = lerProjeto(id);
+  const projeto = lerDoDisco(atual.projetoId);
+  const rotulo = `${atual.rotulo} (cópia)`;
+  const timelineId = pastaNovaDeTimeline(projeto, rotulo);
+  const origem = caminhoTimeline(id);
+  const destino = path.join(dirs().projetos, atual.projetoId, 'timelines', timelineId);
+  const deFora = new Set(['renders', '.previa', 'filmcraft', 'assets']);
+  fs.mkdirSync(path.join(destino, 'renders'), { recursive: true });
+  for (const nome of fs.readdirSync(origem)) {
+    if (!deFora.has(nome)) fs.cpSync(path.join(origem, nome), path.join(destino, nome), { recursive: true });
+  }
+  if (atual.engine !== 'remotion') ligarAssets(destino, atual.projetoId);
+  const { id: _i, timelineId: _t, projetoId: _p, projetoCriadoEm: _c, ordem: _o, nome: _n, grupo: _g, narracoes: _nn, materiais: _m, referencias: _r, audiosInstrucao: _a, filmcraft: _f, migradoDe: _d, ...resto } = atual;
+  return registrarTimeline(projeto, { ...resto, id: timelineId, rotulo, criadoEm: new Date().toISOString(), lote: null, sessionId: null, renders: [], chat: [] });
+}
+
+export function renomearTimeline(id, rotulo) {
+  const limpo = String(rotulo ?? '').trim().slice(0, 80);
+  if (!limpo) throw new Error('O nome da timeline não pode ficar vazio.');
+  gravarProjeto({ ...lerProjeto(id), rotulo: limpo });
+}
+
+// O nome do projeto fica no projeto.json: a pasta (id) não muda, então nada que aponta para ela quebra.
+export function renomearProjeto(id, nome) {
+  const limpo = String(nome ?? '').trim().slice(0, 80);
+  if (!limpo) throw new Error('O nome do projeto não pode ficar vazio.');
+  const projeto = lerDoDisco(lerProjeto(id).projetoId);
+  projeto.nome = limpo;
+  gravarNoDisco(projeto);
+}
+
+// Apaga só o que é da timeline (montagem e renders). Os materiais ficam: são do projeto.
+export function excluirTimeline(id) {
+  const atual = lerProjeto(id);
+  const projeto = lerDoDisco(atual.projetoId);
+  if (projeto.timelines.length < 2) throw new Error('O projeto precisa de pelo menos uma timeline.');
+  fs.rmSync(caminhoTimeline(id), { recursive: true, force: true });
+  projeto.timelines = projeto.timelines.filter((t) => t.id !== atual.timelineId);
+  gravarNoDisco(projeto);
+}
+
+// O HyperFrames lê "assets/…" a partir da pasta do vídeo: uma junção leva à pasta do projeto, sem copiar nada.
+function ligarAssets(dir, projetoId) {
+  fs.symlinkSync(path.join(dirs().projetos, projetoId, 'assets'), path.join(dir, 'assets'), 'junction');
 }
 
 function duracaoAlvo(p) {
@@ -464,12 +670,13 @@ function duracaoAlvo(p) {
 }
 
 // Ponto de partida que já renderiza; o Claude refaz.
-function scaffold(p) {
-  const dir = caminhoProjeto(p.id);
+function scaffold(p, { vazia } = {}) {
+  const dir = caminhoTimeline(p.id);
   const dur = duracaoAlvo(p);
   if (p.engine === 'remotion') {
-    criarTimeline(p);
+    criarTimeline(p, { vazia });
   } else {
+    ligarAssets(dir, p.projetoId);
     const resolucao = { '9:16': 'portrait', '16:9': 'landscape', '1:1': 'square' }[p.formato];
     fs.mkdirSync(path.join(dir, 'compositions'), { recursive: true });
     fs.writeFileSync(
@@ -523,6 +730,22 @@ function scaffold(p) {
 
 const fmt = (s) => (s == null ? '?' : `${Number(s).toFixed(2)}s`);
 
+// Com narração transcrita, só o trecho do roteiro que ela fala: o roteiro inteiro gastaria tokens à toa em todo turno.
+function secaoRoteiro(p, transcricao) {
+  const roteiro = textoDosRoteiros(p.id);
+  if (!roteiro) return [];
+  const ouvido = transcricao?.segmentos?.map((s) => s.texto).join(' ');
+  const trecho = ouvido ? trechoDoRoteiro(ouvido, roteiro) : null;
+  return [
+    '## Roteiro',
+    '',
+    'O usuário enviou o roteiro: é a base do vídeo. A sequência das cenas segue a ordem dele, e cada cena mostra o que está sendo dito naquele momento. Onde a transcrição e o roteiro divergem na grafia (nomes, marcas, preços), vale o roteiro.',
+    '',
+    trecho ? '> ' + trecho : '> ' + roteiro.replace(/\n/g, '\n> '),
+    '',
+  ];
+}
+
 export function escreverBriefing(p, transcricao, instrucoes = []) {
   const estilo = todosEstilos().find((e) => e.id === p.estiloId);
   const linhas = [
@@ -548,6 +771,7 @@ export function escreverBriefing(p, transcricao, instrucoes = []) {
           ...instrucoes.map((i) => (i.texto ? `> ${i.texto.replace(/\n/g, '\n> ')}\n` : `(Não foi possível transcrever ${i.arquivo}: o Whisper não está disponível ou falhou. Avise o usuário.)\n`)),
         ]
       : []),
+    ...secaoRoteiro(p, transcricao),
     ...(p.referencias?.length
       ? [
           '## Material de referência',
@@ -561,7 +785,7 @@ export function escreverBriefing(p, transcricao, instrucoes = []) {
           '',
         ]
       : []),
-    '## Materiais (em assets/)',
+    `## Materiais (em ${relAssets(p.id)}/, compartilhados com as outras timelines do projeto)`,
     '',
     '| arquivo | pasta | tipo | duração | resolução | áudio |',
     '|---|---|---|---|---|---|',
@@ -600,5 +824,5 @@ export function escreverBriefing(p, transcricao, instrucoes = []) {
   } else {
     linhas.push('## Narração', '', 'Sem narração. Use o áudio original dos vídeos ou monte o ritmo pelos cortes.', '');
   }
-  fs.writeFileSync(path.join(caminhoProjeto(p.id), 'BRIEFING.md'), linhas.join('\n'));
+  fs.writeFileSync(path.join(caminhoTimeline(p.id), 'BRIEFING.md'), linhas.join('\n'));
 }

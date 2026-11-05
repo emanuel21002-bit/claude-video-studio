@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { carregar } from './settings.mjs';
+import { carregar, arquivoDoApp } from './settings.mjs';
 import { rodar } from './proc.mjs';
+import { tamanhoVisivel } from './otio.mjs';
 import { CODIFICADORES, AUDIO, cpuDoCodec } from './codificadores.mjs';
 
 function ffprobePath() {
@@ -45,22 +46,89 @@ export function encoderGpu() {
   return encoderCache;
 }
 
-// Codec, duração e se é HDR (HLG/PQ de celular), para decidir o tone mapping.
-export async function infoVideo(arquivo) {
+// ---------- leitura dos vídeos (ffprobe) ----------
+// Abrir um processo trava o processo principal por alguns milissegundos: com dezenas de materiais, trava o app.
+// Cada arquivo é lido uma vez só (guardado em disco, valendo enquanto o arquivo não mudar) e poucos de cada vez.
+const LIMITE_SONDAGENS = 4;
+const MAX_GUARDADAS = 5000;
+let guardadas = null;
+let timerGuardar = null;
+const emAndamento = new Map();
+const espera = [];
+let ativas = 0;
+
+const arquivoGuardadas = () => arquivoDoApp('videos-lidos.json');
+
+function lerGuardadas() {
+  if (guardadas) return guardadas;
+  try {
+    guardadas = new Map(Object.entries(JSON.parse(fs.readFileSync(arquivoGuardadas(), 'utf8'))));
+  } catch {
+    guardadas = new Map();
+  }
+  return guardadas;
+}
+
+function guardarDepois() {
+  clearTimeout(timerGuardar);
+  timerGuardar = setTimeout(() => {
+    while (guardadas.size > MAX_GUARDADAS) guardadas.delete(guardadas.keys().next().value);
+    fs.promises.writeFile(arquivoGuardadas(), JSON.stringify(Object.fromEntries(guardadas))).catch(() => {});
+  }, 2000);
+}
+
+const pegarVaga = () => (ativas < LIMITE_SONDAGENS ? (ativas++, Promise.resolve()) : new Promise((ok) => espera.push(ok)));
+function soltarVaga() {
+  const proximo = espera.shift();
+  if (proximo) proximo();
+  else ativas--;
+}
+
+// Codec, duração, tamanho na tela e se é HDR (HLG/PQ de celular), para decidir o tone mapping.
+export function infoVideo(arquivo) {
+  let chave;
+  try {
+    const st = fs.statSync(arquivo);
+    chave = `${path.resolve(arquivo)}|${st.size}|${Math.round(st.mtimeMs)}`;
+  } catch {
+    return sondarVideo(arquivo);
+  }
+  const pronta = lerGuardadas().get(chave);
+  if (pronta) return Promise.resolve(pronta);
+  if (emAndamento.has(chave)) return emAndamento.get(chave);
+  const tarefa = sondarVideo(arquivo).then((info) => {
+    emAndamento.delete(chave);
+    // Leitura que falhou não é guardada: o arquivo pode só estar sendo gravado.
+    if (info.codec) {
+      guardadas.set(chave, info);
+      guardarDepois();
+    }
+    return info;
+  });
+  emAndamento.set(chave, tarefa);
+  return tarefa;
+}
+
+async function sondarVideo(arquivo) {
+  await pegarVaga();
   let saida = '';
-  await rodar(
-    ffprobePath(),
-    ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', arquivo],
-    { onLinha: (l) => (saida += l + '\n') },
-  );
+  try {
+    await rodar(
+      ffprobePath(),
+      ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', arquivo],
+      { onLinha: (l) => (saida += l + '\n') },
+    );
+  } finally {
+    soltarVaga();
+  }
   try {
     const j = JSON.parse(saida);
     const v = j.streams?.find((s) => s.codec_type === 'video');
     return {
       codec: v?.codec_name ?? null,
-      largura: v?.width ?? null,
-      altura: v?.height ?? null,
+      ...tamanhoVisivel(v),
       duracao: Number(j.format?.duration ?? v?.duration ?? 0),
+      pixFmt: v?.pix_fmt ?? null,
       hdr: ['arib-std-b67', 'smpte2084'].includes(v?.color_transfer),
       temAudio: !!j.streams?.find((s) => s.codec_type === 'audio'),
     };
@@ -70,9 +138,9 @@ export async function infoVideo(arquivo) {
 }
 
 // HDR → SDR BT.709; sem isso vídeo de iPhone/Android em HLG fica lavado depois da conversão.
-const TONEMAP =
+export const TONEMAP =
   'zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p';
-const TONEMAP_GPU =
+export const TONEMAP_GPU =
   'libplacebo=tonemapping=bt.2390:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:format=yuv420p';
 
 // Resoluções de saída (largura x altura). Sem ela, o vídeo mantém o tamanho do original.

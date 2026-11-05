@@ -10,12 +10,13 @@ const TL = (() => {
     legenda: ['legenda'],
     audio: ['audio'],
   };
-  const FONTES = ['Montserrat', 'Inter', 'Poppins', 'Roboto', 'Anton', 'Bebas Neue', 'Oswald', 'Playfair Display'];
+  const FONTES = ['Montserrat', 'Inter', 'Poppins', 'Roboto', 'Anton', 'Bebas Neue', 'Oswald', 'Playfair Display', 'Red Hat Display', 'Red Hat Text'];
   const ANIMACOES = ['', 'fade', 'slide-cima', 'slide-baixo', 'slide-esq', 'slide-dir', 'zoom', 'pop'];
   const MESCLAGENS = ['', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'];
   const CURVAS = [['linear', 'Linear'], ['bezier', 'Suave'], ['easeOut', 'Sair suave'], ['easeIn', 'Chegar suave'], ['hold', 'Segurar']];
   const TRANSICOES = [['', 'Nenhuma'], ['cross_dissolve', 'Dissolver'], ['dip_to_black', 'Fade pelo preto'], ['dip_to_white', 'Fade pelo branco'], ['flash', 'Flash'], ['push', 'Empurrar'], ['whip', 'Chicote'], ['slide', 'Deslizar'], ['linear_wipe', 'Cortina'], ['iris_round', 'Íris'], ['cross_zoom', 'Zoom']];
   const MARGEM_ENCOSTO = 0.05;
+  const EXT_ROTEIRO = /\.(pdf|docx|odt|txt|md|rtf)$/i;
   const FORMATOS = { '9:16': [1080, 1920], '16:9': [1920, 1080], '1:1': [1080, 1080], '4:5': [1080, 1350] };
   const ICONES = { video: '🎬', imagem: '🖼', audio: '🎵' };
   const FERRAMENTAS = { v: 'selecao', b: 'ripple', n: 'roll', y: 'slip', u: 'slide', r: 'taxa', c: 'navalha' };
@@ -32,6 +33,8 @@ const TL = (() => {
     ferramenta: 'selecao',
     camposKf: [],
     materiais: [],
+    roteiros: [],
+    midiaPedida: new Set(),
     pastasFechadas: new Set(),
     aba: 'materiais',
     desfazer: [],
@@ -74,7 +77,7 @@ const TL = (() => {
 
   function salvarDepois() {
     clearTimeout(s.timerSalvar);
-    s.timerSalvar = setTimeout(salvarAgora, 300);
+    s.timerSalvar = setTimeout(salvarAgora, 600);
   }
 
   async function salvarAgora() {
@@ -93,10 +96,15 @@ const TL = (() => {
     qs('#tl-aviso').textContent = texto;
   }
 
-  function guardarEstado() {
-    s.desfazer.push(JSON.stringify(s.t));
-    if (s.desfazer.length > 200) s.desfazer.shift();
+  // Cada passo guarda a timeline inteira, com as palavras das legendas: sem limite, a memória só cresce.
+  function empilharDesfazer(estadoAnterior) {
+    s.desfazer.push(estadoAnterior);
+    if (s.desfazer.length > 60) s.desfazer.shift();
     s.refazer = [];
+  }
+
+  function guardarEstado() {
+    empilharDesfazer(JSON.stringify(s.t));
   }
 
   // Toda edição passa por aqui: guarda o estado anterior, aplica, atualiza a tela e a prévia, grava.
@@ -126,6 +134,7 @@ const TL = (() => {
     atualizarPrevia();
     salvarDepois();
     desenhar();
+    gerarProxies(s.id);
   }
 
   function trocarEstado(de, para) {
@@ -138,8 +147,34 @@ const TL = (() => {
 
   // ---------- prévia ----------
 
+  // Várias edições no mesmo quadro (um campo sendo arrastado, por exemplo) viram uma atualização só.
+  let previaAgendada = false;
   function atualizarPrevia() {
-    s.previa?.ref.current?.atualizar(clonar(s.t));
+    if (previaAgendada) return;
+    previaAgendada = true;
+    requestAnimationFrame(() => {
+      previaAgendada = false;
+      if (s.t) s.previa?.ref.current?.atualizar(clonar(s.t));
+    });
+  }
+
+  // Cada execução do pacote da prévia (React e Remotion inteiros) deixa cerca de 1 MB preso na memória.
+  // Por isso cada versão roda uma vez só, e trocar de timeline reaproveita.
+  const pacotes = new Map();
+  const MAX_PACOTES = 8;
+  async function carregarPacote(info) {
+    if (pacotes.has(info.versao)) return pacotes.get(info.versao);
+    await new Promise((ok, falha) => {
+      const script = document.createElement('script');
+      script.src = urlArquivo(info.arquivo) + '?v=' + info.versao;
+      script.onload = ok;
+      script.onerror = () => falha(new Error('script da prévia'));
+      document.head.append(script);
+      script.addEventListener('load', () => script.remove());
+    });
+    pacotes.set(info.versao, window.PreviaTimeline);
+    if (pacotes.size > MAX_PACOTES) pacotes.delete(pacotes.keys().next().value);
+    return window.PreviaTimeline;
   }
 
   // Só remonta o player se o código da composição mudou; dados novos entram sem interromper.
@@ -160,15 +195,7 @@ const TL = (() => {
     const host = qs('#previa-host');
     host.innerHTML = '';
     const idAberto = s.id;
-    await new Promise((ok, falha) => {
-      qs('#previa-script')?.remove();
-      const script = document.createElement('script');
-      script.id = 'previa-script';
-      script.src = urlArquivo(info.arquivo) + '?v=' + info.versao;
-      script.onload = ok;
-      script.onerror = () => falha(new Error('script da prévia'));
-      document.head.append(script);
-    });
+    const pacote = await carregarPacote(info);
     if (s.id !== idAberto) return;
     s.proxies = Object.fromEntries(Object.entries(info.proxies).map(([a, c]) => [a, c && urlArquivo(c)]));
     s.pastaAssets = info.assets;
@@ -176,7 +203,7 @@ const TL = (() => {
     const raiz = document.createElement('div');
     raiz.className = 'previa-raiz';
     host.append(raiz);
-    s.previa = window.PreviaTimeline.montar(raiz, {
+    s.previa = pacote.montar(raiz, {
       timeline: clonar(s.t),
       baseAssets: urlArquivo(info.assets) + '/',
       proxies: s.proxies,
@@ -197,15 +224,23 @@ const TL = (() => {
     s.previa = null;
   }
 
+  // O cursor anda na hora; o player busca no máximo uma vez por quadro, sempre a posição mais recente.
+  let buscaAgendada = false;
   function irPara(seg) {
     s.tempo = Math.max(0, Math.min(seg, duracaoTotal()));
     verPrevia();
-    s.previa?.ref.current?.irPara(Math.round(s.tempo * fps()));
     desenharCursor();
+    if (buscaAgendada) return;
+    buscaAgendada = true;
+    requestAnimationFrame(() => {
+      buscaAgendada = false;
+      if (s.t) s.previa?.ref.current?.irPara(Math.round(s.tempo * fps()));
+    });
   }
 
   // O player mostra a prévia ao vivo ou o arquivo renderizado.
   function verPrevia() {
+    if (!qs('#previa-host').hidden && qs('#player').hidden && qs('#player-vazio').hidden) return;
     qs('#previa-host').hidden = false;
     qs('#player').hidden = true;
     qs('#player').pause();
@@ -233,6 +268,7 @@ const TL = (() => {
     conteudo.style.width = larguraConteudo + 'px';
     desenharRegua();
     const box = qs('#tl-trilhas');
+    obsMiniaturas.disconnect();
     box.innerHTML = '';
     for (const trilha of ordemNaTela()) box.append(desenharTrilha(trilha));
     desenharCursor();
@@ -383,15 +419,51 @@ const TL = (() => {
       const larguraItem = item.duracao * s.pps;
       const tira = document.createElement('div');
       tira.className = 'tl-tira';
-      for (let x = 0; x < larguraItem && x < 6000; x += larguraMini) {
-        const seg = corte + (x / s.pps) * vel;
-        const quadro = Math.min(m.quadros - 1, Math.floor(seg / m.passo));
-        const mini = document.createElement('div');
-        mini.style.cssText = `width:${larguraMini}px;background-image:url("${urlArquivo(m.tira)}");background-size:${m.quadros * larguraMini}px 100%;background-position:${-quadro * larguraMini}px 0`;
-        tira.append(mini);
-      }
       el.append(tira);
+      // Só cria os quadros quando o clipe chega perto da área visível: com zoom alto seriam milhares de elementos.
+      el.pintarTira = () => {
+        const imagem = urlArquivo(m.tira);
+        const quadros = document.createDocumentFragment();
+        for (let x = 0; x < larguraItem && x < 6000; x += larguraMini) {
+          const seg = corte + (x / s.pps) * vel;
+          const quadro = Math.min(m.quadros - 1, Math.floor(seg / m.passo));
+          const mini = document.createElement('div');
+          mini.style.cssText = `width:${larguraMini}px;background-image:url("${imagem}");background-size:${m.quadros * larguraMini}px 100%;background-position:${-quadro * larguraMini}px 0`;
+          quadros.append(mini);
+        }
+        tira.append(quadros);
+      };
+      obsMiniaturas.observe(el);
     }
+  }
+
+  const obsMiniaturas = new IntersectionObserver(
+    (entradas) => {
+      for (const e of entradas) {
+        if (!e.isIntersecting) continue;
+        obsMiniaturas.unobserve(e.target);
+        e.target.pintarTira?.();
+      }
+    },
+    { root: qs('#tl-corpo'), rootMargin: '0px 600px' },
+  );
+
+  // A miniatura de um arquivo ficou pronta: entra nos clipes dele e no cartão, sem redesenhar a timeline.
+  // Redesenhar a cada arquivo também soltaria um clipe que o usuário estivesse arrastando.
+  function pintarMidia(arquivo) {
+    for (const tr of s.t.trilhas) {
+      for (const item of tr.itens) {
+        if (item.arquivo !== arquivo) continue;
+        const el = qs(`.tl-item[data-id="${CSS.escape(item.id)}"]`);
+        if (!el || el.querySelector('.tl-tira, .tl-onda')) continue;
+        desenharMidia(el, item, ALTURA_POR_TIPO[tr.tipo]);
+        const nova = el.querySelector('.tl-tira, .tl-onda');
+        if (nova) el.prepend(nova);
+      }
+    }
+    const mini = qs(`#materiais .material[data-arquivo="${CSS.escape(arquivo)}"] .material-mini`);
+    const m = materialDe(arquivo);
+    if (mini && m) pintarMini(mini, m);
   }
 
   // ---------- keyframes ----------
@@ -473,8 +545,7 @@ const TL = (() => {
         m.removeEventListener('pointermove', mover);
         m.removeEventListener('pointerup', soltar);
         if (atual === t) return;
-        s.desfazer.push(antes);
-        s.refazer = [];
+        empilharDesfazer(antes);
         aposAlterar();
       };
       m.addEventListener('pointermove', mover);
@@ -551,11 +622,15 @@ const TL = (() => {
     return box;
   }
 
+  // Roda a cada quadro tocando. transform move o cursor sem recalcular o layout da timeline inteira.
+  const cursorEl = qs('#tl-cursor');
+  const tempoEl = qs('#tl-tempo');
   function desenharCursor() {
     if (!s.t) return;
-    qs('#tl-cursor').style.left = LARGURA_CAB + s.tempo * s.pps + 'px';
+    cursorEl.style.transform = `translateX(${LARGURA_CAB + s.tempo * s.pps}px)`;
     atualizarCamposKf();
-    qs('#tl-tempo').textContent = formatarTempo(s.tempo);
+    const texto = formatarTempo(s.tempo);
+    if (tempoEl.textContent !== texto) tempoEl.textContent = texto;
     // Tocando, a timeline acompanha o cursor.
     if (s.tocando) {
       const corpo = qs('#tl-corpo');
@@ -697,6 +772,7 @@ const TL = (() => {
     const inicial = clonar(trilha.itens);
     const pontos = pontosDeImã(item.id);
     const fimOriginal = item.inicio + item.duracao;
+    const elementos = new Map(trilha.itens.map((i) => [i.id, qs(`.tl-item[data-id="${CSS.escape(i.id)}"]`)]));
     let mudou = false;
     const aoMover = (ev) => {
       if (Math.abs(ev.clientX - x0) > 2) mudou = true;
@@ -717,7 +793,7 @@ const TL = (() => {
       });
       OPERACOES[s.ferramenta](item, trilha, modo, delta);
       for (const i of trilha.itens) {
-        const alvo = document.querySelector(`.tl-item[data-id="${i.id}"]`);
+        const alvo = elementos.get(i.id);
         if (alvo) posicionar(alvo, i);
       }
     };
@@ -727,8 +803,7 @@ const TL = (() => {
       el.removeEventListener('pointercancel', aoSoltar);
       mostrarGuia(null);
       if (!mudou) return;
-      s.desfazer.push(antes);
-      s.refazer = [];
+      empilharDesfazer(antes);
       aposAlterar();
     };
     el.addEventListener('pointermove', aoMover);
@@ -816,8 +891,7 @@ const TL = (() => {
         trilha.transicoes = (trilha.transicoes ?? []).filter((x) => x.de !== item.id && x.para !== item.id);
         if (!trilha.transicoes.length) delete trilha.transicoes;
       }
-      s.desfazer.push(antes);
-      s.refazer = [];
+      empilharDesfazer(antes);
       aposAlterar();
     };
 
@@ -910,7 +984,30 @@ const TL = (() => {
   }
 
   // Importa para a aba Materiais sem mexer na timeline.
-  async function adicionarAoProjeto(caminhos) {
+  // Documento solto junto com os materiais é roteiro. Devolve o resto.
+  function separarRoteiros(caminhos) {
+    const documentos = caminhos.filter((c) => EXT_ROTEIRO.test(c));
+    if (documentos.length) enviarRoteiros(documentos);
+    return caminhos.filter((c) => !EXT_ROTEIRO.test(c));
+  }
+
+  async function enviarRoteiros(caminhos) {
+    if (!caminhos.length || s.bloqueada) return;
+    const id = s.id;
+    avisar('Lendo o roteiro…');
+    try {
+      const { roteiros, erros } = await api.adicionarRoteiros({ id, caminhos });
+      if (s.id !== id) return;
+      s.roteiros = roteiros;
+      desenharMateriais();
+      avisar(erros.length ? 'Não li: ' + erros.join('; ') : 'Roteiro enviado. Clique em "Gerar legendas" para refazê-las com ele.');
+    } catch (e) {
+      avisar('Não li o roteiro: ' + e.message.split('\n').at(-1));
+    }
+  }
+
+  async function adicionarAoProjeto(todos) {
+    const caminhos = separarRoteiros(todos);
     if (!caminhos.length || s.bloqueada) return;
     const id = s.id;
     avisar('Importando…');
@@ -931,7 +1028,8 @@ const TL = (() => {
   }
 
   // Materiais novos: vídeo e imagem entram no fim da trilha de vídeo; áudio no cursor, na última trilha de áudio.
-  async function adicionarArquivos(caminhos) {
+  async function adicionarArquivos(todos) {
+    const caminhos = separarRoteiros(todos);
     if (!caminhos.length || s.bloqueada) return;
     const id = s.id;
     avisar('Importando…');
@@ -980,7 +1078,10 @@ const TL = (() => {
     const id = s.id;
     const p = await api.projeto(id);
     if (s.id !== id) return;
-    s.materiais = [...p.materiais, ...(p.narracao ? [{ ...p.narracao, tipo: 'audio' }] : [])];
+    // As narrações das outras timelines também ficam à mão, numa pasta própria.
+    const narracoes = (p.narracoes ?? []).filter((n) => n.arquivo !== p.narracao?.arquivo).map((n) => ({ ...n, tipo: 'audio', pasta: 'Narrações' }));
+    s.materiais = [...p.materiais, ...(p.narracao ? [{ ...p.narracao, tipo: 'audio' }] : []), ...narracoes];
+    s.roteiros = p.roteiros ?? [];
     desenharMateriais();
     desenharInspetor();
   }
@@ -1106,6 +1207,48 @@ const TL = (() => {
     return box;
   }
 
+  function pintarMini(mini, m) {
+    const midia = s.midia[m.arquivo];
+    if (m.tipo === 'imagem' && s.pastaAssets) mini.style.backgroundImage = `url("${urlArquivo(s.pastaAssets + '/' + m.arquivo)}")`;
+    else if (midia?.tira) {
+      mini.textContent = '';
+      mini.style.backgroundImage = `url("${urlArquivo(midia.tira)}")`;
+      mini.style.backgroundSize = `${midia.quadros * 100}% 100%`;
+      mini.style.backgroundPosition = '0 0';
+    } else if (midia?.onda) {
+      mini.textContent = '';
+      mini.style.backgroundImage = `url("${urlArquivo(midia.onda)}")`;
+      mini.style.backgroundSize = '100% 100%';
+    } else mini.textContent = ICONES[m.tipo] ?? '';
+  }
+
+  function blocoRoteiro() {
+    const box = document.createElement('div');
+    box.className = 'materiais-roteiro';
+    box.innerHTML = '<h5>Roteiro</h5><small>Base das legendas e da ordem das cenas, para todas as timelines do projeto.</small>';
+    const lista = document.createElement('div');
+    lista.className = 'lista-referencia';
+    for (const r of s.roteiros) {
+      const chip = document.createElement('div');
+      chip.className = 'chip-referencia';
+      chip.title = r.original ?? r.nome;
+      chip.innerHTML = '<span></span><button type="button" title="Remover">×</button>';
+      chip.querySelector('span').textContent = r.nome;
+      chip.querySelector('button').onclick = async () => {
+        if (s.bloqueada) return;
+        s.roteiros = await api.removerRoteiro({ id: s.id, arquivo: r.arquivo });
+        desenharMateriais();
+      };
+      lista.append(chip);
+    }
+    const enviar = document.createElement('button');
+    enviar.textContent = '+ Enviar roteiro';
+    enviar.title = 'PDF, Word ou texto. Pode ter os roteiros de vários áudios: cada áudio usa o trecho dele.';
+    enviar.onclick = async () => enviarRoteiros(await api.escolher({ tipo: 'roteiro', multiplos: true }));
+    box.append(enviar, lista);
+    return box;
+  }
+
   function desenharMateriais() {
     const box = qs('#materiais');
     box.innerHTML = '';
@@ -1116,7 +1259,7 @@ const TL = (() => {
     pasta.textContent = '+ Importar pasta';
     pasta.title = 'Importa os materiais da pasta e das subpastas';
     pasta.onclick = async () => adicionarAoProjeto(await api.escolherPasta());
-    box.append(importar, pasta);
+    box.append(importar, pasta, blocoRoteiro());
     const cartao = (m) => {
       const card = document.createElement('div');
       card.className = 'material';
@@ -1125,16 +1268,7 @@ const TL = (() => {
       card.title = m.arquivo;
       const mini = document.createElement('div');
       mini.className = 'material-mini';
-      const midia = s.midia[m.arquivo];
-      if (m.tipo === 'imagem' && s.pastaAssets) mini.style.backgroundImage = `url("${urlArquivo(s.pastaAssets + '/' + m.arquivo)}")`;
-      else if (midia?.tira) {
-        mini.style.backgroundImage = `url("${urlArquivo(midia.tira)}")`;
-        mini.style.backgroundSize = `${midia.quadros * 100}% 100%`;
-        mini.style.backgroundPosition = '0 0';
-      } else if (midia?.onda) {
-        mini.style.backgroundImage = `url("${urlArquivo(midia.onda)}")`;
-        mini.style.backgroundSize = '100% 100%';
-      } else mini.textContent = ICONES[m.tipo] ?? '';
+      pintarMini(mini, m);
       const nome = document.createElement('div');
       nome.className = 'material-nome';
       nome.textContent = m.arquivo;
@@ -1286,12 +1420,12 @@ const TL = (() => {
     await salvarAgora();
     guardarEstado();
     try {
-      const n = await api.legendasTimeline({ id: s.id });
+      const resumo = await api.legendasTimeline({ id: s.id });
       s.t = await api.lerTimeline(s.id);
       s.sel = null;
       atualizarPrevia();
       desenhar();
-      avisar(`${n} legendas criadas.`);
+      avisar(resumo);
     } catch (e) {
       s.desfazer.pop();
       avisar(e.message.split('\n').at(-1).replace(/^Error: /, ''));
@@ -1709,14 +1843,26 @@ const TL = (() => {
       qs('#tl-ima').classList.toggle('ativo', s.ima);
     };
     qs('#tl-ajustar').onclick = ajustarNaTela;
-    qs('#tl-zoom').oninput = (e) => aplicarZoom(Math.exp(Number(e.target.value)));
+    // Roda e slider disparam muitas vezes por quadro: redesenha uma vez só, no valor mais recente.
+    let zoomPedido = null;
+    const pedirZoom = (pps, ancoraX) => {
+      const agendado = !!zoomPedido;
+      zoomPedido = { pps, ancoraX };
+      if (agendado) return;
+      requestAnimationFrame(() => {
+        const { pps: p, ancoraX: a } = zoomPedido;
+        zoomPedido = null;
+        if (s.t) aplicarZoom(p, a);
+      });
+    };
+    qs('#tl-zoom').oninput = (e) => pedirZoom(Math.exp(Number(e.target.value)));
     qs('#tl-corpo').addEventListener(
       'wheel',
       (e) => {
         if (!e.ctrlKey) return;
         e.preventDefault();
         const r = qs('#tl-corpo').getBoundingClientRect();
-        aplicarZoom(s.pps * (e.deltaY < 0 ? 1.2 : 1 / 1.2), e.clientX - r.left);
+        pedirZoom((zoomPedido?.pps ?? s.pps) * (e.deltaY < 0 ? 1.2 : 1 / 1.2), e.clientX - r.left);
       },
       { passive: false },
     );
@@ -1743,20 +1889,69 @@ const TL = (() => {
 
   // ---------- ciclo de vida ----------
 
+  const pausa = (ms) => new Promise((r) => setTimeout(r, ms));
+  const emOrdemNaTimeline = () => [...todosItens()].sort((a, b) => a.inicio - b.inicio).map((i) => i.arquivo).filter(Boolean);
+  // Trabalho de fundo espera a prévia parar de tocar, para ela não engasgar.
+  const esperarPrevia = async (id) => {
+    while (s.tocando && s.id === id) await pausa(500);
+  };
+
+  // O que está na timeline primeiro, depois o resto dos materiais, um por vez.
   async function carregarMidia() {
     const id = s.id;
-    const arquivos = [...new Set([...todosItens().map((i) => i.arquivo).filter(Boolean), ...s.materiais.map((m) => m.arquivo)])].filter((a) => !s.midia[a]);
+    const arquivos = [...new Set([...emOrdemNaTimeline(), ...s.materiais.map((m) => m.arquivo)])].filter((a) => !s.midia[a] && !s.midiaPedida.has(a));
+    for (const arquivo of arquivos) s.midiaPedida.add(arquivo);
     for (const arquivo of arquivos) {
+      await esperarPrevia(id);
+      if (s.id !== id) return;
       const m = await api.midiaTimeline({ id, arquivo }).catch(() => null);
       if (s.id !== id) return;
       if (m) {
         s.midia[arquivo] = m;
-        desenhar();
-        desenharMateriais();
+        pintarMidia(arquivo);
         if (m.proxy && !s.proxies?.[arquivo]) {
           s.proxies = { ...s.proxies, [arquivo]: urlArquivo(m.proxy) };
           s.previa?.ref.current?.atualizarProxies(s.proxies);
         }
+      }
+    }
+    gerarProxies(id);
+  }
+
+  const proximoProxy = () => emOrdemNaTimeline().find((a) => s.midia[a]?.precisaProxy && !s.midia[a].proxyFeito);
+
+  // Cópias leves (HDR, ProRes…): uma por vez, em segundo plano, e só do que está nesta timeline.
+  // Fazer de todos os materiais do projeto ocupava a máquina por horas com vídeos que podem nem ser usados.
+  // O material novo entra na fila quando vai para a timeline.
+  let proxiesRodando = false;
+  let proxiesDeNovo = false;
+  async function gerarProxies(id) {
+    if (proxiesRodando) {
+      proxiesDeNovo = true;
+      return;
+    }
+    if (s.id !== id || !proximoProxy()) return;
+    proxiesRodando = true;
+    try {
+      await pausa(1500);
+      while (s.id === id) {
+        await esperarPrevia(id);
+        if (s.id !== id) return;
+        const arquivo = proximoProxy();
+        if (!arquivo) return;
+        s.midia[arquivo].proxyFeito = true;
+        const caminho = await api.proxyTimeline({ id, arquivo }).catch(() => null);
+        if (s.id !== id) return;
+        if (caminho) {
+          s.proxies = { ...s.proxies, [arquivo]: urlArquivo(caminho) };
+          s.previa?.ref.current?.atualizarProxies(s.proxies);
+        }
+      }
+    } finally {
+      proxiesRodando = false;
+      if (proxiesDeNovo) {
+        proxiesDeNovo = false;
+        if (s.id) gerarProxies(s.id);
       }
     }
   }
@@ -1765,6 +1960,7 @@ const TL = (() => {
     await fechar();
     s.id = p.id;
     s.midia = {};
+    s.midiaPedida = new Set();
     s.pastasFechadas = new Set();
     s.sel = null;
     s.desfazer = [];
@@ -1829,8 +2025,7 @@ const TL = (() => {
     if (s.id !== id) return;
     const duracaoAntes = duracaoTotal();
     if (JSON.stringify(nova) !== JSON.stringify(s.t)) {
-      s.desfazer.push(JSON.stringify(s.t));
-      s.refazer = [];
+      empilharDesfazer(JSON.stringify(s.t));
       s.t = nova;
       if (!itemSel()) s.sel = null;
     }
@@ -1840,6 +2035,17 @@ const TL = (() => {
     if (duracaoTotal() !== duracaoAntes) ajustarNaTela();
     else desenhar();
     carregarMidia();
+  }
+
+  // O vídeo sob o cursor, ou o primeiro: a capa da janela de exportação. A cópia leve abre sem pesar.
+  function capa() {
+    if (!s.t) return null;
+    const videos = s.t.trilhas.filter((tr) => tr.tipo === 'video').flatMap((tr) => tr.itens).filter((i) => i.tipo === 'video');
+    const item = videos.find((i) => s.tempo >= i.inicio && s.tempo < i.inicio + i.duracao) ?? videos[0];
+    if (!item) return null;
+    const url = s.proxies?.[item.arquivo] ?? (s.pastaAssets && urlArquivo(s.pastaAssets + '/' + item.arquivo));
+    const dentro = Math.max(0, s.tempo - item.inicio);
+    return url ? { url, tempo: (item.corteInicio ?? 0) + dentro * (item.velocidade ?? 1) } : null;
   }
 
   function contexto() {
@@ -1852,5 +2058,5 @@ const TL = (() => {
 
   ligarControles();
 
-  return { abrir, fechar, bloquear, recarregar, contexto, salvarAgora, verRender, ativa: () => !!s.t, estado: s, irPara, dividir, excluir, adicionarTexto, gerarLegendas };
+  return { abrir, fechar, bloquear, recarregar, contexto, capa, salvarAgora, verRender, ativa: () => !!s.t, estado: s, irPara, dividir, excluir, adicionarTexto, gerarLegendas };
 })();

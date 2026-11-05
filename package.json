@@ -8,7 +8,8 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win",
-    "icone": "electron build/gerar-icone.mjs"
+    "icone": "electron build/gerar-icone.mjs",
+    "test": "node --test test/"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.314",

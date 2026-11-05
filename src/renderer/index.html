@@ -56,6 +56,14 @@
               </div>
             </div>
             <div id="grade-materiais" class="grade-materiais"></div>
+            <div class="bloco-roteiro" id="drop-roteiro-material">
+              <div>
+                <strong>Roteiro (opcional)</strong>
+                <small>Base das legendas e da ordem das cenas. PDF, Word ou texto; pode ter os roteiros de vários áudios.</small>
+              </div>
+              <button type="button" id="btn-sel-roteiro-material">Enviar roteiro</button>
+              <div id="lista-roteiro-material" class="lista-referencia"></div>
+            </div>
             <div class="rodape-passo">
               <button id="btn-so-motion" title="Sem vídeos, fotos nem áudio: o Claude cria tudo em animação">Só motion, sem materiais nem áudio →</button>
               <button class="primario" data-ir="2" id="btn-ir-2" disabled>Próximo →</button>
@@ -210,8 +218,9 @@
           <h1>Decupar áudios</h1>
           <p class="sub">Corta as pausas de cada narração e sobrepõe as emendas, como no CapCut: cada trecho entra um pouco antes de o anterior terminar, e a fala fica fluida em vez de travada. Cada áudio vira um arquivo novo, o original não muda.</p>
           <div id="drop-decupar" class="drop">
-            <div class="drop-txt">Solte os áudios aqui</div>
-            <div class="linha-botoes"><button id="btn-sel-decupar">Selecionar áudios</button></div>
+            <div class="drop-txt">Solte os áudios ou pastas aqui <small class="sub">(uma pasta = uma narração em partes)</small></div>
+            <div class="linha-botoes"><button id="btn-sel-decupar">Selecionar áudios</button><button id="btn-sel-decupar-pastas" title="Cada pasta é uma narração: os áudios dela são juntados, na ordem do nome, antes de decupar">Selecionar pastas</button></div>
+            <small id="dc-aviso" class="sub"></small>
           </div>
           <div class="opcoes-transcode">
             <label>Pausa que sobra (s)
@@ -291,6 +300,7 @@
                   <button data-v="previa">Prévia ao vivo</button>
                   <button data-v="render">Último render</button>
                 </div>
+                <button id="btn-renomear-projeto" title="Mudar o nome do projeto (ou clique duas vezes no título)">Renomear</button>
                 <button id="btn-abrir-pasta">Abrir pasta</button>
               </div>
             </div>
@@ -310,32 +320,6 @@
               </div>
             </div>
             <div class="barra-render">
-              <div class="segmentado" id="seg-motor" title="Quem monta o vídeo final. Se o Filmcraft falhar, o app usa o Remotion." hidden>
-                <button data-v="filmcraft">Filmcraft</button>
-                <button data-v="remotion">Remotion</button>
-              </div>
-              <div class="segmentado" id="seg-modo">
-                <button data-v="gpu">GPU</button>
-                <button data-v="cpu">CPU</button>
-              </div>
-              <div class="segmentado" id="seg-saida">
-                <button data-v="mp4">MP4</button>
-                <button data-v="mov">MOV</button>
-              </div>
-              <details class="opcoes-render">
-                <summary title="Resolução, qualidade e áudio do arquivo final">Opções</summary>
-                <div class="opcoes-render-corpo">
-                  <label>Resolução <select id="render-resolucao"></select></label>
-                  <label>Qualidade
-                    <select id="render-qualidade">
-                      <option value="alta">Alta</option>
-                      <option value="media">Média</option>
-                      <option value="baixa">Baixa (arquivo menor)</option>
-                    </select>
-                  </label>
-                  <label class="check"><input type="checkbox" id="render-sem-audio" /> Sem áudio</label>
-                </div>
-              </details>
               <button id="btn-render" class="primario">Renderizar</button>
               <button id="btn-render-todos" title="Exporta, um depois do outro, todos os vídeos desta pasta" hidden>Exportar todos</button>
               <div class="progresso"><div id="prog-barra"></div><span id="prog-txt">Pronto</span></div>
@@ -349,6 +333,7 @@
           <div class="painel-chat">
             <div class="cab-chat">Claude <span id="chat-status" class="status-dot"></span>
               <select id="chat-modelo" class="chat-modelo" title="Modelo do Claude (vale a partir da próxima mensagem)"></select>
+              <select id="chat-esforco" class="chat-esforco" title="Esforço do modelo: quanto ele pensa antes de responder (vale a partir da próxima mensagem)"></select>
             </div>
             <div id="mensagens" class="mensagens"></div>
             <form id="form-chat" class="form-chat">
@@ -388,7 +373,7 @@
               <span class="tl-sep"></span>
               <button id="tl-add-texto">+ Texto</button>
               <button id="tl-add-midia">+ Mídia</button>
-              <button id="tl-legendas" title="Cria as legendas a partir da transcrição, seguindo os cortes da narração">Gerar legendas</button>
+              <button id="tl-legendas" title="Cria as legendas a partir da transcrição, seguindo os cortes da narração. Com roteiro enviado, a grafia e a pontuação vêm dele.">Gerar legendas</button>
               <select id="tl-formato" class="tl-formato" title="Formato do vídeo"></select>
               <button id="tl-fc-abrir" title="Abre esta timeline no Filmcraft. Textos, legendas e blocos vão como um vídeo de referência." hidden>Abrir no Filmcraft</button>
               <button id="tl-fc-trazer" title="Recebe o que foi salvo no Filmcraft" hidden>Trazer</button>
@@ -413,11 +398,76 @@
       </main>
     </div>
 
+    <dialog id="dlg-exportar">
+      <h2 id="exp-titulo">Exportar</h2>
+      <div class="exp-corpo">
+        <div class="exp-capa"><video id="exp-capa" muted preload="metadata"></video></div>
+        <div class="exp-campos">
+          <label id="exp-linha-nome">Nome <input id="exp-nome" /></label>
+          <label>Exportar para
+            <span class="exp-pasta">
+              <input id="exp-pasta" readonly />
+              <button type="button" id="exp-btn-pasta" title="Escolher a pasta">📁</button>
+            </span>
+          </label>
+          <hr />
+          <label>Resolução <select id="render-resolucao"></select></label>
+          <label>Taxa de bits
+            <select id="render-qualidade">
+              <option value="alta">Alta</option>
+              <option value="recomendado">Recomendado</option>
+              <option value="baixa">Baixa (arquivo menor)</option>
+            </select>
+          </label>
+          <label>Codec
+            <select id="exp-codec">
+              <option value="hevc">HEVC (H.265)</option>
+              <option value="h264">H.264</option>
+              <option value="prores">ProRes</option>
+            </select>
+          </label>
+          <small id="exp-dica-codec" class="exp-dica"></small>
+          <label>Formato
+            <select id="exp-formato">
+              <option value="mov">mov</option>
+              <option value="mp4">mp4</option>
+            </select>
+          </label>
+          <label>Taxa de quadros <select id="exp-fps"></select></label>
+          <label>Espaço de cores <span class="exp-fixo">Rec. 709 SDR</span></label>
+          <label class="exp-marca"><input type="checkbox" id="render-sem-audio" /> Sem áudio</label>
+          <hr />
+          <div class="exp-linha" id="exp-linha-motor">Montar com
+            <div class="segmentado" id="seg-motor" title="Quem monta o vídeo final. Se o Filmcraft falhar, o app usa o Remotion." hidden>
+              <button type="button" data-v="filmcraft">Filmcraft</button>
+              <button type="button" data-v="remotion">Remotion</button>
+            </div>
+          </div>
+          <div class="exp-linha">Processar na
+            <div class="segmentado" id="seg-modo">
+              <button type="button" data-v="gpu">GPU</button>
+              <button type="button" data-v="cpu">CPU</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="exp-rodape">
+        <span id="exp-resumo"></span>
+        <span class="exp-botoes">
+          <button type="button" id="exp-cancelar">Cancelar</button>
+          <button type="button" id="exp-confirmar" class="primario">Exportar</button>
+        </span>
+      </div>
+    </dialog>
+
     <dialog id="dlg-config">
       <form method="dialog" class="form-config">
         <h2>Configurações</h2>
         <label>Modelo do Claude
           <select id="cfg-modelo"></select>
+        </label>
+        <label>Esforço do modelo
+          <select id="cfg-esforco"></select>
         </label>
         <label>Chave de API da Anthropic (opcional — se vazio, usa o login da sua conta Claude)
           <input id="cfg-apikey" type="password" placeholder="sk-ant-…" />

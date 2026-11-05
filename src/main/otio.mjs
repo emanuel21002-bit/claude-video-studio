@@ -78,6 +78,14 @@ function paramFloat(item, kfs, valorFixo, conv = (x) => x) {
   return { value, keyframes: [...kfs].sort((a, b) => a.t - b.t).map((k) => kfFilmcraft(item, k, { Float: redondo(conv(k.v)) })) };
 }
 
+// Celular grava vídeo em pé deitado no arquivo, com a rotação nos metadados. O ffmpeg e o Filmcraft giram ao ler,
+// então vale o tamanho já girado: com o do arquivo, a escala no Filmcraft sai com zoom.
+export function tamanhoVisivel(v) {
+  const graus = v?.side_data_list?.find((d) => d.rotation != null)?.rotation ?? v?.tags?.rotate ?? 0;
+  const girado = Math.abs(Number(graus)) % 180 === 90;
+  return { largura: (girado ? v?.height : v?.width) ?? null, altura: (girado ? v?.width : v?.height) ?? null, girado };
+}
+
 // Tamanho do arquivo no quadro quando a escala é 1. No Filmcraft 100% é o tamanho original do arquivo.
 function escalaBase(item, t, materiais) {
   const m = materiais.find((x) => x.arquivo === item.arquivo);
@@ -281,16 +289,17 @@ function filhosDaFaixa(faixa, transicoes, t, materiais, assets, avisos) {
   return filhos;
 }
 
-function configuracao(t) {
+// Sempre Rec. 709 com tone mapping: sem ele o HDR de celular sai lavado. Com material HDR, compõe em BT.2020.
+function configuracao(t, hdr) {
   return {
-    audio_master: 'Stereo', color: { auto_tone_map: false, wide_gamut: false, working: 'Rec709' }, drop_frame: false,
+    audio_master: 'Stereo', color: { auto_tone_map: true, wide_gamut: hdr, working: 'Rec709' }, drop_frame: false,
     frame_rate: { den: 1, num: t.fps }, height: t.altura, max_bit_depth: false, max_render_quality: false, par: [1, 1],
     preset: `${t.largura}x${t.altura} ${t.fps}`, preview_codec: 'ProRes 422', sample_rate: 48000, width: t.largura, working_space: 'Rec. 709',
   };
 }
 
 // camada: vídeo transparente com texto, legendas e blocos, já renderizado pelo Remotion.
-export function paraOtio(t, projeto, { assets, camada } = {}) {
+export function paraOtio(t, projeto, { assets, camada, hdr = false } = {}) {
   const fps = t.fps;
   const materiais = [...(projeto.materiais ?? []), ...(projeto.narracao ? [{ ...projeto.narracao, tipo: 'audio' }] : [])];
   const avisos = [];
@@ -332,7 +341,7 @@ export function paraOtio(t, projeto, { assets, camada } = {}) {
       OTIO_SCHEMA: 'Timeline.1',
       name: projeto.nome ?? 'Editor Jaborizador da Silva',
       global_start_time: null,
-      metadata: { filmcraft: { settings: configuracao(t), start_timecode: 0, master_volume_db: 0, master_effects: [] } },
+      metadata: { filmcraft: { settings: configuracao(t, hdr), start_timecode: 0, master_volume_db: 0, master_effects: [] } },
       tracks: { OTIO_SCHEMA: 'Stack.1', name: 'tracks', children: [...videos, ...audios], effects: [], markers: [], enabled: true, source_range: null, metadata: {} },
     },
     avisos,

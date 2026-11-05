@@ -147,6 +147,11 @@ Arraste vídeos, fotos, logo e trilha, ou use **Escolher** (arquivos ou pasta). 
 - Vídeos H.265 (HEVC) e outros formatos que o Chrome dos renders não lê bem são **convertidos para H.264 automaticamente** na importação, pelo FFmpeg local. Isso **não gasta tokens do Claude**.
 - **Só motion:** pula materiais e narração. O Claude cria tudo em animação a partir da sua descrição e da duração.
 
+**Roteiro (opcional):** clique em **Enviar roteiro** ou solte o documento junto com os materiais (PDF, Word, ODT, TXT, Markdown, RTF). Depois de criado o vídeo, ele também pode ser enviado na aba **Materiais** da timeline. O roteiro vale para o projeto inteiro: pode ter o texto de vários áudios, e cada um usa o trecho dele.
+
+- **Legendas:** o botão **Gerar legendas** mantém os tempos do áudio e usa a grafia e a pontuação do roteiro. O que está só no roteiro, como indicações de cena, não vira legenda. Se o roteiro não bater com o áudio, o app avisa e usa a transcrição.
+- **Coerência:** o Claude segue a ordem do roteiro e mostra em cada cena o que está sendo dito.
+
 ### Passo 2 — Narração
 
 Solte as pastas ou os áudios da narração.
@@ -172,7 +177,17 @@ Solte as pastas ou os áudios da narração.
 - **Projetos (barra lateral):** cada projeto é uma **pasta** com uma ou mais **timelines**. Os vídeos criados juntos a partir de várias narrações ficam na mesma pasta, e as timelines aparecem como abas acima do player.
 - **Chat com o Claude:** peça alterações em português ("deixe os cortes mais rápidos", "troque a cor da legenda"). No topo do chat há um seletor para **trocar o modelo do Claude** (Opus, Sonnet, Haiku ou Fable); vale a partir da próxima mensagem.
 - **Timeline (projetos Remotion):** edição manual com prévia ao vivo e atalhos V (selecionar), B (ripple), N (roll), Y (slip), U (slide), R (velocidade) e C (navalha). Enquanto o Claude trabalha, a timeline fica travada para as edições não se atropelarem.
-- **Render:** escolha **GPU** ou **CPU** e **MP4** ou **MOV**. O app usa NVENC (NVIDIA), senão AMF (AMD), senão CPU. Só roda um render por vez. Os vídeos prontos ficam na pasta `renders` do projeto.
+- **Render:** escolha **GPU** ou **CPU** e **MP4** ou **MOV**. O app usa NVENC (NVIDIA), senão AMF (AMD), senão CPU. Só roda um render por vez. Os vídeos prontos ficam na pasta `renders` de cada timeline.
+
+---
+
+### Exportar
+
+O botão **Renderizar** abre a janela de exportação: nome, pasta, resolução, taxa de bits, codec, formato, taxa de quadros e áudio. A próxima exportação começa com as mesmas escolhas. **Exportar todos** usa a mesma janela.
+
+- **HEVC (H.265):** arquivo cerca de 40% menor na mesma qualidade. O vídeo é montado primeiro e convertido no fim, pela placa de vídeo.
+- **H.264:** toca em qualquer aparelho e programa.
+- **ProRes:** para continuar editando em outro programa; arquivo muito grande.
 
 ---
 

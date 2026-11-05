@@ -38,7 +38,7 @@ const Previa = forwardRef<any, { inicial: any; baseAssets: string; proxiesInicia
       <Player
         ref={aoMontar}
         component={TimelineVideo}
-        inputProps={{ timeline, baseAssets, proxies }}
+        inputProps={{ timeline, baseAssets, proxies, janela: true }}
         compositionWidth={timeline.largura}
         compositionHeight={timeline.altura}
         fps={timeline.fps}
