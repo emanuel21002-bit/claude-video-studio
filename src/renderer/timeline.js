@@ -1872,6 +1872,45 @@ const TL = (() => {
     qs('#seg-player').querySelectorAll('button').forEach((b) => {
       b.onclick = () => (b.dataset.v === 'previa' ? verPrevia() : verRender());
     });
+    // Divisor entre o painel (materiais e propriedades) e o player: arrastar alarga o painel e estreita o player.
+    const area = qs('.area-player');
+    const guardada = (() => {
+      try {
+        return Number(localStorage.getItem('painelLargura')) || null;
+      } catch {
+        return null;
+      }
+    })();
+    const limitar = (w) => Math.max(180, Math.min(area.clientWidth - 260, w));
+    if (guardada) area.style.setProperty('--painel-largura', limitar(guardada) + 'px');
+    const divisorV = qs('#painel-divisor');
+    divisorV.addEventListener('dblclick', () => {
+      area.style.removeProperty('--painel-largura');
+      try {
+        localStorage.removeItem('painelLargura');
+      } catch {}
+    });
+    divisorV.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      const x0 = e.clientX;
+      const l0 = qs('#painel-lateral').getBoundingClientRect().width;
+      let ultima = l0;
+      document.body.classList.add('redimensionando');
+      const mover = (ev) => {
+        ultima = limitar(l0 + ev.clientX - x0);
+        area.style.setProperty('--painel-largura', ultima + 'px');
+      };
+      const soltar = () => {
+        window.removeEventListener('pointermove', mover);
+        window.removeEventListener('pointerup', soltar);
+        document.body.classList.remove('redimensionando');
+        try {
+          localStorage.setItem('painelLargura', String(Math.round(ultima)));
+        } catch {}
+      };
+      window.addEventListener('pointermove', mover);
+      window.addEventListener('pointerup', soltar);
+    });
     // Divisor: arrastar muda a altura da timeline.
     qs('#tl-divisor').addEventListener('pointerdown', (e) => {
       const editor = qs('#v-editor');
@@ -1972,6 +2011,7 @@ const TL = (() => {
     qs('#v-editor').classList.add('com-timeline');
     qs('#tl').hidden = false;
     qs('#painel-lateral').hidden = false;
+    qs('#painel-divisor').hidden = false;
     mostrarAba('materiais');
     await carregarMateriais();
     if (s.id !== p.id) return;
@@ -1997,6 +2037,7 @@ const TL = (() => {
     qs('#v-editor').classList.remove('com-timeline');
     qs('#tl').hidden = true;
     qs('#painel-lateral').hidden = true;
+    qs('#painel-divisor').hidden = true;
     qs('#seg-player').hidden = true;
     qs('#previa-host').hidden = true;
     qs('#previa-host').innerHTML = '';
