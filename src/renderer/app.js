@@ -11,6 +11,7 @@ const estado = {
   narracoes: [], // { nome, arquivos, duracao }; cada uma vira um vídeo
   semNarracao: false,
   narradoNoVideo: false,
+  narrados: [], // vídeos já narrados: cada um vira uma timeline
   estiloId: 'reels-estetica',
   engine: 'remotion',
   formato: '9:16',
@@ -537,6 +538,8 @@ function novoVideo() {
   renderAudioInstrucao();
   estado.semNarracao = false;
   estado.narradoNoVideo = false;
+  estado.narrados = [];
+  renderNarrados();
   estado.soMotion = false;
   $('#campo-duracao').hidden = true;
   $('#rotulo-detalhes').textContent = 'Detalhes do estilo (opcional)';
@@ -595,6 +598,38 @@ async function adicionarMateriais(todos) {
   renderMateriais();
 }
 
+const EXT_VIDEO = /\.(mp4|mov|mkv|webm|avi|m4v|hevc)$/i;
+
+function atualizarProximoMateriais() {
+  $('#btn-ir-2').disabled = estado.materiais.length === 0 && estado.narrados.length === 0;
+  $('#btn-narrado-video').disabled = !estado.materiais.some((c) => EXT_VIDEO.test(c));
+}
+
+async function adicionarNarrados(caminhos) {
+  if (!caminhos.length) return;
+  const achados = await api.listarMateriais(caminhos.filter((c) => !EXT_ROTEIRO.test(c)));
+  for (const { caminho } of achados) if (EXT_VIDEO.test(caminho) && !estado.narrados.includes(caminho)) estado.narrados.push(caminho);
+  renderNarrados();
+}
+
+function renderNarrados() {
+  const el = $('#lista-narrados');
+  el.innerHTML = '';
+  estado.narrados.forEach((c, i) => {
+    const d = document.createElement('div');
+    d.className = 'chip-referencia';
+    d.innerHTML = '<span></span><button type="button" title="Remover">×</button>';
+    d.querySelector('span').textContent = nomeArquivo(c);
+    d.title = c;
+    d.querySelector('button').onclick = () => {
+      estado.narrados.splice(i, 1);
+      renderNarrados();
+    };
+    el.append(d);
+  });
+  atualizarProximoMateriais();
+}
+
 function renderMateriais() {
   const g = $('#grade-materiais');
   g.innerHTML = '';
@@ -636,8 +671,7 @@ function renderMateriais() {
     };
     secoes.get(estado.pastas[c] ?? '').append(d);
   });
-  $('#btn-ir-2').disabled = estado.materiais.length === 0;
-  $('#btn-narrado-video').disabled = !estado.materiais.some((c) => /\.(mp4|mov|mkv|webm|avi|m4v|hevc)$/i.test(c));
+  atualizarProximoMateriais();
 }
 
 const fmtDuracao = (seg) => `${Math.floor(seg / 60)}:${String(Math.round(seg % 60)).padStart(2, '0')}`;
@@ -813,7 +847,8 @@ async function criar() {
   try {
     const criados = await api.criarProjeto({
       nome: $('#nome-video').value.trim(),
-      materiais: estado.soMotion ? [] : estado.materiais,
+      materiais: estado.soMotion ? [] : [...estado.materiais, ...estado.narrados.filter((n) => !estado.materiais.includes(n))],
+      narrados: estado.narrados,
       pastas: estado.pastas,
       referencias: estado.referencias,
       audiosInstrucao: estado.audiosInstrucao,
@@ -1777,6 +1812,18 @@ function ligar() {
   };
   $$('[data-ir]').forEach((b) => (b.onclick = () => irPasso(Number(b.dataset.ir))));
   $('#btn-criar').onclick = criar;
+  $('#btn-sel-narrados').onclick = async () => adicionarNarrados(await api.escolher({ tipo: 'videos', multiplos: true }));
+  $('#btn-sel-pasta-narrados').onclick = async () => adicionarNarrados(await api.escolherPasta());
+  areaDeSoltar($('#drop-narrados'), adicionarNarrados);
+  // Com vídeos já narrados na lista, "Próximo" segue direto para o estilo.
+  $('#btn-ir-2').onclick = () => {
+    if (!estado.narrados.length) return irPasso(2);
+    estado.narradoNoVideo = true;
+    estado.semNarracao = true;
+    $('#sem-narracao').checked = true;
+    renderNarracao();
+    irPasso(3);
+  };
   $('#btn-narrado-video').onclick = () => {
     estado.narradoNoVideo = true;
     estado.semNarracao = true;

@@ -279,7 +279,7 @@ ipcMain.handle('projeto:criar', async (_e, dados) => {
   const projetoId = await criarProjeto({ ...dados, nome: dados.nome || (total > 1 ? `Projeto ${new Date().toLocaleDateString('pt-BR')}` : '') }, log);
   // Narração no próprio vídeo: uma timeline por vídeo falado, sem áudio de narração à parte.
   if (dados.narradoNoVideo) {
-    const narrados = videosNarrados(projetoId);
+    const narrados = videosNarrados(projetoId, dados.narrados);
     if (!narrados.length) throw new Error('Nenhum dos vídeos enviados tem áudio: sem som não há narração no vídeo.');
     narracoes = narrados.map((m) => ({ nome: m.arquivo.replace(/\.[^.]+$/, ''), narradoPor: m.arquivo }));
   }

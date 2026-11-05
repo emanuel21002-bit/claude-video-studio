@@ -553,8 +553,11 @@ const proximoRotulo = (projeto) => {
 
 // Uma timeline nova usa os materiais do projeto e só traz o que é dela: a narração.
 // Vídeos do projeto com som: quando a narração está no próprio vídeo (pessoa falando para a câmera), cada um vira uma timeline.
-export function videosNarrados(projetoId) {
-  return lerDoDisco(projetoId).materiais.filter((m) => m.tipo === 'video' && m.temAudio);
+// `originais`: caminhos que o usuário mandou como "vídeos narrados"; sem eles valem todos os vídeos com som.
+export function videosNarrados(projetoId, originais) {
+  const videos = lerDoDisco(projetoId).materiais.filter((m) => m.tipo === 'video' && m.temAudio);
+  if (!originais?.length) return videos;
+  return originais.map((o) => videos.find((m) => m.original === o)).filter(Boolean);
 }
 
 export async function novaTimeline(projetoId, { rotulo, narracao, narradoPor, duracaoMotion, estiloId, estiloTexto, engine, formato, lote, vazia }, onLinha) {
