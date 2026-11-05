@@ -7,7 +7,7 @@ import { usarBinariosEmbutidos } from './recursos.mjs';
 import { carregar, salvar } from './settings.mjs';
 import { todosEstilos, excluirEstilo, FORMATOS } from './presets.mjs';
 import { listarMateriais,
-  workspacePronto, prepararWorkspace, criarProjeto, novaTimeline, timelineEmBranco, duplicarTimeline, renomearTimeline, renomearProjeto, excluirTimeline,
+  workspacePronto, prepararWorkspace, criarProjeto, novaTimeline, videosNarrados, timelineEmBranco, duplicarTimeline, renomearTimeline, renomearProjeto, excluirTimeline,
   listarProjetos, lerProjeto, gravarProjeto, escreverBriefing, caminhoProjeto, tipoDe, resolverNarracoes, atualizarDocumentacao, dirs,
   adicionarRoteiros, removerRoteiro,
 } from './workspace.mjs';
@@ -235,7 +235,7 @@ async function montarProjeto(id) {
   preparando = id;
   enviar('agente', { id, tipo: 'inicio' });
   let transcricao = null;
-  if (projeto.narracao && whisperDisponivel()) {
+  if ((projeto.narracao || projeto.narradoPor) && whisperDisponivel()) {
     try {
       transcricao = await transcrever(projeto, (l) => enviar('agente', { id, tipo: 'preparo', texto: l }));
     } catch (e) {
@@ -274,23 +274,31 @@ async function montarProjeto(id) {
 // Um projeto só, com os materiais uma vez; uma timeline por narração (sem narração ou só motion, uma timeline).
 ipcMain.handle('projeto:criar', async (_e, dados) => {
   const log = (l) => enviar('log', l);
-  const narracoes = dados.narracoes?.length ? dados.narracoes : [null];
+  let narracoes = dados.narracoes?.length ? dados.narracoes : [null];
   const total = narracoes.length;
   const projetoId = await criarProjeto({ ...dados, nome: dados.nome || (total > 1 ? `Projeto ${new Date().toLocaleDateString('pt-BR')}` : '') }, log);
+  // Narração no próprio vídeo: uma timeline por vídeo falado, sem áudio de narração à parte.
+  if (dados.narradoNoVideo) {
+    const narrados = videosNarrados(projetoId);
+    if (!narrados.length) throw new Error('Nenhum dos vídeos enviados tem áudio: sem som não há narração no vídeo.');
+    narracoes = narrados.map((m) => ({ nome: m.arquivo.replace(/\.[^.]+$/, ''), narradoPor: m.arquivo }));
+  }
+  const totalFinal = narracoes.length;
   const criados = [];
   for (const [n, narr] of narracoes.entries()) {
-    if (total > 1) log(`Preparando a timeline ${n + 1} de ${total}…`);
+    if (totalFinal > 1) log(`Preparando a timeline ${n + 1} de ${totalFinal}…`);
     const projeto = await novaTimeline(
       projetoId,
       {
         rotulo: narr?.nome,
         narracao: narr?.arquivos ?? null,
+        narradoPor: narr?.narradoPor ?? null,
         duracaoMotion: dados.duracaoMotion,
         estiloId: dados.estiloId,
         estiloTexto: dados.estiloTexto,
         engine: dados.engine,
         formato: dados.formato,
-        lote: total > 1 ? { indice: n + 1, total } : null,
+        lote: totalFinal > 1 ? { indice: n + 1, total: totalFinal } : null,
       },
       log,
     );

@@ -20,7 +20,7 @@ export function whisperDisponivel() {
 // { segmentos: [{inicio, fim, texto}], palavras: [{inicio, fim, texto}] } em segundos.
 export async function transcrever(projeto, onLinha) {
   const dir = caminhoTimeline(projeto.id);
-  const resultado = await transcreverArquivo(path.join(caminhoAssets(projeto.id), projeto.narracao.arquivo), onLinha);
+  const resultado = await transcreverArquivo(path.join(caminhoAssets(projeto.id), (projeto.narracao?.arquivo ?? projeto.narradoPor)), onLinha);
   fs.writeFileSync(path.join(dir, 'transcricao.json'), JSON.stringify(resultado, null, 2));
   onLinha?.(`Transcrição pronta: ${resultado.segmentos.length} frases.`);
   return resultado;

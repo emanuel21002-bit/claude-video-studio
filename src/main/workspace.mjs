@@ -552,7 +552,12 @@ const proximoRotulo = (projeto) => {
 };
 
 // Uma timeline nova usa os materiais do projeto e só traz o que é dela: a narração.
-export async function novaTimeline(projetoId, { rotulo, narracao, duracaoMotion, estiloId, estiloTexto, engine, formato, lote, vazia }, onLinha) {
+// Vídeos do projeto com som: quando a narração está no próprio vídeo (pessoa falando para a câmera), cada um vira uma timeline.
+export function videosNarrados(projetoId) {
+  return lerDoDisco(projetoId).materiais.filter((m) => m.tipo === 'video' && m.temAudio);
+}
+
+export async function novaTimeline(projetoId, { rotulo, narracao, narradoPor, duracaoMotion, estiloId, estiloTexto, engine, formato, lote, vazia }, onLinha) {
   const assets = path.join(dirs().projetos, projetoId, 'assets');
   let projeto = lerDoDisco(projetoId);
   const nomeRotulo = rotulo || proximoRotulo(projeto);
@@ -590,6 +595,7 @@ export async function novaTimeline(projetoId, { rotulo, narracao, duracaoMotion,
     estiloNome: estilo.nome,
     estiloTexto: estiloTexto ?? '',
     narracao: narr,
+    narradoPor: narradoPor ?? null,
     duracaoMotion: duracaoMotion ?? null,
     lote: lote ?? null,
     sessionId: null,
@@ -665,6 +671,8 @@ function ligarAssets(dir, projetoId) {
 function duracaoAlvo(p) {
   if (p.duracaoMotion) return p.duracaoMotion;
   if (p.narracao?.duracao) return p.narracao.duracao;
+  const baseNarrada = p.narradoPor && p.materiais.find((m) => m.arquivo === p.narradoPor);
+  if (baseNarrada?.duracao) return baseNarrada.duracao;
   const soma = p.materiais.reduce((s, m) => s + (m.tipo === 'video' ? m.duracao ?? 0 : m.tipo === 'imagem' ? 3 : 0), 0);
   return Math.max(5, Math.round(soma));
 }
@@ -803,6 +811,25 @@ export function escreverBriefing(p, transcricao, instrucoes = []) {
       p.timeline ? 'Na timeline, use a trilha de gráficos com textos e blocos: é o último item que define a duração do vídeo.' : '',
       '',
     );
+  } else if (p.narradoPor) {
+    const base = p.materiais.find((m) => m.arquivo === p.narradoPor);
+    linhas.push(
+      '## Narração no próprio vídeo',
+      '',
+      'A fala está no áudio do vídeo `' + p.narradoPor + '` (' + fmt(base?.duracao) + '), em geral uma pessoa falando para a câmera. Não há áudio de narração separado.',
+      'Regras: esse vídeo é a base da timeline e mantém o som (volume 1). Corte-o só em pausas ou erros, sem cortar no meio de uma palavra, e mantenha a imagem e o áudio juntos. Os outros materiais entram por cima como cobertura (b-roll) em trilhas de vídeo com volume 0, sem esconder a pessoa nos momentos importantes. Gere as legendas com mcp__studio__gerar_legendas: elas seguem a fala do vídeo.',
+      '',
+    );
+    if (transcricao?.segmentos?.length) {
+      linhas.push(
+        'Transcrição da fala por frase (os tempos por palavra estão em `transcricao.json`; são os tempos do arquivo do vídeo):',
+        '',
+        ...transcricao.segmentos.map((s) => `- [${fmt(s.inicio)} → ${fmt(s.fim)}] ${s.texto}`),
+        '',
+      );
+    } else {
+      linhas.push('(Sem transcrição disponível.)', '');
+    }
   } else if (p.narracao) {
     linhas.push(
       '## Narração',

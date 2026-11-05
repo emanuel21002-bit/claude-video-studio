@@ -10,6 +10,7 @@ const estado = {
   pastas: {}, // caminho -> pasta de onde o material veio
   narracoes: [], // { nome, arquivos, duracao }; cada uma vira um vídeo
   semNarracao: false,
+  narradoNoVideo: false,
   estiloId: 'reels-estetica',
   engine: 'remotion',
   formato: '9:16',
@@ -331,6 +332,14 @@ function irPasso(n) {
     definirSoMotion(false);
     n = 1;
   }
+  // Narração no próprio vídeo também pula a etapa de narração: voltar do estilo leva aos materiais e desfaz a escolha.
+  if (estado.narradoNoVideo && n < 3) {
+    estado.narradoNoVideo = false;
+    estado.semNarracao = false;
+    $('#sem-narracao').checked = false;
+    renderNarracao();
+    n = 1;
+  }
   $$('.passo').forEach((p) => p.classList.toggle('ativo', p.dataset.passo == n));
   $$('.passos li').forEach((li) => {
     li.classList.toggle('ativo', li.dataset.passo == n);
@@ -527,6 +536,7 @@ function novoVideo() {
   renderReferencias();
   renderAudioInstrucao();
   estado.semNarracao = false;
+  estado.narradoNoVideo = false;
   estado.soMotion = false;
   $('#campo-duracao').hidden = true;
   $('#rotulo-detalhes').textContent = 'Detalhes do estilo (opcional)';
@@ -627,6 +637,7 @@ function renderMateriais() {
     secoes.get(estado.pastas[c] ?? '').append(d);
   });
   $('#btn-ir-2').disabled = estado.materiais.length === 0;
+  $('#btn-narrado-video').disabled = !estado.materiais.some((c) => /\.(mp4|mov|mkv|webm|avi|m4v|hevc)$/i.test(c));
 }
 
 const fmtDuracao = (seg) => `${Math.floor(seg / 60)}:${String(Math.round(seg % 60)).padStart(2, '0')}`;
@@ -807,6 +818,7 @@ async function criar() {
       referencias: estado.referencias,
       audiosInstrucao: estado.audiosInstrucao,
       roteiros: estado.roteiros,
+      narradoNoVideo: estado.narradoNoVideo,
       narracoes: estado.soMotion || estado.semNarracao ? [] : estado.narracoes.map((n) => ({ nome: n.nome, arquivos: n.arquivos })),
       duracaoMotion: estado.soMotion ? Math.max(1, Math.min(600, Number($('#duracao-motion').value) || 15)) : null,
       estiloId: estado.estiloId,
@@ -1765,6 +1777,13 @@ function ligar() {
   };
   $$('[data-ir]').forEach((b) => (b.onclick = () => irPasso(Number(b.dataset.ir))));
   $('#btn-criar').onclick = criar;
+  $('#btn-narrado-video').onclick = () => {
+    estado.narradoNoVideo = true;
+    estado.semNarracao = true;
+    $('#sem-narracao').checked = true;
+    renderNarracao();
+    irPasso(3);
+  };
   $('#btn-so-motion').onclick = () => {
     definirSoMotion(true);
     irPasso(3);

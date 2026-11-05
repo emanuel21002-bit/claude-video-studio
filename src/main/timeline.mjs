@@ -99,6 +99,8 @@ export function timelineInicial(p) {
   const trilhaMusical = [];
   let t = 0;
   for (const m of p.materiais) {
+    // Narração no próprio vídeo: só o vídeo falado entra na linha do tempo; o resto o Claude usa como cobertura.
+    if (p.narradoPor && m.tipo !== 'audio' && m.arquivo !== p.narradoPor) continue;
     if (m.tipo === 'audio') {
       trilhaMusical.push({ id: novoId(), tipo: 'audio', arquivo: m.arquivo, inicio: 0, duracao: m.duracao ?? 10, corteInicio: 0, volume: 0.15 });
     } else {
@@ -176,7 +178,7 @@ export function gerarLegendas(id, { maxPalavras = 4, maxCaracteres = 26, estilo,
   const projeto = lerProjeto(id);
   const caminho = path.join(caminhoTimeline(id), 'transcricao.json');
   if (!fs.existsSync(caminho)) throw new Error('Este projeto não tem transcrição.');
-  if (!projeto.narracao) throw new Error('Este projeto não tem narração.');
+  if (!projeto.narracao && !projeto.narradoPor) throw new Error('Este projeto não tem narração.');
   const transcritas = JSON.parse(fs.readFileSync(caminho, 'utf8')).palavras;
   // Com roteiro, os tempos continuam vindo do áudio, mas a grafia e a pontuação vêm dele.
   const roteiro = textoDosRoteiros(id);
@@ -193,10 +195,10 @@ export function gerarLegendas(id, { maxPalavras = 4, maxCaracteres = 26, estilo,
   const trilha = t.trilhas.find((tr) => tr.tipo === 'legenda');
   if (!trilha) throw new Error('A timeline não tem trilha de legendas.');
   const exemplo = trilha.itens[0];
-  const pedacos = t.trilhas
-    .filter((tr) => tr.tipo === 'audio')
-    .flatMap((tr) => tr.itens)
-    .filter((i) => i.arquivo === projeto.narracao.arquivo);
+  // A fala vem do áudio de narração ou, quando a narração está no vídeo, dos pedaços desse vídeo na timeline.
+  const pedacos = projeto.narracao
+    ? t.trilhas.filter((tr) => tr.tipo === 'audio').flatMap((tr) => tr.itens).filter((i) => i.arquivo === projeto.narracao.arquivo)
+    : t.trilhas.flatMap((tr) => tr.itens).filter((i) => i.tipo === 'video' && i.arquivo === projeto.narradoPor);
 
   const itens = [];
   for (const a of pedacos) {
