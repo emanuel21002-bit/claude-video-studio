@@ -726,6 +726,40 @@ function preencherResolucoes(p) {
   sel.value = opcoes.some(([v]) => v === atual) ? String(atual) : '0';
 }
 
+// Renders que estão rodando (ou esperando na fila) agora, de qualquer projeto.
+estado.rendersAtivos = new Map(); // id -> { nome, etapa, progresso }
+
+function renderRendersAtivos() {
+  const ul = $('#renders-ativos');
+  const itens = [...estado.rendersAtivos.entries()];
+  $('#renders-resumo').textContent = itens.length ? `Renders (${itens.length} em andamento)` : 'Renders anteriores';
+  ul.replaceChildren(
+    ...itens.map(([id, r]) => {
+      const li = document.createElement('li');
+      li.className = 'render-ativo' + (id === estado.projetoId ? ' atual' : '');
+      li.innerHTML = '<span class="ra-nome"></span><span class="ra-etapa"></span><div class="ra-barra"><div></div></div>';
+      li.querySelector('.ra-nome').textContent = r.nome;
+      li.querySelector('.ra-etapa').textContent = r.etapa + (r.fila ? '' : ` — ${Math.round((r.progresso ?? 0) * 100)}%`);
+      li.querySelector('.ra-barra div').style.width = `${Math.round((r.progresso ?? 0) * 100)}%`;
+      li.title = 'Abrir este vídeo';
+      li.onclick = () => id !== estado.projetoId && abrirProjeto(id);
+      return li;
+    }),
+  );
+}
+
+const nomeDoProjeto = (id) => estado.listaProjetos?.find((p) => p.id === id)?.nome ?? id;
+
+function marcarRender(id, dados) {
+  if (dados == null) estado.rendersAtivos.delete(id);
+  else {
+    const abrir = !estado.rendersAtivos.size;
+    estado.rendersAtivos.set(id, { ...estado.rendersAtivos.get(id), nome: nomeDoProjeto(id), ...dados });
+    if (abrir) document.querySelector('details.renders').open = true;
+  }
+  renderRendersAtivos();
+}
+
 function renderListaRenders(p) {
   const ul = $('#lista-renders');
   ul.innerHTML = '';
@@ -755,6 +789,10 @@ api.aoAgente(async (e) => {
     estado.naFila.delete(e.id);
   }
   if (['fila', 'inicio', 'parado'].includes(e.tipo)) carregarProjetos();
+  if (e.tipo === 'render') {
+    if (e.concluido || e.falhou) marcarRender(e.id, null);
+    else if (e.etapa) marcarRender(e.id, { etapa: e.etapa, progresso: e.progresso ?? 0, fila: false });
+  }
   // Exportação de todos os vídeos da pasta: o progresso geral aparece na barra, seja qual for o vídeo aberto.
   if (e.tipo === 'lote') {
     if (estado.lote && e.etapa) {
@@ -926,6 +964,7 @@ async function renderTodos() {
   botao.textContent = 'Cancelar exportação';
   $('#btn-render').disabled = true;
   progresso(0, `Exportando 1 de ${ids.length}…`);
+  ids.forEach((id) => marcarRender(id, { etapa: 'Na fila', progresso: 0, fila: true }));
   try {
     const r = await api.renderizarTodos({ ids, chave: estado.lote, ...opcoes });
     const falhas = r.resultados.filter((x) => !x.ok);
@@ -938,6 +977,7 @@ async function renderTodos() {
     addMsg('erro', 'A exportação em sequência falhou: ' + e.message.split('\n')[0]);
   } finally {
     estado.lote = null;
+    ids.forEach((id) => marcarRender(id, null));
     botao.textContent = 'Exportar todos';
     definirTrabalhando(estado.trabalhando.has(estado.projetoId));
     carregarProjetos();
@@ -952,11 +992,13 @@ async function renderManual() {
   await TL.salvarAgora();
   definirTrabalhando(true);
   progresso(0, 'Iniciando render…');
+  marcarRender(id, { etapa: 'Iniciando', progresso: 0, fila: false });
   try {
     await api.renderizar({ id, ...escolhas });
   } catch (e) {
     addMsg('erro', 'Render falhou. Peça ao Claude para corrigir: "o render falhou, corrija".');
   }
+  marcarRender(id, null);
   definirTrabalhando(estado.trabalhando.has(id));
 }
 

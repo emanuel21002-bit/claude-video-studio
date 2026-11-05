@@ -599,3 +599,12 @@ main:has(#v-decupar.ativa)::before { background-image: url("img/gragas-barril.pn
 .painel-divisor:hover::after, body.redimensionando .painel-divisor::after { background: var(--acento); }
 body.redimensionando { cursor: col-resize; user-select: none; }
 body.redimensionando video, body.redimensionando .previa-host { pointer-events: none; }
+
+/* Renders em andamento, no topo da lista de renders */
+.renders-ativos { margin: 8px 0 4px; }
+.renders .render-ativo { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 8px 10px; border: 1px solid var(--borda); border-radius: 8px; background: var(--painel); margin-bottom: 6px; cursor: pointer; }
+.render-ativo.atual { border-color: var(--acento); }
+.ra-nome { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--texto); }
+.ra-etapa { color: var(--acento-2); font-size: 12px; white-space: nowrap; }
+.ra-barra { grid-column: 1 / -1; height: 3px; border-radius: 2px; background: var(--painel-2); overflow: hidden; }
+.ra-barra > div { height: 100%; width: 0; background: var(--acento); transition: width 0.3s; }
