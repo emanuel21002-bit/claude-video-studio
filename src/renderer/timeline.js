@@ -28,6 +28,8 @@ const TL = (() => {
     previa: null,
     midia: {},
     sel: null,
+    selecao: new Set(),
+    projetoId: null,
     pps: 40,
     ima: true,
     ferramenta: 'selecao',
@@ -263,6 +265,7 @@ const TL = (() => {
 
   function desenhar() {
     if (!s.t) return;
+    normalizarSelecao();
     const larguraConteudo = LARGURA_CAB + duracaoTotal() * s.pps + 400;
     const conteudo = qs('#tl-conteudo');
     conteudo.style.width = larguraConteudo + 'px';
@@ -342,9 +345,8 @@ const TL = (() => {
     pista.className = 'tl-pista';
     pista.dataset.trilha = trilha.id;
     pista.addEventListener('pointerdown', (e) => {
-      if (e.target !== pista) return;
-      selecionar(null);
-      irPara(tempoDoEvento(e));
+      if (e.target !== pista || e.button !== 0) return;
+      iniciarMarquee(e);
     });
     for (const item of trilha.itens) {
       const el = desenharItem(item, trilha);
@@ -382,7 +384,7 @@ const TL = (() => {
 
   function desenharItem(item, trilha) {
     const el = document.createElement('div');
-    el.className = `tl-item item-${item.tipo}` + (item.id === s.sel ? ' selecionado' : '');
+    el.className = `tl-item item-${item.tipo}` + (s.selecao.has(item.id) ? ' selecionado' : '');
     el.dataset.id = item.id;
     posicionar(el, item);
     desenharMidia(el, item, ALTURA_POR_TIPO[trilha.tipo]);
@@ -644,13 +646,187 @@ const TL = (() => {
     return Math.max(0, (e.clientX - r.left) / s.pps);
   }
 
-  function selecionar(id) {
-    if (s.sel === id) return;
-    s.sel = id;
-    if (id) mostrarAba('inspetor');
-    document.querySelectorAll('.tl-item').forEach((el) => el.classList.toggle('selecionado', el.dataset.id === id));
-    qs('#tl-excluir').disabled = !id || s.bloqueada;
+  // A seleção pode ter vários itens: s.sel é o principal (o do inspetor) e s.selecao guarda todos.
+  function normalizarSelecao() {
+    const existentes = new Set(todosItens().map((i) => i.id));
+    for (const id of [...s.selecao]) if (!existentes.has(id)) s.selecao.delete(id);
+    if (s.sel && !existentes.has(s.sel)) s.sel = null;
+    if (s.sel && !s.selecao.has(s.sel)) s.selecao = new Set([s.sel]);
+    if (!s.sel) s.sel = [...s.selecao].at(-1) ?? null;
+  }
+
+  function atualizarSelecaoNaTela() {
+    if (s.sel) mostrarAba('inspetor');
+    document.querySelectorAll('.tl-item').forEach((el) => el.classList.toggle('selecionado', s.selecao.has(el.dataset.id)));
+    qs('#tl-excluir').disabled = !s.selecao.size || s.bloqueada;
+    qs('#tl-copiar').disabled = !s.selecao.size;
     desenharInspetor();
+  }
+
+  // alternar: Ctrl ou Shift + clique liga e desliga um item sem tirar os outros.
+  function selecionar(id, { alternar = false } = {}) {
+    if (alternar && id) {
+      if (s.selecao.has(id)) {
+        s.selecao.delete(id);
+        if (s.sel === id) s.sel = [...s.selecao].at(-1) ?? null;
+      } else {
+        s.selecao.add(id);
+        s.sel = id;
+      }
+    } else {
+      if (s.sel === id && s.selecao.size <= 1) return;
+      s.sel = id;
+      s.selecao = new Set(id ? [id] : []);
+    }
+    atualizarSelecaoNaTela();
+  }
+
+  function selecionarVarios(ids) {
+    const chave = [...ids].sort().join('|');
+    if (chave === [...s.selecao].sort().join('|')) return;
+    s.selecao = new Set(ids);
+    s.sel = ids.at(-1) ?? null;
+    atualizarSelecaoNaTela();
+  }
+
+  // Arrastar num espaço vazio das trilhas desenha um retângulo e seleciona o que ele toca.
+  // Sem arrastar, é o clique de sempre: tira a seleção e leva o cursor até ali.
+  function iniciarMarquee(e) {
+    const x0 = e.clientX;
+    const y0 = e.clientY;
+    const somar = e.ctrlKey || e.metaKey || e.shiftKey;
+    const base = somar ? [...s.selecao] : [];
+    let caixa = null;
+    let moveu = false;
+    const mover = (ev) => {
+      if (!moveu && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 4) return;
+      moveu = true;
+      if (!caixa) {
+        caixa = document.createElement('div');
+        caixa.className = 'tl-marquee';
+        document.body.append(caixa);
+      }
+      const x = Math.min(x0, ev.clientX);
+      const y = Math.min(y0, ev.clientY);
+      const w = Math.abs(ev.clientX - x0);
+      const h = Math.abs(ev.clientY - y0);
+      Object.assign(caixa.style, { left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px' });
+      const ids = new Set(base);
+      document.querySelectorAll('.tl-item').forEach((el) => {
+        const r = el.getBoundingClientRect();
+        if (r.right >= x && r.left <= x + w && r.bottom >= y && r.top <= y + h) ids.add(el.dataset.id);
+      });
+      selecionarVarios([...ids]);
+    };
+    const soltar = () => {
+      window.removeEventListener('pointermove', mover);
+      window.removeEventListener('pointerup', soltar);
+      caixa?.remove();
+      if (moveu) return;
+      if (!somar) selecionar(null);
+      irPara(tempoDoEvento(e));
+    };
+    window.addEventListener('pointermove', mover);
+    window.addEventListener('pointerup', soltar);
+  }
+
+  // Move todos os itens selecionados juntos, mantendo a distância entre eles.
+  function arrastarGrupo(e, principal) {
+    const el = e.currentTarget;
+    el.setPointerCapture(e.pointerId);
+    const x0 = e.clientX;
+    const antes = JSON.stringify(s.t);
+    const membros = todosItens()
+      .filter((i) => s.selecao.has(i.id))
+      .map((i) => ({ i, inicio: i.inicio, el: qs(`.tl-item[data-id="${CSS.escape(i.id)}"]`) }));
+    const menor = Math.min(...membros.map((m) => m.inicio));
+    const pontos = [0, s.tempo];
+    for (const i of todosItens()) if (!s.selecao.has(i.id)) pontos.push(i.inicio, i.inicio + i.duracao);
+    const ref = membros.find((m) => m.i === principal);
+    let mudou = false;
+    const aoMover = (ev) => {
+      if (Math.abs(ev.clientX - x0) > 2) mudou = true;
+      if (!mudou) return;
+      let delta = Math.max(-menor, (ev.clientX - x0) / s.pps);
+      const a = imantar(ref.inicio + delta, pontos);
+      const b = imantar(ref.inicio + delta + principal.duracao, pontos);
+      const peloFim = b.guia != null && (a.guia == null || Math.abs(b.valor - (ref.inicio + delta + principal.duracao)) < Math.abs(a.valor - (ref.inicio + delta)));
+      delta = (peloFim ? b.valor - principal.duracao : a.valor) - ref.inicio;
+      mostrarGuia(peloFim ? b.guia : a.guia);
+      delta = Math.max(-menor, noQuadro(delta));
+      for (const m of membros) {
+        m.i.inicio = arredondar(m.inicio + delta);
+        if (m.el) posicionar(m.el, m.i);
+      }
+    };
+    const aoSoltar = () => {
+      el.removeEventListener('pointermove', aoMover);
+      el.removeEventListener('pointerup', aoSoltar);
+      el.removeEventListener('pointercancel', aoSoltar);
+      mostrarGuia(null);
+      // Clicar num item do grupo, sem arrastar, deixa só ele selecionado.
+      if (!mudou) return selecionar(principal.id);
+      empilharDesfazer(antes);
+      aposAlterar();
+    };
+    el.addEventListener('pointermove', aoMover);
+    el.addEventListener('pointerup', aoSoltar);
+    el.addEventListener('pointercancel', aoSoltar);
+  }
+
+  // ---------- copiar e colar ----------
+
+  // Fora de s para sobreviver à troca de timeline: dá para copiar numa e colar noutra.
+  let areaTransferencia = null;
+
+  function copiarSelecao() {
+    const itens = todosItens().filter((i) => s.selecao.has(i.id));
+    if (!itens.length) return false;
+    const base = Math.min(...itens.map((i) => i.inicio));
+    areaTransferencia = {
+      projeto: s.projetoId,
+      itens: itens.map((i) => {
+        const tr = trilhaDe(i.id);
+        return { item: clonar(i), trilhaId: tr.id, trilhaTipo: tr.tipo, desloc: arredondar(i.inicio - base) };
+      }),
+    };
+    qs('#tl-colar').disabled = s.bloqueada;
+    avisar(`${itens.length} ${itens.length > 1 ? 'itens copiados' : 'item copiado'}. Ctrl+V cola no cursor, também em outra timeline.`);
+    return true;
+  }
+
+  // Cola na mesma trilha de onde veio; se ela não existe aqui, na primeira do mesmo tipo que aceite o item.
+  function trilhaParaColar(c) {
+    const aceita = (tr) => ACEITA[tr.tipo].includes(c.item.tipo);
+    return (
+      s.t.trilhas.find((tr) => tr.id === c.trilhaId && aceita(tr)) ??
+      s.t.trilhas.find((tr) => tr.tipo === c.trilhaTipo && aceita(tr)) ??
+      s.t.trilhas.find(aceita)
+    );
+  }
+
+  function colarSelecao() {
+    if (s.bloqueada || !areaTransferencia) return;
+    const t0 = noQuadro(s.tempo);
+    const plano = [];
+    let semMidia = 0;
+    for (const c of areaTransferencia.itens) {
+      // Mídia de outro projeto não está nos materiais deste: o item não teria o que mostrar.
+      if (c.item.arquivo && !materialDe(c.item.arquivo)) {
+        semMidia++;
+        continue;
+      }
+      const tr = trilhaParaColar(c);
+      if (!tr) continue;
+      const novo = clonar(c.item);
+      novo.id = novoId();
+      novo.inicio = arredondar(t0 + c.desloc);
+      plano.push([tr, novo]);
+    }
+    if (!plano.length) return avisar(semMidia ? 'A mídia copiada não existe neste projeto: importe os arquivos nele primeiro.' : 'Nada para colar aqui.');
+    alterar(() => plano.forEach(([tr, novo]) => tr.itens.push(novo)));
+    selecionarVarios(plano.map(([, novo]) => novo.id));
+    avisar(`${plano.length} ${plano.length > 1 ? 'itens colados' : 'item colado'} no cursor.` + (semMidia ? ` ${semMidia} ficou de fora: a mídia não existe neste projeto.` : ''));
   }
 
   // ---------- arrastar: mover e aparar ----------
@@ -814,7 +990,10 @@ const TL = (() => {
   function iniciarArraste(e, item, trilha, modo) {
     if (e.button !== 0) return;
     e.stopPropagation();
-    selecionar(item.id);
+    // Ctrl ou Shift + clique liga e desliga o item na seleção.
+    if (e.ctrlKey || e.metaKey || e.shiftKey) return selecionar(item.id, { alternar: true });
+    const grupo = s.selecao.has(item.id) && s.selecao.size > 1 && s.ferramenta === 'selecao' && modo === 'mover';
+    if (!grupo) selecionar(item.id);
     if (s.bloqueada) return;
     if (s.ferramenta === 'navalha') {
       const c = imantar(tempoDoEvento(e), pontosDeImã(item.id)).valor;
@@ -825,6 +1004,7 @@ const TL = (() => {
     const naBorda = modo !== 'mover';
     if ((f === 'ripple' || f === 'roll' || f === 'taxa') && naBorda) return iniciarFerramenta(e, item, trilha, modo);
     if ((f === 'slip' || f === 'slide') && !naBorda) return iniciarFerramenta(e, item, trilha, modo);
+    if (grupo) return arrastarGrupo(e, item);
     const el = e.currentTarget;
     el.setPointerCapture(e.pointerId);
     const x0 = e.clientX;
@@ -944,28 +1124,32 @@ const TL = (() => {
   function dividir() {
     const c = s.tempo;
     const noCursor = (i) => i.inicio < c && i.inicio + i.duracao > c;
-    const sel = itemSel();
-    const alvos = sel && noCursor(sel)
-      ? [[sel, trilhaDe(sel.id)]]
+    const selecionados = todosItens().filter((i) => s.selecao.has(i.id) && noCursor(i));
+    const alvos = selecionados.length
+      ? selecionados.map((i) => [i, trilhaDe(i.id)])
       : s.t.trilhas.flatMap((tr) => tr.itens.filter(noCursor).map((i) => [i, tr]));
     if (!alvos.length) return;
     alterar(() => alvos.forEach(([i, tr]) => dividirItem(i, tr, c)));
   }
 
   function excluir(fecharVao) {
-    const item = itemSel();
-    if (!item) return;
-    const trilha = trilhaDe(item.id);
+    // Do último para o primeiro: fechar o vão de um item não desloca os que ainda faltam apagar.
+    const alvos = todosItens().filter((i) => s.selecao.has(i.id)).sort((a, b) => b.inicio - a.inicio);
+    if (!alvos.length) return;
     alterar(() => {
-      trilha.itens.splice(trilha.itens.indexOf(item), 1);
-      if (trilha.transicoes) {
-        trilha.transicoes = trilha.transicoes.filter((x) => x.de !== item.id && x.para !== item.id);
-        if (!trilha.transicoes.length) delete trilha.transicoes;
-      }
-      if (fecharVao) {
-        for (const i of trilha.itens) if (i.inicio >= item.inicio + item.duracao - 0.001) i.inicio = arredondar(i.inicio - item.duracao);
+      for (const item of alvos) {
+        const trilha = trilhaDe(item.id);
+        trilha.itens.splice(trilha.itens.indexOf(item), 1);
+        if (trilha.transicoes) {
+          trilha.transicoes = trilha.transicoes.filter((x) => x.de !== item.id && x.para !== item.id);
+          if (!trilha.transicoes.length) delete trilha.transicoes;
+        }
+        if (fecharVao) {
+          for (const i of trilha.itens) if (i.inicio >= item.inicio + item.duracao - 0.001) i.inicio = arredondar(i.inicio - item.duracao);
+        }
       }
       s.sel = null;
+      s.selecao = new Set();
     });
   }
 
@@ -1078,6 +1262,7 @@ const TL = (() => {
     const id = s.id;
     const p = await api.projeto(id);
     if (s.id !== id) return;
+    s.projetoId = p.projetoId ?? s.projetoId;
     // As narrações das outras timelines também ficam à mão, numa pasta própria.
     const narracoes = (p.narracoes ?? []).filter((n) => n.arquivo !== p.narracao?.arquivo).map((n) => ({ ...n, tipo: 'audio', pasta: 'Narrações' }));
     s.materiais = [...p.materiais, ...(p.narracao ? [{ ...p.narracao, tipo: 'audio' }] : []), ...narracoes];
@@ -1702,11 +1887,17 @@ const TL = (() => {
     box.innerHTML = '';
     box.dataset.item = String(s.sel);
     s.camposKf = [];
+    if (s.selecao.size > 1) {
+      box.dataset.item = 'varios';
+      box.innerHTML = '<h4>' + s.selecao.size + ' itens selecionados</h4><dl class="tl-atalhos"><dt>Arrastar</dt><dd>move todos juntos</dd><dt>Ctrl+C / X / V</dt><dd>copiar, recortar, colar no cursor</dd><dt>Del</dt><dd>excluir todos</dd><dt>Ctrl+clique</dt><dd>liga ou desliga um item</dd><dt>Ctrl+A</dt><dd>seleciona tudo</dd></dl>';
+      return;
+    }
     const item = itemSel();
     if (!item) {
       box.innerHTML = `<h4>Atalhos</h4><dl class="tl-atalhos">
         <dt>Espaço</dt><dd>tocar / pausar</dd><dt>S</dt><dd>dividir no cursor</dd>
         <dt>Del</dt><dd>excluir</dd><dt>Shift+Del</dt><dd>excluir e fechar o vão</dd>
+        <dt>Ctrl+clique</dt><dd>vários itens (ou arraste um retângulo)</dd><dt>Ctrl+C / X / V</dt><dd>copiar, recortar, colar</dd><dt>Ctrl+A</dt><dd>seleciona tudo</dd>
         <dt>← →</dt><dd>um quadro</dd><dt>Ctrl+Z / Y</dt><dd>desfazer / refazer</dd>
         <dt>Ctrl+roda</dt><dd>zoom</dd>
         <dt>V</dt><dd>selecionar</dd><dt>B</dt><dd>ripple: apara e empurra o resto</dd>
@@ -1757,6 +1948,11 @@ const TL = (() => {
     const ctrl = e.ctrlKey || e.metaKey;
     if (ctrl && e.key.toLowerCase() === 'z' && !e.shiftKey) trocarEstado(s.desfazer, s.refazer);
     else if (ctrl && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) trocarEstado(s.refazer, s.desfazer);
+    else if (ctrl && e.key.toLowerCase() === 'c') copiarSelecao();
+    else if (ctrl && e.key.toLowerCase() === 'x') {
+      if (copiarSelecao() && !s.bloqueada) excluir(false);
+    } else if (ctrl && e.key.toLowerCase() === 'v') colarSelecao();
+    else if (ctrl && e.key.toLowerCase() === 'a') selecionarVarios(todosItens().map((i) => i.id));
     else if (ctrl) return;
     else if (e.code === 'Space') tocarOuPausar();
     else if (e.key.toLowerCase() === 's') dividir();
@@ -1823,6 +2019,8 @@ const TL = (() => {
     qs('#tl-inicio').onclick = () => irPara(0);
     qs('#tl-dividir').onclick = dividir;
     qs('#tl-excluir').onclick = () => excluir(false);
+    qs('#tl-copiar').onclick = copiarSelecao;
+    qs('#tl-colar').onclick = colarSelecao;
     qs('#tl-desfazer').onclick = () => trocarEstado(s.desfazer, s.refazer);
     qs('#tl-refazer').onclick = () => trocarEstado(s.refazer, s.desfazer);
     qs('#tl-add-texto').onclick = adicionarTexto;
@@ -1998,6 +2196,8 @@ const TL = (() => {
   async function abrir(p) {
     await fechar();
     s.id = p.id;
+    s.projetoId = p.projetoId ?? null;
+    s.selecao = new Set();
     s.midia = {};
     s.midiaPedida = new Set();
     s.pastasFechadas = new Set();
