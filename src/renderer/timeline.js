@@ -810,9 +810,11 @@ const TL = (() => {
     const t0 = noQuadro(s.tempo);
     const plano = [];
     let semMidia = 0;
+    // No mesmo projeto os arquivos são os mesmos (áudio de narração, trilha, decupado…), estejam ou não na lista de materiais.
+    const mesmoProjeto = !!s.projetoId && areaTransferencia.projeto === s.projetoId;
     for (const c of areaTransferencia.itens) {
       // Mídia de outro projeto não está nos materiais deste: o item não teria o que mostrar.
-      if (c.item.arquivo && !materialDe(c.item.arquivo)) {
+      if (c.item.arquivo && !mesmoProjeto && !materialDe(c.item.arquivo) && !s.midia[c.item.arquivo]) {
         semMidia++;
         continue;
       }
@@ -826,6 +828,8 @@ const TL = (() => {
     if (!plano.length) return avisar(semMidia ? 'A mídia copiada não existe neste projeto: importe os arquivos nele primeiro.' : 'Nada para colar aqui.');
     alterar(() => plano.forEach(([tr, novo]) => tr.itens.push(novo)));
     selecionarVarios(plano.map(([, novo]) => novo.id));
+    // Miniaturas e forma de onda dos itens colados (áudio inclusive) podem não ter sido lidas nesta timeline.
+    carregarMidia();
     avisar(`${plano.length} ${plano.length > 1 ? 'itens colados' : 'item colado'} no cursor.` + (semMidia ? ` ${semMidia} ficou de fora: a mídia não existe neste projeto.` : ''));
   }
 
