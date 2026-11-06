@@ -344,8 +344,7 @@
 
         <!-- Editor -->
         <section id="v-editor" class="vista editor">
-          <div class="painel-video">
-            <div class="cab-editor">
+          <div class="cab-editor">
               <div>
                 <h2 id="ed-nome"></h2>
                 <div id="ed-info" class="sub"></div>
@@ -356,26 +355,22 @@
                   <button data-v="previa">Prévia ao vivo</button>
                   <button data-v="render">Último render</button>
                 </div>
+                <button id="btn-layout-padrao" title="Volta os painéis (materiais, origem, prévia, timeline, Claude) para o lugar e o tamanho de fábrica">Layout padrão</button>
                 <button id="btn-renomear-projeto" title="Mudar o nome do projeto (ou clique duas vezes no título)">Renomear</button>
                 <button id="btn-abrir-pasta">Abrir pasta</button>
               </div>
             </div>
-            <div class="area-player">
-              <aside id="painel-lateral" class="inspetor painel-lateral" hidden>
-                <div class="abas-lateral">
-                  <button data-aba="materiais">Materiais</button>
-                  <button data-aba="inspetor">Propriedades</button>
-                </div>
-                <div id="materiais" class="painel-aba"></div>
-                <div id="inspetor" class="painel-aba"></div>
-              </aside>
-              <div id="painel-divisor" class="painel-divisor" title="Arraste para alargar ou estreitar (clique duplo volta ao tamanho padrão)" hidden></div>
+          <div id="dock-raiz" class="dock-raiz"></div>
+          <div id="dock-deposito" class="dock-deposito">
+            <div id="painel-materiais" class="inspetor painel-dock"><div id="materiais" class="painel-aba"></div></div>
+            <div id="painel-propriedades" class="inspetor painel-dock"><div id="inspetor" class="painel-aba"></div></div>
+            <div id="painel-origem" class="painel-dock"></div>
+            <div id="painel-previa" class="painel-dock painel-previa">
               <div class="player">
                 <div id="previa-host" class="previa-host" hidden></div>
                 <video id="player" controls></video>
                 <div id="player-vazio" class="player-vazio">O vídeo aparece aqui quando o primeiro render terminar.</div>
               </div>
-            </div>
             <div class="barra-render">
               <button id="btn-render" class="primario">Renderizar</button>
               <button id="btn-render-todos" title="Exporta, um depois do outro, todos os vídeos desta pasta" hidden>Exportar todos</button>
@@ -388,7 +383,7 @@
             </details>
           </div>
 
-          <div class="painel-chat">
+          <div id="painel-claude" class="painel-chat">
             <div class="cab-chat">Claude <span id="chat-status" class="status-dot"></span>
               <select id="chat-modelo" class="chat-modelo" title="Modelo do Claude (vale a partir da próxima mensagem)"></select>
               <select id="chat-esforco" class="chat-esforco" title="Esforço do modelo: quanto ele pensa antes de responder (vale a partir da próxima mensagem)"></select>
@@ -409,7 +404,6 @@
           </div>
 
           <div id="tl" class="tl" hidden>
-            <div id="tl-divisor" class="tl-divisor" title="Arraste para mudar a altura"></div>
             <div class="tl-barra">
               <button id="tl-inicio" title="Ir ao início (Home)">⏮</button>
               <button id="tl-tocar" class="tl-tocar" title="Tocar / pausar (Espaço)">▶</button>
@@ -453,6 +447,7 @@
                 <div id="tl-cursor" class="tl-cursor"></div>
               </div>
             </div>
+          </div>
           </div>
         </section>
       </main>
@@ -554,6 +549,7 @@
 
     <script src="previas-estilo.js"></script>
     <script src="app.js"></script>
+    <script src="dock.js"></script>
     <script src="timeline.js"></script>
   </body>
 </html>

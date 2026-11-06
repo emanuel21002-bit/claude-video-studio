@@ -1333,11 +1333,10 @@ const TL = (() => {
 
   // ---------- materiais: arrastar para a timeline e substituir ----------
 
+  // Materiais e Propriedades são painéis do dock: traz o pedido para a frente do grupo dele.
   function mostrarAba(aba) {
     s.aba = aba;
-    qs('#materiais').hidden = aba !== 'materiais';
-    qs('#inspetor').hidden = aba !== 'inspetor';
-    document.querySelectorAll('.abas-lateral button').forEach((b) => b.classList.toggle('ativo', b.dataset.aba === aba));
+    Dock.mostrar(aba === 'inspetor' ? 'propriedades' : 'materiais');
   }
 
   async function carregarMateriais() {
@@ -1557,6 +1556,9 @@ const TL = (() => {
           <button type="button" data-a="saida" title="Marcar saída (O)">}</button>
         </div>
         <span class="fonte-dur"></span>
+        <select class="fonte-zoom" title="Zoom (roda do mouse em cima do vídeo; clique duplo volta a encaixar)">
+          <option value="">Encaixar</option><option value="0.25">25%</option><option value="0.5">50%</option><option value="1">100%</option><option value="2">200%</option><option value="x" hidden></option>
+        </select>
       </div>
       <div class="fonte-acoes">
         <div class="segmentado fonte-modo">
@@ -1567,8 +1569,87 @@ const TL = (() => {
         <div class="fonte-arrastar" draggable="true" title="Arraste o trecho marcado para uma faixa da timeline">⠿ Arrastar</div>
         <button type="button" class="primario" data-a="inserir" title="Insere o trecho marcado no cursor da timeline (,)">Inserir no cursor</button>
       </div>`;
-    qs('.area-player').insertBefore(box, qs('.area-player .player'));
+    qs('#painel-origem').append(box);
     const video = box.querySelector('.fonte-video');
+    const tela = box.querySelector('.fonte-tela');
+    const imagem = box.querySelector('.fonte-img');
+    const zoomSel = box.querySelector('.fonte-zoom');
+    const prender = (x, a, b) => Math.max(a, Math.min(b, x));
+    const natural = () => (fonte.m?.tipo === 'imagem' ? [imagem.naturalWidth, imagem.naturalHeight] : [video.videoWidth, video.videoHeight]);
+    // Encaixar mostra o quadro inteiro; com zoom, 100% é o tamanho real do vídeo e dá para arrastar.
+    fonte.enquadrar = () => {
+      const el = fonte.m?.tipo === 'imagem' ? imagem : video;
+      const [vw, vh] = natural();
+      const W = tela.clientWidth;
+      const H = tela.clientHeight;
+      if (!vw || !vh || !W || !H) return;
+      const esc = fonte.zoom ?? Math.min(W / vw, H / vh);
+      const w = vw * esc;
+      const h = vh * esc;
+      const limX = Math.max(0, (w - W) / 2);
+      const limY = Math.max(0, (h - H) / 2);
+      fonte.pan = { x: prender(fonte.pan?.x ?? 0, -limX, limX), y: prender(fonte.pan?.y ?? 0, -limY, limY) };
+      Object.assign(el.style, { width: w + 'px', height: h + 'px', left: (W - w) / 2 + fonte.pan.x + 'px', top: (H - h) / 2 + fonte.pan.y + 'px' });
+      const opcao = [...zoomSel.options].find((o) => o.value !== '' && o.value !== 'x' && Math.abs(Number(o.value) - esc) < 0.001);
+      const outra = zoomSel.querySelector('option[value="x"]');
+      outra.hidden = fonte.zoom == null || !!opcao;
+      outra.textContent = Math.round(esc * 100) + '%';
+      zoomSel.value = fonte.zoom == null ? '' : opcao ? opcao.value : 'x';
+      tela.classList.toggle('com-zoom', w > W + 1 || h > H + 1);
+    };
+    new ResizeObserver(() => fonte.enquadrar()).observe(tela);
+    video.addEventListener('loadedmetadata', () => fonte.enquadrar());
+    imagem.addEventListener('load', () => fonte.enquadrar());
+    zoomSel.onchange = () => {
+      fonte.zoom = zoomSel.value && zoomSel.value !== 'x' ? Number(zoomSel.value) : null;
+      fonte.pan = { x: 0, y: 0 };
+      fonte.enquadrar();
+    };
+    tela.addEventListener(
+      'wheel',
+      (e) => {
+        if (!fonte.m || fonte.m.tipo === 'audio') return;
+        const [vw, vh] = natural();
+        if (!vw || !vh) return;
+        e.preventDefault();
+        const W = tela.clientWidth;
+        const H = tela.clientHeight;
+        const atual = fonte.zoom ?? Math.min(W / vw, H / vh);
+        const novo = prender(atual * (e.deltaY < 0 ? 1.15 : 1 / 1.15), 0.05, 8);
+        // O ponto embaixo do mouse fica parado.
+        const r = tela.getBoundingClientRect();
+        const mx = e.clientX - r.left - W / 2 - (fonte.pan?.x ?? 0);
+        const my = e.clientY - r.top - H / 2 - (fonte.pan?.y ?? 0);
+        fonte.pan = { x: (fonte.pan?.x ?? 0) - mx * (novo / atual - 1), y: (fonte.pan?.y ?? 0) - my * (novo / atual - 1) };
+        fonte.zoom = novo;
+        fonte.enquadrar();
+      },
+      { passive: false },
+    );
+    tela.addEventListener('dblclick', () => {
+      fonte.zoom = null;
+      fonte.pan = { x: 0, y: 0 };
+      fonte.enquadrar();
+    });
+    tela.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || !tela.classList.contains('com-zoom')) return;
+      e.preventDefault();
+      const x0 = e.clientX;
+      const y0 = e.clientY;
+      const p0 = { ...fonte.pan };
+      tela.classList.add('arrastando');
+      const mover = (ev) => {
+        fonte.pan = { x: p0.x + ev.clientX - x0, y: p0.y + ev.clientY - y0 };
+        fonte.enquadrar();
+      };
+      const soltar = () => {
+        tela.classList.remove('arrastando');
+        window.removeEventListener('pointermove', mover);
+        window.removeEventListener('pointerup', soltar);
+      };
+      window.addEventListener('pointermove', mover);
+      window.addEventListener('pointerup', soltar);
+    });
     const tempoAtual = () => (fonte.m?.tipo === 'imagem' ? 0 : video.currentTime || 0);
     const ir = (t) => {
       if (fonte.m?.tipo === 'imagem') return;
@@ -1670,8 +1751,11 @@ const TL = (() => {
       onda.style.backgroundImage = o ? `url("${urlArquivo(o)}")` : '';
     }
     box.hidden = false;
-    qs('.area-player').classList.add('com-fonte');
+    fonte.zoom = null;
+    fonte.pan = { x: 0, y: 0 };
+    Dock.mostrar('origem');
     desenharFonte();
+    fonte.enquadrar?.();
   }
 
   function fecharFonte() {
@@ -1683,7 +1767,6 @@ const TL = (() => {
     cancelAnimationFrame(fonte.anim);
     fonte.el.hidden = true;
     fonte.m = null;
-    qs('.area-player').classList.remove('com-fonte');
   }
 
   function desenharFonte() {
@@ -2427,58 +2510,6 @@ const TL = (() => {
     qs('#seg-player').querySelectorAll('button').forEach((b) => {
       b.onclick = () => (b.dataset.v === 'previa' ? verPrevia() : verRender());
     });
-    // Divisor entre o painel (materiais e propriedades) e o player: arrastar alarga o painel e estreita o player.
-    const area = qs('.area-player');
-    const guardada = (() => {
-      try {
-        return Number(localStorage.getItem('painelLargura')) || null;
-      } catch {
-        return null;
-      }
-    })();
-    const limitar = (w) => Math.max(180, Math.min(area.clientWidth - 260, w));
-    if (guardada) area.style.setProperty('--painel-largura', limitar(guardada) + 'px');
-    const divisorV = qs('#painel-divisor');
-    divisorV.addEventListener('dblclick', () => {
-      area.style.removeProperty('--painel-largura');
-      try {
-        localStorage.removeItem('painelLargura');
-      } catch {}
-    });
-    divisorV.addEventListener('pointerdown', (e) => {
-      e.preventDefault();
-      const x0 = e.clientX;
-      const l0 = qs('#painel-lateral').getBoundingClientRect().width;
-      let ultima = l0;
-      document.body.classList.add('redimensionando');
-      const mover = (ev) => {
-        ultima = limitar(l0 + ev.clientX - x0);
-        area.style.setProperty('--painel-largura', ultima + 'px');
-      };
-      const soltar = () => {
-        window.removeEventListener('pointermove', mover);
-        window.removeEventListener('pointerup', soltar);
-        document.body.classList.remove('redimensionando');
-        try {
-          localStorage.setItem('painelLargura', String(Math.round(ultima)));
-        } catch {}
-      };
-      window.addEventListener('pointermove', mover);
-      window.addEventListener('pointerup', soltar);
-    });
-    // Divisor: arrastar muda a altura da timeline.
-    qs('#tl-divisor').addEventListener('pointerdown', (e) => {
-      const editor = qs('#v-editor');
-      const y0 = e.clientY;
-      const a0 = qs('#tl').getBoundingClientRect().height;
-      const mover = (ev) => editor.style.setProperty('--tl-altura', Math.max(160, Math.min(window.innerHeight - 300, a0 + y0 - ev.clientY)) + 'px');
-      const soltar = () => {
-        window.removeEventListener('pointermove', mover);
-        window.removeEventListener('pointerup', soltar);
-      };
-      window.addEventListener('pointermove', mover);
-      window.addEventListener('pointerup', soltar);
-    });
   }
 
   // ---------- ciclo de vida ----------
@@ -2587,10 +2618,7 @@ const TL = (() => {
     s.tocando = false;
     s.t = await api.lerTimeline(p.id);
     if (s.id !== p.id) return;
-    qs('#v-editor').classList.add('com-timeline');
     qs('#tl').hidden = false;
-    qs('#painel-lateral').hidden = false;
-    qs('#painel-divisor').hidden = false;
     mostrarAba('materiais');
     await carregarMateriais();
     if (s.id !== p.id) return;
@@ -2614,10 +2642,7 @@ const TL = (() => {
     desmontarPrevia();
     s.t = null;
     s.id = null;
-    qs('#v-editor').classList.remove('com-timeline');
     qs('#tl').hidden = true;
-    qs('#painel-lateral').hidden = true;
-    qs('#painel-divisor').hidden = true;
     qs('#seg-player').hidden = true;
     qs('#previa-host').hidden = true;
     qs('#previa-host').innerHTML = '';

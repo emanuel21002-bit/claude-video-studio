@@ -771,3 +771,65 @@ body.no-projeto .vista.editor.ativa { height: 100%; }
 .fonte-arrastar { padding: 4px 10px; border: 1px dashed #4b4b4b; border-radius: 4px; color: var(--fraco); font-size: 12px; cursor: grab; user-select: none; }
 .fonte-arrastar:active { cursor: grabbing; }
 
+
+/* ==========================================================================
+   Editor em painéis encaixáveis (dock), como no Filmcraft
+   ========================================================================== */
+.vista.editor.ativa { display: flex; flex-direction: column; gap: 0; padding: 0; overflow: hidden; background: #000; }
+.vista.editor .cab-editor { flex: none; margin: 0; padding: 8px 14px; background: var(--painel); border-bottom: 1px solid #000; align-items: center; }
+.dock-deposito { display: none; }
+.dock-raiz { flex: 1; min-height: 0; display: flex; padding: 3px; background: #000; }
+.dock-raiz > * { flex: 1; min-width: 0; min-height: 0; }
+.dock-split { display: flex; min-width: 0; min-height: 0; width: 100%; height: 100%; }
+.dock-split.row { flex-direction: row; }
+.dock-split.col { flex-direction: column; }
+.dock-filho { flex-basis: 0; flex-shrink: 1; min-width: 0; min-height: 0; display: flex; }
+.dock-filho > * { flex: 1; min-width: 0; min-height: 0; }
+.dock-oculto { display: none !important; }
+.dock-divisor { flex: none; background: #000; position: relative; z-index: 2; }
+.dock-split.row > .dock-divisor { width: 4px; cursor: col-resize; }
+.dock-split.col > .dock-divisor { height: 4px; cursor: row-resize; }
+.dock-divisor:hover { background: #2f6bdf; }
+body.redimensionando-v { cursor: row-resize; user-select: none; }
+body.redimensionando-v video, body.redimensionando-v .previa-host { pointer-events: none; }
+
+.dock-grupo { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--painel); border-radius: 4px; overflow: hidden; }
+.dock-abas { flex: none; display: flex; gap: 2px; height: 30px; padding: 0 8px; align-items: stretch; border-bottom: 1px solid #000; overflow: hidden; }
+.dock-aba { position: relative; padding: 0 10px; border: none; border-radius: 0; background: transparent; color: var(--fraco); font-size: 12px; white-space: nowrap; cursor: grab; }
+.dock-aba:hover:not(:disabled) { background: transparent; color: var(--texto); }
+.dock-aba.ativo { color: var(--texto); }
+.dock-aba.ativo::after { content: ""; position: absolute; left: 10px; right: 10px; bottom: 5px; height: 1px; background: var(--texto); }
+.dock-corpo { flex: 1; min-height: 0; position: relative; }
+.dock-painel { position: absolute; inset: 0; display: none; flex-direction: column; min-height: 0; overflow: hidden; }
+.dock-painel.ativo { display: flex; }
+.dock-painel > * { flex: 1; min-height: 0; min-width: 0; }
+
+/* arrastar uma aba */
+.dock-sombra { position: fixed; z-index: 1000; background: rgba(47, 107, 223, 0.28); border: 2px solid #4096f3; border-radius: 4px; pointer-events: none; transition: all 60ms; }
+.dock-etiqueta { position: fixed; z-index: 1001; padding: 4px 10px; background: #2a2a2a; border: 1px solid #4b4b4b; border-radius: 4px; color: var(--texto); font-size: 12px; pointer-events: none; }
+body.dock-arrastando { cursor: grabbing; user-select: none; }
+body.dock-arrastando video, body.dock-arrastando .previa-host, body.dock-arrastando iframe { pointer-events: none; }
+
+/* conteúdo de cada painel */
+.dock-painel > .inspetor { width: auto; border: none; border-radius: 0; padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+.dock-painel > .inspetor > .painel-aba { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px; }
+.dock-painel > .painel-dock:not(.inspetor) { display: flex; flex-direction: column; }
+#painel-origem > .fonte { flex: 1; min-width: 0; border: none; border-radius: 0; }
+#painel-origem .fonte-titulo { display: none; }
+#painel-origem .fonte-cab { height: 26px; }
+.painel-previa { display: flex; flex-direction: column; padding: 8px 10px; gap: 6px; overflow: hidden; }
+.painel-previa .player { flex: 1; min-height: 80px; position: relative; border-radius: 0; }
+.painel-previa #player { position: absolute; inset: 0; width: 100%; height: 100%; max-height: none; }
+.painel-previa .barra-render { margin: 0; flex: none; }
+.painel-previa .renders { margin: 0; flex: none; font-size: 13px; }
+.painel-previa .renders ul { max-height: 90px; overflow-y: auto; }
+.dock-painel > .painel-chat { border-left: none; }
+.dock-painel > .tl { border-top: none; }
+
+/* origem: o vídeo cabe inteiro; com zoom, arrasta */
+.fonte-tela { display: block; }
+.fonte-tela video, .fonte-tela img { position: absolute; left: 0; top: 0; width: 100%; height: 100%; max-width: none; object-fit: contain; }
+.fonte-tela.com-zoom { cursor: grab; }
+.fonte-tela.arrastando { cursor: grabbing; }
+.fonte-zoom { width: auto; padding: 2px 6px; font-size: 12px; }
+.fonte-nome-barra { color: var(--fraco); }
