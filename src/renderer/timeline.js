@@ -9,7 +9,11 @@ const TL = (() => {
   const ACEITA = { video: VISUAIS, sobreposicao: VISUAIS, legenda: VISUAIS, audio: ['audio'] };
   const ehAudio = (tr) => tr.tipo === 'audio';
   // Faixa com vídeo ou imagem mostra miniaturas: fica mais alta que as de texto e legenda.
-  const alturaDe = (tr) => (ehAudio(tr) ? 44 : tr.itens.some((i) => i.tipo === 'video' || i.tipo === 'imagem') ? 54 : tr.itens.length ? 36 : 40);
+  const alturaPadrao = (tr) => (ehAudio(tr) ? 44 : tr.itens.some((i) => i.tipo === 'video' || i.tipo === 'imagem') ? 54 : tr.itens.length ? 36 : 40);
+  // "altura" na faixa é só da tela: o usuário muda arrastando a borda de baixo do cabeçalho.
+  const ALTURA_MIN = 22;
+  const ALTURA_MAX = 200;
+  const alturaDe = (tr) => Math.max(ALTURA_MIN, Math.min(ALTURA_MAX, tr.altura ?? alturaPadrao(tr)));
   const FONTES = ['Montserrat', 'Inter', 'Poppins', 'Roboto', 'Anton', 'Bebas Neue', 'Oswald', 'Playfair Display', 'Red Hat Display', 'Red Hat Text'];
   const ANIMACOES = ['', 'fade', 'slide-cima', 'slide-baixo', 'slide-esq', 'slide-dir', 'zoom', 'pop'];
   const MESCLAGENS = ['', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'];
@@ -95,6 +99,39 @@ const TL = (() => {
     return nova;
   }
 
+  // Cada faixa é uma linha só, como no Filmcraft e no CapCut: um item que começa em cima de outro sai para a próxima
+  // faixa do mesmo tipo que estiver livre nesse trecho (para cima no vídeo, para baixo no áudio); sem nenhuma, uma nova
+  // logo depois desta. Devolve true se mudou algo.
+  function separarSobrepostos(t) {
+    let mudou = false;
+    const cruza = (a, b) => a.inicio < b.inicio + b.duracao - 0.001 && a.inicio + a.duracao > b.inicio + 0.001;
+    for (let n = 0; n < t.trilhas.length; n++) {
+      const tr = t.trilhas[n];
+      const audio = tr.tipo === 'audio';
+      let fim = -Infinity;
+      const sair = [];
+      for (const i of [...tr.itens].sort((a, b) => a.inicio - b.inicio)) {
+        if (i.inicio < fim - 0.001) sair.push(i);
+        else fim = Math.max(fim, i.inicio + i.duracao);
+      }
+      for (const i of sair) {
+        mudou = true;
+        tr.itens.splice(tr.itens.indexOf(i), 1);
+        if (tr.transicoes) {
+          tr.transicoes = tr.transicoes.filter((x) => x.de !== i.id && x.para !== i.id);
+          if (!tr.transicoes.length) delete tr.transicoes;
+        }
+        let destino = t.trilhas.slice(n + 1).find((x) => (x.tipo === 'audio') === audio && !x.itens.some((o) => cruza(o, i)));
+        if (!destino) {
+          destino = { id: novoId(), tipo: audio ? 'audio' : 'video', itens: [] };
+          t.trilhas.splice(n + 1, 0, destino);
+        }
+        destino.itens.push(i);
+      }
+    }
+    return mudou;
+  }
+
   // Itens com o mesmo vínculo são o vídeo e o áudio do mesmo trecho: andam, são aparados e apagados juntos.
   const parceiros = (id) => {
     const i = todosItens().find((x) => x.id === id);
@@ -158,6 +195,7 @@ const TL = (() => {
   }
 
   function aposAlterar() {
+    separarSobrepostos(s.t);
     soltarTransicoes();
     atualizarPrevia();
     salvarDepois();
@@ -382,6 +420,41 @@ const TL = (() => {
         else trilha.oculta = !trilha.oculta;
       });
     cab.append(codigo, nome, botao);
+    // A borda de baixo do cabeçalho muda a altura da faixa; clique duplo volta ao tamanho padrão.
+    const borda = document.createElement('div');
+    borda.className = 'tl-redim';
+    borda.title = 'Arraste para mudar a altura da faixa (clique duplo volta ao padrão)';
+    borda.addEventListener('dblclick', () => {
+      delete trilha.altura;
+      salvarDepois();
+      desenhar();
+    });
+    borda.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const y0 = e.clientY;
+      const a0 = alturaDe(trilha);
+      let nova = a0;
+      document.body.classList.add('redimensionando-v');
+      const mover = (ev) => {
+        nova = Math.round(Math.max(ALTURA_MIN, Math.min(ALTURA_MAX, a0 + ev.clientY - y0)));
+        linha.style.height = nova + 'px';
+        linha.querySelectorAll('.tl-item').forEach((el) => (el.style.height = nova - 4 + 'px'));
+      };
+      const soltar = () => {
+        window.removeEventListener('pointermove', mover);
+        window.removeEventListener('pointerup', soltar);
+        document.body.classList.remove('redimensionando-v');
+        if (nova === a0) return;
+        trilha.altura = nova;
+        salvarDepois();
+        desenhar();
+      };
+      window.addEventListener('pointermove', mover);
+      window.addEventListener('pointerup', soltar);
+    });
+    cab.append(borda);
     // Faixa vazia pode sair, desde que fique pelo menos uma de cada tipo.
     if (!trilha.itens.length && s.t.trilhas.filter((x) => ehAudio(x) === audio).length > 1) {
       const tirar = document.createElement('button');

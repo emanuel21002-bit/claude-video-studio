@@ -371,8 +371,134 @@ const Dock = (() => {
     window.dispatchEvent(new Event('resize'));
   }
 
-  return { iniciar, mostrar, restaurar, atualizar: aplicarVisibilidade };
+  // ---------- workspaces salvos (como "Save as New Workspace" do Filmcraft) ----------
+  // { nome: layout }. O workspace em uso fica marcado; mexer nos painéis muda só a tela até salvar nele.
+
+  const CHAVE_PRESETS = 'dockWorkspaces.v1';
+  const CHAVE_ATUAL = 'dockWorkspaceAtual';
+  const PADRAO = 'Padrão';
+  const clonar = (x) => JSON.parse(JSON.stringify(x));
+
+  function lerPresets() {
+    try {
+      const p = JSON.parse(localStorage.getItem(CHAVE_PRESETS) ?? '{}');
+      return Object.fromEntries(Object.entries(p).filter(([, l]) => valido(l)));
+    } catch {
+      return {};
+    }
+  }
+  function gravarPresets(p) {
+    try {
+      localStorage.setItem(CHAVE_PRESETS, JSON.stringify(p));
+    } catch {}
+  }
+  function atual() {
+    try {
+      return localStorage.getItem(CHAVE_ATUAL) || PADRAO;
+    } catch {
+      return PADRAO;
+    }
+  }
+  function marcarAtual(nome) {
+    try {
+      localStorage.setItem(CHAVE_ATUAL, nome);
+    } catch {}
+  }
+  const layoutDo = (nome) => (nome === PADRAO ? padrao() : clonar(lerPresets()[nome] ?? padrao()));
+
+  function usar(nome) {
+    raiz = layoutDo(nome);
+    marcarAtual(nome);
+    guardar();
+    desenhar();
+    window.dispatchEvent(new Event('resize'));
+  }
+
+  // Pede um nome numa janelinha (o Electron não tem prompt()).
+  function pedirNome(titulo, sugestao) {
+    return new Promise((ok) => {
+      const dlg = document.createElement('dialog');
+      dlg.className = 'dlg-workspace';
+      dlg.innerHTML = '<form method="dialog" class="form-config"><h3></h3><input maxlength="40" required /><div class="linha-botoes"><button value="">Cancelar</button><button value="ok" class="primario">Salvar</button></div></form>';
+      dlg.querySelector('h3').textContent = titulo;
+      const campo = dlg.querySelector('input');
+      campo.value = sugestao ?? '';
+      dlg.addEventListener('close', () => {
+        const nome = dlg.returnValue === 'ok' ? campo.value.trim() : '';
+        dlg.remove();
+        ok(nome || null);
+      });
+      document.body.append(dlg);
+      dlg.showModal();
+      campo.select();
+    });
+  }
+
+  function desenharMenu() {
+    const sel = document.querySelector('#sel-workspace');
+    if (!sel) return;
+    const nomes = Object.keys(lerPresets()).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    const agora = atual() === PADRAO || nomes.includes(atual()) ? atual() : PADRAO;
+    const op = (valor, texto, desligada = false) => {
+      const o = new Option(texto, valor);
+      o.disabled = desligada;
+      return o;
+    };
+    sel.replaceChildren(
+      op(PADRAO, 'Workspace: Padrão'),
+      ...nomes.map((n) => op(n, 'Workspace: ' + n)),
+      op('', '──────────', true),
+      op(':novo', 'Salvar como novo workspace…'),
+      op(':salvar', 'Salvar mudanças neste workspace', agora === PADRAO),
+      op(':voltar', 'Voltar ao salvo neste workspace'),
+      op(':renomear', 'Renomear este workspace…', agora === PADRAO),
+      op(':excluir', 'Excluir este workspace', agora === PADRAO),
+    );
+    sel.value = agora;
+  }
+
+  async function aoEscolher(valor) {
+    const agora = atual();
+    const presets = lerPresets();
+    if (!valor.startsWith(':')) usar(valor);
+    else if (valor === ':novo') {
+      const nome = await pedirNome('Nome do novo workspace', '');
+      if (nome && nome !== PADRAO) {
+        presets[nome] = clonar(raiz);
+        gravarPresets(presets);
+        marcarAtual(nome);
+      }
+    } else if (valor === ':salvar' && agora !== PADRAO) {
+      presets[agora] = clonar(raiz);
+      gravarPresets(presets);
+    } else if (valor === ':voltar') usar(agora);
+    else if (valor === ':renomear' && agora !== PADRAO) {
+      const nome = await pedirNome('Novo nome do workspace', agora);
+      if (nome && nome !== agora && nome !== PADRAO) {
+        presets[nome] = presets[agora];
+        delete presets[agora];
+        gravarPresets(presets);
+        marcarAtual(nome);
+      }
+    } else if (valor === ':excluir' && agora !== PADRAO) {
+      if (confirm(`Excluir o workspace "${agora}"? A tela continua como está.`)) {
+        delete presets[agora];
+        gravarPresets(presets);
+        marcarAtual(PADRAO);
+      }
+    }
+    desenharMenu();
+  }
+
+  function ligarMenu() {
+    const sel = document.querySelector('#sel-workspace');
+    if (!sel) return;
+    sel.onchange = () => aoEscolher(sel.value);
+    desenharMenu();
+  }
+
+  return { iniciar, mostrar, restaurar, atualizar: aplicarVisibilidade, ligarMenu };
 })();
 
 Dock.iniciar();
-document.querySelector("#btn-layout-padrao").onclick = () => Dock.restaurar();
+Dock.ligarMenu();

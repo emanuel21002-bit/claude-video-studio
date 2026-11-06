@@ -833,3 +833,13 @@ body.dock-arrastando video, body.dock-arrastando .previa-host, body.dock-arrasta
 .fonte-tela.arrastando { cursor: grabbing; }
 .fonte-zoom { width: auto; padding: 2px 6px; font-size: 12px; }
 .fonte-nome-barra { color: var(--fraco); }
+
+/* Borda de baixo do cabeçalho da faixa: arrastar muda a altura */
+.tl-redim { position: absolute; left: 0; right: 0; bottom: -3px; height: 6px; cursor: row-resize; z-index: 4; }
+.tl-redim:hover { background: rgba(64, 150, 243, 0.6); }
+.tl-codigo { flex-shrink: 0; }
+.tl-linha { overflow: hidden; }
+
+.sel-workspace { width: auto; max-width: 240px; padding: 5px 8px; }
+.dlg-workspace { width: 360px; }
+.dlg-workspace h3 { margin: 0 0 4px; text-transform: none; font-size: 14px; color: var(--texto); }

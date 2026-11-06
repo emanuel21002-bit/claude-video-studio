@@ -20,6 +20,39 @@ const TIPOS_POR_TRILHA = { video: VISUAIS, audio: ['audio'] };
 const TIPOS_ANTIGOS = { sobreposicao: 'video', legenda: 'video' };
 const NOMES_ANTIGOS = new Set(['Vídeo', 'Gráficos', 'Legendas', 'Narração', 'Trilha']);
 
+// Cada faixa é uma linha só, como no Filmcraft e no CapCut: um item que começa em cima de outro sai para a próxima
+// faixa do mesmo tipo que estiver livre nesse trecho (para cima no vídeo, para baixo no áudio); sem nenhuma, uma nova
+// logo depois desta. Devolve true se mudou algo.
+function separarSobrepostos(t) {
+  let mudou = false;
+  const cruza = (a, b) => a.inicio < b.inicio + b.duracao - 0.001 && a.inicio + a.duracao > b.inicio + 0.001;
+  for (let n = 0; n < t.trilhas.length; n++) {
+    const tr = t.trilhas[n];
+    const audio = tr.tipo === 'audio';
+    let fim = -Infinity;
+    const sair = [];
+    for (const i of [...tr.itens].sort((a, b) => a.inicio - b.inicio)) {
+      if (i.inicio < fim - 0.001) sair.push(i);
+      else fim = Math.max(fim, i.inicio + i.duracao);
+    }
+    for (const i of sair) {
+      mudou = true;
+      tr.itens.splice(tr.itens.indexOf(i), 1);
+      if (tr.transicoes) {
+        tr.transicoes = tr.transicoes.filter((x) => x.de !== i.id && x.para !== i.id);
+        if (!tr.transicoes.length) delete tr.transicoes;
+      }
+      let destino = t.trilhas.slice(n + 1).find((x) => (x.tipo === 'audio') === audio && !x.itens.some((o) => cruza(o, i)));
+      if (!destino) {
+        destino = { id: novoId('t'), tipo: audio ? 'audio' : 'video', itens: [] };
+        t.trilhas.splice(n + 1, 0, destino);
+      }
+      destino.itens.push(i);
+    }
+  }
+  return mudou;
+}
+
 // Converte timelines do formato antigo (Vídeo, Gráficos, Legendas, Narração, Trilha) para faixas V/A.
 // Devolve true se mudou algo.
 export function migrarTimeline(t) {
@@ -34,6 +67,7 @@ export function migrarTimeline(t) {
       mudou = true;
     }
   }
+  if (t?.trilhas && separarSobrepostos(t)) mudou = true;
   return mudou;
 }
 
