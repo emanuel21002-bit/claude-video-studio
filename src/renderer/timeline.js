@@ -2176,7 +2176,14 @@ const TL = (() => {
         }
         return;
       }
-      const numerico = tipo === 'num' || tipo === 'faixa' || caminho === 'estilo.peso';
+      // Volume é digitado em % (0 a 100) e gravado de 0 a 1.
+      if (tipo === 'faixa') {
+        const n = Number(String(bruto).replace(',', '.'));
+        if (bruto === '' || !Number.isFinite(n)) return;
+        aoEditarCampo(item, caminho, Math.round(Math.max(0, Math.min(100, n))) / 100);
+        return;
+      }
+      const numerico = tipo === 'num' || caminho === 'estilo.peso';
       aoEditarCampo(item, caminho, numerico && bruto !== '' ? Number(bruto) : bruto === false ? '' : bruto);
     };
     if (Array.isArray(tipo)) {
@@ -2200,11 +2207,14 @@ const TL = (() => {
         entrada.value = atual ?? '';
         if (padrao != null) entrada.placeholder = padrao;
       } else if (tipo === 'faixa') {
-        entrada.type = 'range';
+        entrada.type = 'number';
         entrada.min = 0;
-        entrada.max = 1;
-        entrada.step = 0.01;
-        entrada.value = atual ?? passo ?? 1;
+        entrada.max = 100;
+        entrada.step = 1;
+        entrada.value = Math.round((atual ?? passo ?? 1) * 100);
+        rotulo.firstChild.textContent = `${titulo} (%)`;
+        // Ao sair do campo, mostra o valor que ficou gravado (fora de 0 a 100 volta ao limite).
+        entrada.addEventListener('blur', () => (entrada.value = Math.round((lerCampo(item, caminho) ?? passo ?? 1) * 100)));
       } else if (tipo === 'cor') {
         entrada.type = 'color';
         entrada.value = atual ?? '#ffffff';
