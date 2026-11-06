@@ -3,13 +3,13 @@
 
 const TL = (() => {
   const LARGURA_CAB = 120;
-  const ALTURA_POR_TIPO = { video: 54, sobreposicao: 34, legenda: 34, audio: 44 };
-  const ACEITA = {
-    video: ['video', 'imagem'],
-    sobreposicao: ['video', 'imagem', 'texto', 'bloco'],
-    legenda: ['legenda'],
-    audio: ['audio'],
-  };
+  // Como no Filmcraft e no CapCut: faixas de vídeo (V1 embaixo, as de cima cobrem as de baixo) e de áudio (A1, A2…).
+  // Qualquer item visual cabe em qualquer faixa de vídeo. sobreposicao e legenda são tipos antigos, tratados como vídeo.
+  const VISUAIS = ['video', 'imagem', 'texto', 'bloco', 'legenda'];
+  const ACEITA = { video: VISUAIS, sobreposicao: VISUAIS, legenda: VISUAIS, audio: ['audio'] };
+  const ehAudio = (tr) => tr.tipo === 'audio';
+  // Faixa com vídeo ou imagem mostra miniaturas: fica mais alta que as de texto e legenda.
+  const alturaDe = (tr) => (ehAudio(tr) ? 44 : tr.itens.some((i) => i.tipo === 'video' || i.tipo === 'imagem') ? 54 : tr.itens.length ? 36 : 40);
   const FONTES = ['Montserrat', 'Inter', 'Poppins', 'Roboto', 'Anton', 'Bebas Neue', 'Oswald', 'Playfair Display', 'Red Hat Display', 'Red Hat Text'];
   const ANIMACOES = ['', 'fade', 'slide-cima', 'slide-baixo', 'slide-esq', 'slide-dir', 'zoom', 'pop'];
   const MESCLAGENS = ['', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'];
@@ -74,6 +74,32 @@ const TL = (() => {
 
   let contadorId = 0;
   const novoId = () => `u${Date.now().toString(36)}${(contadorId++).toString(36)}`;
+
+  // V1, V2… na ordem das faixas de vídeo em trilhas (V1 é a camada de baixo); A1, A2… nas de áudio.
+  function codigoDe(tr) {
+    const mesmas = s.t.trilhas.filter((x) => ehAudio(x) === ehAudio(tr));
+    return (ehAudio(tr) ? 'A' : 'V') + (mesmas.indexOf(tr) + 1);
+  }
+
+  // Faixa nova: a de vídeo entra logo acima da mais alta que tem vídeo ou imagem (abaixo de textos e legendas);
+  // a de áudio, no fim.
+  function novaFaixa(tipo, { acimaDeTudo = false } = {}) {
+    const nova = { id: novoId(), tipo, itens: [] };
+    if (tipo === 'audio') s.t.trilhas.push(nova);
+    else {
+      const tipos = s.t.trilhas.map((tr) => (ehAudio(tr) ? 'audio' : 'video'));
+      const comMidia = s.t.trilhas.map((tr, n) => (!ehAudio(tr) && tr.itens.some((i) => i.tipo === 'video' || i.tipo === 'imagem') ? n : -1));
+      const pos = acimaDeTudo ? tipos.lastIndexOf('video') : Math.max(...comMidia, tipos.indexOf('video'));
+      s.t.trilhas.splice(pos + 1, 0, nova);
+    }
+    return nova;
+  }
+
+  // Itens com o mesmo vínculo são o vídeo e o áudio do mesmo trecho: andam, são aparados e apagados juntos.
+  const parceiros = (id) => {
+    const i = todosItens().find((x) => x.id === id);
+    return i?.vinculo ? todosItens().filter((x) => x.vinculo === i.vinculo && x.id !== id) : [];
+  };
 
   // ---------- guardar e desfazer ----------
 
@@ -270,6 +296,19 @@ const TL = (() => {
     const conteudo = qs('#tl-conteudo');
     conteudo.style.width = larguraConteudo + 'px';
     desenharRegua();
+    const canto = qs('#tl-regua-linha .tl-canto');
+    if (canto && !canto.children.length) {
+      for (const [tipo, rotulo, dica] of [['video', '+V', 'Nova faixa de vídeo'], ['audio', '+A', 'Nova faixa de áudio']]) {
+        const b = document.createElement('button');
+        b.className = 'tl-nova-faixa';
+        b.textContent = rotulo;
+        b.title = dica;
+        b.addEventListener('pointerdown', (e) => e.stopPropagation());
+        b.onclick = () => alterar(() => novaFaixa(tipo, { acimaDeTudo: true }));
+        canto.append(b);
+      }
+    }
+    canto?.querySelectorAll('button').forEach((b) => (b.disabled = s.bloqueada));
     const box = qs('#tl-trilhas');
     obsMiniaturas.disconnect();
     box.innerHTML = '';
@@ -318,19 +357,22 @@ const TL = (() => {
 
   function desenharTrilha(trilha) {
     const { faixas, total } = distribuirFaixas(trilha.itens);
-    const alturaFaixa = ALTURA_POR_TIPO[trilha.tipo];
+    const alturaFaixa = alturaDe(trilha);
     const linha = document.createElement('div');
-    linha.className = `tl-linha tipo-${trilha.tipo}`;
+    linha.className = `tl-linha tipo-${ehAudio(trilha) ? 'audio' : 'video'}`;
     linha.style.height = alturaFaixa * total + 'px';
 
     const cab = document.createElement('div');
     cab.className = 'tl-cab';
+    const audio = ehAudio(trilha);
+    const codigo = document.createElement('span');
+    codigo.className = 'tl-codigo' + (audio ? ' audio' : '');
+    codigo.textContent = codigoDe(trilha);
     const nome = document.createElement('span');
     nome.className = 'tl-nome';
-    nome.textContent = trilha.nome ?? trilha.id;
+    nome.textContent = trilha.nome ?? (audio ? 'Áudio ' : 'Vídeo ') + codigo.textContent.slice(1);
     nome.title = nome.textContent;
     const botao = document.createElement('button');
-    const audio = trilha.tipo === 'audio';
     const desligada = audio ? trilha.muda : trilha.oculta;
     botao.textContent = audio ? (desligada ? '🔇' : '🔊') : desligada ? '🚫' : '👁';
     botao.title = audio ? 'Silenciar trilha' : 'Ocultar trilha';
@@ -339,7 +381,16 @@ const TL = (() => {
         if (audio) trilha.muda = !trilha.muda;
         else trilha.oculta = !trilha.oculta;
       });
-    cab.append(nome, botao);
+    cab.append(codigo, nome, botao);
+    // Faixa vazia pode sair, desde que fique pelo menos uma de cada tipo.
+    if (!trilha.itens.length && s.t.trilhas.filter((x) => ehAudio(x) === audio).length > 1) {
+      const tirar = document.createElement('button');
+      tirar.className = 'tl-tirar-faixa';
+      tirar.textContent = '×';
+      tirar.title = 'Remover esta faixa vazia';
+      tirar.onclick = () => alterar(() => s.t.trilhas.splice(s.t.trilhas.indexOf(trilha), 1));
+      cab.append(tirar);
+    }
 
     const pista = document.createElement('div');
     pista.className = 'tl-pista';
@@ -387,7 +438,7 @@ const TL = (() => {
     el.className = `tl-item item-${item.tipo}` + (s.selecao.has(item.id) ? ' selecionado' : '');
     el.dataset.id = item.id;
     posicionar(el, item);
-    desenharMidia(el, item, ALTURA_POR_TIPO[trilha.tipo]);
+    desenharMidia(el, item, alturaDe(trilha));
     const rotulo = document.createElement('span');
     rotulo.className = 'tl-rotulo';
     rotulo.textContent = rotuloItem(item);
@@ -407,7 +458,7 @@ const TL = (() => {
     if (!m) return;
     const vel = item.velocidade ?? 1;
     const corte = item.corteInicio ?? 0;
-    if (m.onda) {
+    if (m.onda && item.tipo === 'audio') {
       const fundo = document.createElement('div');
       fundo.className = 'tl-onda';
       fundo.style.backgroundImage = `url("${urlArquivo(m.onda)}")`;
@@ -416,7 +467,7 @@ const TL = (() => {
       // A força do traço mostra o volume do item.
       fundo.style.opacity = Math.max(0.25, Math.min(1, item.volume ?? 1));
       el.append(fundo);
-    } else if (m.tira) {
+    } else if (m.tira && item.tipo !== 'audio') {
       const larguraMini = (m.larguraQuadro / m.altura) * altura;
       const larguraItem = item.duracao * s.pps;
       const tira = document.createElement('div');
@@ -458,7 +509,7 @@ const TL = (() => {
         if (item.arquivo !== arquivo) continue;
         const el = qs(`.tl-item[data-id="${CSS.escape(item.id)}"]`);
         if (!el || el.querySelector('.tl-tira, .tl-onda')) continue;
-        desenharMidia(el, item, ALTURA_POR_TIPO[tr.tipo]);
+        desenharMidia(el, item, alturaDe(tr));
         const nova = el.querySelector('.tl-tira, .tl-onda');
         if (nova) el.prepend(nova);
       }
@@ -674,9 +725,10 @@ const TL = (() => {
         s.sel = id;
       }
     } else {
-      if (s.sel === id && s.selecao.size <= 1) return;
+      const nova = id ? [id, ...parceiros(id).map((p) => p.id)] : [];
+      if (s.sel === id && s.selecao.size === nova.length && nova.every((x) => s.selecao.has(x))) return;
       s.sel = id;
-      s.selecao = new Set(id ? [id] : []);
+      s.selecao = new Set(nova);
     }
     atualizarSelecaoNaTela();
   }
@@ -812,6 +864,8 @@ const TL = (() => {
     let semMidia = 0;
     // No mesmo projeto os arquivos são os mesmos (áudio de narração, trilha, decupado…), estejam ou não na lista de materiais.
     const mesmoProjeto = !!s.projetoId && areaTransferencia.projeto === s.projetoId;
+    // O que foi colado ganha vínculos novos: senão ficaria preso ao original.
+    const vinculos = {};
     for (const c of areaTransferencia.itens) {
       // Mídia de outro projeto não está nos materiais deste: o item não teria o que mostrar.
       if (c.item.arquivo && !mesmoProjeto && !materialDe(c.item.arquivo) && !s.midia[c.item.arquivo]) {
@@ -823,6 +877,7 @@ const TL = (() => {
       const novo = clonar(c.item);
       novo.id = novoId();
       novo.inicio = arredondar(t0 + c.desloc);
+      if (novo.vinculo) novo.vinculo = vinculos[novo.vinculo] ??= 'k' + novoId();
       plano.push([tr, novo]);
     }
     if (!plano.length) return avisar(semMidia ? 'A mídia copiada não existe neste projeto: importe os arquivos nele primeiro.' : 'Nada para colar aqui.');
@@ -996,12 +1051,24 @@ const TL = (() => {
     e.stopPropagation();
     // Ctrl ou Shift + clique liga e desliga o item na seleção.
     if (e.ctrlKey || e.metaKey || e.shiftKey) return selecionar(item.id, { alternar: true });
-    const grupo = s.selecao.has(item.id) && s.selecao.size > 1 && s.ferramenta === 'selecao' && modo === 'mover';
-    if (!grupo) selecionar(item.id);
+    // Alt + clique pega só este item, sem o vídeo ou o áudio vinculado.
+    const sozinho = e.altKey;
+    let grupo = !sozinho && s.selecao.has(item.id) && s.selecao.size > 1 && s.ferramenta === 'selecao' && modo === 'mover';
+    if (sozinho) {
+      s.sel = item.id;
+      s.selecao = new Set([item.id]);
+      atualizarSelecaoNaTela();
+    } else if (!grupo) {
+      selecionar(item.id);
+      grupo = s.selecao.size > 1 && s.ferramenta === 'selecao' && modo === 'mover';
+    }
     if (s.bloqueada) return;
     if (s.ferramenta === 'navalha') {
-      const c = imantar(tempoDoEvento(e), pontosDeImã(item.id)).valor;
-      alterar(() => dividirItem(item, trilha, noQuadro(c)));
+      const c = noQuadro(imantar(tempoDoEvento(e), pontosDeImã(item.id)).valor);
+      alterar(() => {
+        dividirItem(item, trilha, c);
+        if (!sozinho) for (const p of parceiros(item.id)) dividirItem(p, trilhaDe(p.id), c);
+      });
       return;
     }
     const f = s.ferramenta;
@@ -1068,6 +1135,14 @@ const TL = (() => {
       mostrarGuia(null);
       if (!mudou) return;
       if (original.aparado) deslocarKeyframes(item, -original.aparado);
+      // Aparar um lado do vínculo apara o outro igual.
+      if (modo !== 'mover' && !sozinho) {
+        for (const p of parceiros(item.id)) {
+          p.inicio = item.inicio;
+          p.duracao = item.duracao;
+          if (item.corteInicio != null && (p.tipo === 'video' || p.tipo === 'audio')) p.corteInicio = item.corteInicio;
+        }
+      }
       if (destino !== trilha) {
         trilha.itens.splice(trilha.itens.indexOf(item), 1);
         destino.itens.push(item);
@@ -1118,6 +1193,8 @@ const TL = (() => {
     }
     delete item.saida;
     delete novo.entrada;
+    // Os dois lados de um vínculo divididos no mesmo ponto continuam vinculados entre si.
+    if (item.vinculo) novo.vinculo = `${item.vinculo}@${arredondar(c)}`;
     dividirKeyframes(item, novo, offset);
     for (const x of trilha.transicoes ?? []) if (x.de === item.id) x.de = novo.id;
     trilha.itens.splice(trilha.itens.indexOf(item) + 1, 0, novo);
@@ -1158,16 +1235,17 @@ const TL = (() => {
   }
 
   function adicionarTexto() {
-    const trilha = s.t.trilhas.find((tr) => tr.tipo === 'sobreposicao');
-    if (!trilha) return;
+    const livres = s.t.trilhas.filter((tr) => !ehAudio(tr) && !tr.itens.some((i) => ['video', 'imagem', 'legenda'].includes(i.tipo)));
     const item = {
       id: novoId(), tipo: 'texto', inicio: arredondar(s.tempo), duracao: 3, texto: 'Texto',
       estilo: { fonte: 'Montserrat', tamanho: Math.round(s.t.largura * 0.08), peso: 800, cor: '#ffffff' },
       x: 0, y: 0, entrada: { tipo: 'fade', duracao: 0.3 },
     };
     alterar(() => {
+      const trilha = livres[0] ?? novaFaixa('video', { acimaDeTudo: true });
       trilha.itens.push(item);
       s.sel = item.id;
+      s.selecao = new Set([item.id]);
     });
   }
 
@@ -1398,8 +1476,14 @@ const TL = (() => {
 
   function pintarMini(mini, m) {
     const midia = s.midia[m.arquivo];
+    mini.classList.toggle('com-capa', m.tipo === 'imagem' || !!midia?.capa);
     if (m.tipo === 'imagem' && s.pastaAssets) mini.style.backgroundImage = `url("${urlArquivo(s.pastaAssets + '/' + m.arquivo)}")`;
-    else if (midia?.tira) {
+    else if (midia?.capa) {
+      mini.textContent = '';
+      mini.style.backgroundImage = `url("${urlArquivo(midia.capa)}")`;
+      mini.style.backgroundSize = '';
+      mini.style.backgroundPosition = '';
+    } else if (midia?.tira) {
       mini.textContent = '';
       mini.style.backgroundImage = `url("${urlArquivo(midia.tira)}")`;
       mini.style.backgroundSize = `${midia.quadros * 100}% 100%`;
@@ -1409,6 +1493,263 @@ const TL = (() => {
       mini.style.backgroundImage = `url("${urlArquivo(midia.onda)}")`;
       mini.style.backgroundSize = '100% 100%';
     } else mini.textContent = ICONES[m.tipo] ?? '';
+  }
+
+  // Passar o mouse pelo cartão do vídeo folheia os quadros, como no CapCut: a posição do mouse é o momento do vídeo.
+  function folhear(mini, m, e) {
+    const p = s.midia[m.arquivo]?.previa;
+    const r = mini.getBoundingClientRect();
+    const frac = Math.max(0, Math.min(0.999, (e.clientX - r.left) / r.width));
+    let linha = mini.querySelector('.mini-linha');
+    if (!linha) {
+      linha = document.createElement('div');
+      linha.className = 'mini-linha';
+      mini.append(linha);
+    }
+    linha.style.left = frac * 100 + '%';
+    let rotulo = mini.querySelector('.mini-tempo');
+    if (!rotulo && m.duracao) {
+      rotulo = document.createElement('div');
+      rotulo.className = 'mini-tempo';
+      mini.append(rotulo);
+    }
+    if (rotulo) rotulo.textContent = formatarTempo(frac * m.duracao);
+    if (!p) return;
+    let q = mini.querySelector('.mini-folhear');
+    if (!q) {
+      q = document.createElement('div');
+      q.className = 'mini-folhear';
+      mini.prepend(q);
+    }
+    // Cabe inteiro no cartão (sem esticar), centralizado.
+    const a = p.largura / p.altura;
+    const w = Math.min(r.width, r.height * a);
+    const h = w / a;
+    const n = Math.floor(frac * p.quadros);
+    q.style.cssText = `width:${w}px;height:${h}px;left:${(r.width - w) / 2}px;top:${(r.height - h) / 2}px;background-image:url("${urlArquivo(p.arquivo)}");background-size:${p.quadros * w}px ${h}px;background-position:${-n * w}px 0`;
+  }
+
+  function pararFolhear(mini) {
+    mini.querySelectorAll('.mini-folhear, .mini-linha, .mini-tempo').forEach((x) => x.remove());
+  }
+
+  // ---------- janela de origem (clique duplo no material), como o monitor Source do Filmcraft ----------
+
+  const fonte = { m: null, entrada: 0, saida: 0, modo: 'ambos', el: null, sobre: false, anim: 0 };
+  const urlDaMidia = (arquivo) => s.proxies?.[arquivo] ?? (s.pastaAssets ? urlArquivo(s.pastaAssets + '/' + arquivo) : '');
+
+  function criarFonte() {
+    const box = document.createElement('div');
+    box.id = 'fonte';
+    box.className = 'fonte';
+    box.hidden = true;
+    box.innerHTML = `
+      <div class="fonte-cab"><span class="fonte-titulo">Origem</span><span class="fonte-nome"></span><button type="button" class="fonte-fechar" title="Fechar (Esc)">×</button></div>
+      <div class="fonte-tela"><video class="fonte-video" preload="auto" playsinline></video><img class="fonte-img" alt="" /><div class="fonte-onda"></div></div>
+      <div class="fonte-trilho" title="Clique ou arraste para ir até o momento"><div class="fonte-faixa"></div><div class="fonte-cursor"></div></div>
+      <div class="fonte-ctrl">
+        <span class="fonte-tempo">00:00.00</span>
+        <div class="fonte-botoes">
+          <button type="button" data-a="entrada" title="Marcar entrada (I)">{</button>
+          <button type="button" data-a="voltar" title="Voltar um quadro">‹</button>
+          <button type="button" data-a="tocar" title="Tocar ou pausar (K)">▶</button>
+          <button type="button" data-a="avancar" title="Avançar um quadro">›</button>
+          <button type="button" data-a="saida" title="Marcar saída (O)">}</button>
+        </div>
+        <span class="fonte-dur"></span>
+      </div>
+      <div class="fonte-acoes">
+        <div class="segmentado fonte-modo">
+          <button type="button" data-v="ambos" title="O vídeo numa faixa V e o som dele numa faixa A, vinculados">Vídeo e áudio</button>
+          <button type="button" data-v="video">Só vídeo</button>
+          <button type="button" data-v="audio">Só áudio</button>
+        </div>
+        <div class="fonte-arrastar" draggable="true" title="Arraste o trecho marcado para uma faixa da timeline">⠿ Arrastar</div>
+        <button type="button" class="primario" data-a="inserir" title="Insere o trecho marcado no cursor da timeline (,)">Inserir no cursor</button>
+      </div>`;
+    qs('.area-player').insertBefore(box, qs('.area-player .player'));
+    const video = box.querySelector('.fonte-video');
+    const tempoAtual = () => (fonte.m?.tipo === 'imagem' ? 0 : video.currentTime || 0);
+    const ir = (t) => {
+      if (fonte.m?.tipo === 'imagem') return;
+      video.currentTime = Math.max(0, Math.min(fonte.m.duracao ?? 0, t));
+      desenharFonte();
+    };
+    box.addEventListener('mouseenter', () => (fonte.sobre = true));
+    box.addEventListener('mouseleave', () => (fonte.sobre = false));
+    box.querySelector('.fonte-fechar').onclick = fecharFonte;
+    const trilho = box.querySelector('.fonte-trilho');
+    trilho.addEventListener('pointerdown', (e) => {
+      if (!fonte.m || fonte.m.tipo === 'imagem') return;
+      const r = trilho.getBoundingClientRect();
+      const mover = (ev) => ir(((ev.clientX - r.left) / r.width) * (fonte.m.duracao ?? 0));
+      mover(e);
+      const soltar = () => {
+        window.removeEventListener('pointermove', mover);
+        window.removeEventListener('pointerup', soltar);
+      };
+      window.addEventListener('pointermove', mover);
+      window.addEventListener('pointerup', soltar);
+    });
+    box.querySelectorAll('.fonte-botoes button, .fonte-acoes button[data-a]').forEach((b) => {
+      b.onclick = () => acaoFonte(b.dataset.a);
+    });
+    fonte.acao = (a) => {
+      const um = 1 / (s.t?.fps || 30);
+      if (a === 'entrada') {
+        fonte.entrada = Math.min(tempoAtual(), Math.max(0, fonte.saida - um));
+      } else if (a === 'saida') {
+        fonte.saida = Math.max(tempoAtual(), fonte.entrada + um);
+      } else if (a === 'tocar') {
+        if (fonte.m?.tipo === 'imagem') return;
+        if (video.paused) video.play().catch(() => {});
+        else video.pause();
+      } else if (a === 'voltar') ir(tempoAtual() - um);
+      else if (a === 'avancar') ir(tempoAtual() + um);
+      else if (a === 'inserir') return inserirTrecho(fonte.m, trechoDaFonte(), s.tempo);
+      desenharFonte();
+    };
+    video.addEventListener('play', () => {
+      const passo = () => {
+        desenharFonte();
+        if (!video.paused) fonte.anim = requestAnimationFrame(passo);
+      };
+      passo();
+    });
+    video.addEventListener('pause', desenharFonte);
+    video.addEventListener('loadedmetadata', desenharFonte);
+    const pegar = box.querySelector('.fonte-arrastar');
+    pegar.addEventListener('dragstart', (e) => {
+      if (!fonte.m) return e.preventDefault();
+      s.arrastando = { ...fonte.m, trecho: trechoDaFonte() };
+      e.dataTransfer.effectAllowed = 'copy';
+      e.dataTransfer.setData('text/plain', fonte.m.arquivo);
+    });
+    pegar.addEventListener('dragend', () => {
+      s.arrastando = null;
+      limparAlvosDeSoltar();
+    });
+    fonte.el = box;
+  }
+
+  const acaoFonte = (a) => fonte.acao?.(a);
+  const trechoDaFonte = () => ({ entrada: fonte.entrada, saida: fonte.saida, modo: fonte.modo });
+
+  function modosDe(m) {
+    if (m.tipo === 'audio') return ['audio'];
+    if (m.tipo === 'imagem' || m.temAudio === false) return ['video'];
+    return ['ambos', 'video', 'audio'];
+  }
+
+  function abrirFonte(m) {
+    if (!fonte.el) criarFonte();
+    const box = fonte.el;
+    const video = box.querySelector('.fonte-video');
+    const img = box.querySelector('.fonte-img');
+    const onda = box.querySelector('.fonte-onda');
+    fonte.m = m;
+    fonte.entrada = 0;
+    fonte.saida = m.tipo === 'imagem' ? 3 : m.duracao ?? 5;
+    const modos = modosDe(m);
+    if (!modos.includes(fonte.modo)) fonte.modo = modos[0];
+    box.querySelectorAll('.fonte-modo button').forEach((b) => (b.disabled = !modos.includes(b.dataset.v)));
+    segmentado(box.querySelector('.fonte-modo'), fonte.modo, (v) => (fonte.modo = v));
+    box.querySelector('.fonte-nome').textContent = m.arquivo;
+    box.querySelector('.fonte-nome').title = m.arquivo;
+    video.pause();
+    img.hidden = m.tipo !== 'imagem';
+    video.hidden = m.tipo === 'imagem';
+    onda.hidden = m.tipo !== 'audio';
+    if (m.tipo === 'imagem') {
+      video.removeAttribute('src');
+      img.src = urlDaMidia(m.arquivo);
+    } else {
+      video.src = urlDaMidia(m.arquivo);
+      video.currentTime = 0;
+      const o = s.midia[m.arquivo]?.onda;
+      onda.style.backgroundImage = o ? `url("${urlArquivo(o)}")` : '';
+    }
+    box.hidden = false;
+    qs('.area-player').classList.add('com-fonte');
+    desenharFonte();
+  }
+
+  function fecharFonte() {
+    if (!fonte.el) return;
+    const video = fonte.el.querySelector('.fonte-video');
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    cancelAnimationFrame(fonte.anim);
+    fonte.el.hidden = true;
+    fonte.m = null;
+    qs('.area-player').classList.remove('com-fonte');
+  }
+
+  function desenharFonte() {
+    if (!fonte.m || !fonte.el) return;
+    const box = fonte.el;
+    const video = box.querySelector('.fonte-video');
+    const dur = fonte.m.tipo === 'imagem' ? fonte.saida : fonte.m.duracao || 1;
+    const t = fonte.m.tipo === 'imagem' ? 0 : video.currentTime || 0;
+    box.querySelector('.fonte-cursor').style.left = (t / dur) * 100 + '%';
+    const faixa = box.querySelector('.fonte-faixa');
+    faixa.style.left = (fonte.entrada / dur) * 100 + '%';
+    faixa.style.width = ((fonte.saida - fonte.entrada) / dur) * 100 + '%';
+    box.querySelector('.fonte-tempo').textContent = formatarTempo(t);
+    box.querySelector('.fonte-dur').textContent = `Trecho ${formatarTempo(fonte.saida - fonte.entrada)}`;
+    box.querySelector('[data-a="tocar"]').textContent = video.paused ? '▶' : '❚❚';
+    box.querySelector('[data-a="inserir"]').disabled = s.bloqueada;
+  }
+
+  // Atalhos da janela de origem com o mouse em cima dela: I e O marcam, K toca, setas andam um quadro, Esc fecha.
+  function teclaDaFonte(e) {
+    if (!fonte.m || !fonte.sobre || e.ctrlKey || e.metaKey || e.altKey) return false;
+    const k = e.key.toLowerCase();
+    const mapa = { i: 'entrada', o: 'saida', k: 'tocar', ' ': 'tocar', arrowleft: 'voltar', arrowright: 'avancar', ',': 'inserir' };
+    if (k === 'escape') fecharFonte();
+    else if (mapa[k]) acaoFonte(mapa[k]);
+    else return false;
+    e.preventDefault();
+    return true;
+  }
+
+  // Põe o trecho marcado na timeline. Sem faixa pedida, vai na faixa de vídeo mais baixa (e na de áudio) que está
+  // livre nesse intervalo; se nenhuma está, cria uma. Vídeo e áudio juntos ficam vinculados.
+  function inserirTrecho(m, trecho, inicio, alvo) {
+    if (!m || s.bloqueada) return;
+    const dur = noQuadro(trecho.saida - trecho.entrada);
+    if (!(dur > 0)) return avisar('Marque a saída depois da entrada.');
+    const ini = noQuadro(Math.max(0, inicio));
+    const fim = ini + dur;
+    const livre = (tr) => !tr.itens.some((i) => i.inicio < fim - 0.001 && i.inicio + i.duracao > ini + 0.001);
+    const faixa = (tipo) => {
+      if (alvo && ehAudio(alvo) === (tipo === 'audio')) return alvo;
+      const candidatas = s.t.trilhas.filter((tr) => ehAudio(tr) === (tipo === 'audio'));
+      const ok = candidatas.find((tr) => livre(tr) && (tipo === 'audio' || !tr.itens.some((i) => ['texto', 'legenda', 'bloco'].includes(i.tipo))));
+      return ok ?? novaFaixa(tipo);
+    };
+    const modo = modosDe(m).includes(trecho.modo) ? trecho.modo : modosDe(m)[0];
+    const novos = [];
+    alterar(() => {
+      const vinculo = modo === 'ambos' ? 'k' + novoId() : undefined;
+      const corte = arredondar(trecho.entrada);
+      if (modo !== 'audio') {
+        const item = { id: novoId(), tipo: m.tipo, arquivo: m.arquivo, inicio: ini, duracao: dur, ajuste: 'cover' };
+        if (m.tipo === 'video') Object.assign(item, { corteInicio: corte, volume: 0 });
+        if (vinculo) item.vinculo = vinculo;
+        faixa('video').itens.push(item);
+        novos.push(item.id);
+      }
+      if (modo !== 'video') {
+        const item = { id: novoId(), tipo: 'audio', arquivo: m.arquivo, inicio: ini, duracao: dur, corteInicio: corte, volume: 1 };
+        if (vinculo) item.vinculo = vinculo;
+        faixa('audio').itens.push(item);
+        novos.push(item.id);
+      }
+    });
+    selecionarVarios(novos);
+    carregarMidia();
   }
 
   function blocoRoteiro() {
@@ -1458,6 +1799,10 @@ const TL = (() => {
       const mini = document.createElement('div');
       mini.className = 'material-mini';
       pintarMini(mini, m);
+      if (m.tipo !== 'imagem') {
+        mini.addEventListener('mousemove', (e) => folhear(mini, m, e));
+        mini.addEventListener('mouseleave', () => pararFolhear(mini));
+      }
       const nome = document.createElement('div');
       nome.className = 'material-nome';
       nome.textContent = m.arquivo;
@@ -1482,18 +1827,14 @@ const TL = (() => {
         s.arrastando = null;
         limparAlvosDeSoltar();
       });
-      // Duplo clique: no fim da trilha que aceita, ou no cursor para áudio.
-      card.addEventListener('dblclick', () => {
-        if (s.bloqueada) return;
-        const tr = s.t.trilhas.find((x) => ACEITA[x.tipo].includes(m.tipo));
-        inserirMaterial(m, tr, m.tipo === 'audio' ? s.tempo : Math.max(0, ...(tr?.itens ?? []).map((i) => i.inicio + i.duracao)));
-      });
+      // Duplo clique abre a janela de origem, para marcar o trecho e escolher vídeo, áudio ou os dois.
+      card.addEventListener('dblclick', () => abrirFonte(m));
       return card;
     };
     box.append(desenharPastas(arvoreDePastas(s.materiais), cartao));
     const dica = document.createElement('div');
     dica.className = 'materiais-dica';
-    dica.textContent = 'Arraste para uma trilha para adicionar, ou solte em cima de um clipe para substituir o arquivo dele. Arquivos e pastas soltos aqui entram só na lista.';
+    dica.textContent = 'Passe o mouse num vídeo para folhear. Clique duas vezes para abrir na janela de origem e escolher o trecho. Arraste para uma faixa para adicionar, ou solte em cima de um clipe para substituir o arquivo dele.';
     box.append(dica);
   }
 
@@ -1511,7 +1852,7 @@ const TL = (() => {
       limparAlvosDeSoltar();
       const clipe = e.target.closest('.tl-item');
       const it = clipe && todosItens().find((i) => i.id === clipe.dataset.id);
-      if (it?.arquivo && mesmoGrupo(it.tipo, m.tipo)) {
+      if (!m.trecho && it?.arquivo && mesmoGrupo(it.tipo, m.tipo)) {
         clipe.classList.add('alvo-troca');
         return;
       }
@@ -1529,9 +1870,10 @@ const TL = (() => {
       s.arrastando = null;
       const clipe = e.target.closest('.tl-item');
       const it = clipe && todosItens().find((i) => i.id === clipe.dataset.id);
-      if (it?.arquivo && mesmoGrupo(it.tipo, m.tipo)) return substituirItem(it, m);
       const pista = e.target.closest('.tl-pista');
       const tr = pista && s.t.trilhas.find((x) => x.id === pista.dataset.trilha);
+      if (m.trecho) return inserirTrecho(m, m.trecho, noQuadro(imantar(tempoDoEvento(e), pontosDeImã(null)).valor), tr);
+      if (it?.arquivo && mesmoGrupo(it.tipo, m.tipo)) return substituirItem(it, m);
       inserirMaterial(m, tr, noQuadro(imantar(tempoDoEvento(e), pontosDeImã(null)).valor));
     });
   }
@@ -1927,7 +2269,7 @@ const TL = (() => {
     if (item.arquivo) box.append(secaoArquivo(item));
     if (item.tipo !== 'audio' && item.tipo !== 'legenda') box.append(secaoEfeitos(item));
     const trilhaDoItem = trilhaDe(item.id);
-    if (['video', 'sobreposicao'].includes(trilhaDoItem?.tipo)) box.append(secaoTransicao(item, trilhaDoItem));
+    if (trilhaDoItem && !ehAudio(trilhaDoItem)) box.append(secaoTransicao(item, trilhaDoItem));
     atualizarCamposKf();
     if (item.tipo === 'legenda') {
       const b = document.createElement('button');
@@ -1949,6 +2291,7 @@ const TL = (() => {
   function aoTeclar(e) {
     if (!ativa() || estado.vista !== 'editor') return;
     if (e.target.closest?.('input, textarea, select, dialog')) return;
+    if (teclaDaFonte(e)) return;
     const ctrl = e.ctrlKey || e.metaKey;
     if (ctrl && e.key.toLowerCase() === 'z' && !e.shiftKey) trocarEstado(s.desfazer, s.refazer);
     else if (ctrl && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) trocarEstado(s.refazer, s.desfazer);
@@ -2142,13 +2485,15 @@ const TL = (() => {
     const id = s.id;
     const arquivos = [...new Set([...emOrdemNaTimeline(), ...s.materiais.map((m) => m.arquivo)])].filter((a) => !s.midia[a] && !s.midiaPedida.has(a));
     for (const arquivo of arquivos) s.midiaPedida.add(arquivo);
+    // Primeiro o que a timeline mostra (miniaturas e ondas), para todos os arquivos; só depois as capas e as folhas de
+    // quadros dos cartões, que levam mais tempo. Assim a timeline não espera pelos extras de cada material.
     for (const arquivo of arquivos) {
       await esperarPrevia(id);
       if (s.id !== id) return;
-      const m = await api.midiaTimeline({ id, arquivo }).catch(() => null);
+      const m = await api.midiaTimeline({ id, arquivo, extras: false }).catch(() => null);
       if (s.id !== id) return;
       if (m) {
-        s.midia[arquivo] = m;
+        s.midia[arquivo] = { ...s.midia[arquivo], ...m };
         pintarMidia(arquivo);
         if (m.proxy && !s.proxies?.[arquivo]) {
           s.proxies = { ...s.proxies, [arquivo]: urlArquivo(m.proxy) };
@@ -2157,6 +2502,26 @@ const TL = (() => {
       }
     }
     gerarProxies(id);
+    for (const arquivo of arquivos.filter((a) => s.midia[a]?.tipo === 'video')) {
+      await esperarPrevia(id);
+      if (s.id !== id) return;
+      const m = await api.midiaTimeline({ id, arquivo, extras: true }).catch(() => null);
+      if (s.id !== id) return;
+      if (!m) continue;
+      s.midia[arquivo] = { ...s.midia[arquivo], ...m };
+      const mini = qs(`#materiais .material[data-arquivo="${CSS.escape(arquivo)}"] .material-mini`);
+      const mat = materialDe(arquivo);
+      if (mini && mat) pintarMini(mini, mat);
+      // O som do vídeo numa faixa de áudio ganha a forma de onda.
+      if (m.onda) for (const el of document.querySelectorAll('.tipo-audio .tl-item')) {
+        const it = todosItens().find((i) => i.id === el.dataset.id);
+        if (it?.arquivo === arquivo && !el.querySelector('.tl-onda')) {
+          desenharMidia(el, it, 44);
+          const nova = el.querySelector('.tl-onda');
+          if (nova) el.prepend(nova);
+        }
+      }
+    }
   }
 
   const proximoProxy = () => emOrdemNaTimeline().find((a) => s.midia[a]?.precisaProxy && !s.midia[a].proxyFeito);
@@ -2234,6 +2599,7 @@ const TL = (() => {
   }
 
   async function fechar() {
+    fecharFonte();
     await salvarAgora();
     desmontarPrevia();
     s.t = null;

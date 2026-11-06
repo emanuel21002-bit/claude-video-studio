@@ -439,7 +439,7 @@ ipcMain.handle('filmcraft:abrir', (_e, { id, descartar }) => abrirNoFilmcraft(id
 ipcMain.handle('filmcraft:trazer', (_e, id) => trazerDoFilmcraft(id, (l) => enviar('log', l)));
 ipcMain.handle('timeline:salvar', (_e, { id, timeline }) => gravarTimeline(id, timeline));
 ipcMain.handle('timeline:previa', (_e, id) => prepararPrevia(id));
-ipcMain.handle('timeline:midia', (_e, { id, arquivo }) => midiaDoArquivo(id, arquivo));
+ipcMain.handle('timeline:midia', (_e, { id, arquivo, extras }) => midiaDoArquivo(id, arquivo, { extras }));
 ipcMain.handle('timeline:proxy', (_e, { id, arquivo }) => gerarProxyDe(id, arquivo).catch(() => null));
 ipcMain.handle('timeline:legendas', (_e, { id, opcoes }) => resumoLegendas(gerarLegendas(id, opcoes)));
 ipcMain.handle('roteiro:adicionar', (_e, { id, caminhos }) => adicionarRoteiros(id, caminhos));

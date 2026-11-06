@@ -727,3 +727,47 @@ body.no-projeto .vista.editor.ativa { height: 100%; }
 .tl-cursor::before { background: transparent; }
 .cartao span:last-child { min-height: 2.7em; }
 .cab-editor .linha-botoes button { white-space: nowrap; padding: 5px 12px; }
+
+/* ---------- Faixas V/A, como no Filmcraft ---------- */
+.tl-cab { gap: 6px; padding: 0 6px; justify-content: flex-start; }
+.tl-codigo { flex: none; display: grid; place-items: center; min-width: 26px; height: 22px; padding: 0 4px; border-radius: 3px; background: #2f6bdf; color: #fff; font-size: 11px; font-weight: 700; }
+.tl-cab .tl-nome { flex: 1; min-width: 0; }
+.tl-cab .tl-tirar-faixa { color: var(--apagado); font-size: 14px; }
+.tl-cab .tl-tirar-faixa:hover { color: var(--erro); }
+.tl-linha.tipo-audio:first-of-type, .tl-linha.tipo-video + .tl-linha.tipo-audio { border-top: 3px solid #000; }
+.tl-canto { display: flex; align-items: center; gap: 4px; padding: 0 6px; }
+.tl-nova-faixa { padding: 0 6px; height: 16px; font-size: 10px; line-height: 14px; border-radius: 3px; }
+
+/* ---------- Materiais: capas maiores e folhear ao passar o mouse ---------- */
+.materiais-grade { grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); }
+.material-mini { position: relative; height: auto; aspect-ratio: 16 / 10; overflow: hidden; background-color: #000; background-repeat: no-repeat; background-position: center; }
+.material-mini.com-capa { background-size: contain; }
+.material:hover .material-mini { outline: 1px solid #5895ec; outline-offset: -1px; }
+.mini-folhear { position: absolute; background-repeat: no-repeat; pointer-events: none; }
+.mini-linha { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #5895ec; pointer-events: none; }
+.mini-tempo { position: absolute; right: 4px; bottom: 3px; padding: 0 4px; border-radius: 3px; background: rgba(0, 0, 0, 0.75); color: #fff; font: 10px Consolas, monospace; pointer-events: none; }
+
+/* ---------- Janela de origem (clique duplo no material) ---------- */
+.area-player.com-fonte .player { flex: 1 1 0; }
+.fonte { flex: 1 1 0; min-width: 260px; display: flex; flex-direction: column; min-height: 0; background: var(--painel); border: 1px solid var(--borda); border-radius: var(--raio); overflow: hidden; }
+.fonte-cab { flex: none; display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--borda); }
+.fonte-titulo { color: var(--texto); font-size: 12px; text-decoration: underline; text-underline-offset: 4px; }
+.fonte-nome { flex: 1; min-width: 0; color: var(--fraco); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fonte-fechar { padding: 0 6px; border: none; background: transparent; font-size: 16px; color: var(--fraco); }
+.fonte-tela { position: relative; flex: 1; min-height: 120px; background: #000; display: grid; place-items: center; overflow: hidden; }
+.fonte-tela video, .fonte-tela img { width: 100%; height: 100%; object-fit: contain; }
+.fonte-onda { position: absolute; inset: 20% 4%; background-repeat: no-repeat; background-size: 100% 100%; opacity: 0.9; pointer-events: none; }
+.fonte-trilho { position: relative; flex: none; height: 14px; background: #141414; border-top: 1px solid var(--borda); cursor: pointer; }
+.fonte-faixa { position: absolute; top: 3px; bottom: 3px; background: rgba(64, 150, 243, 0.45); border-left: 2px solid #4096f3; border-right: 2px solid #4096f3; pointer-events: none; }
+.fonte-cursor { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #5895ec; pointer-events: none; }
+.fonte-ctrl { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 10px; }
+.fonte-tempo { color: #4096f3; font: 13px Consolas, monospace; }
+.fonte-dur { color: var(--fraco); font: 12px Consolas, monospace; }
+.fonte-botoes { display: flex; gap: 4px; }
+.fonte-botoes button { min-width: 30px; padding: 3px 8px; }
+.fonte-acoes { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 10px 8px; border-top: 1px solid var(--borda); }
+.fonte-acoes .segmentado button { padding: 4px 9px; font-size: 12px; }
+.fonte-acoes .primario { margin-left: auto; padding: 5px 12px; }
+.fonte-arrastar { padding: 4px 10px; border: 1px dashed #4b4b4b; border-radius: 4px; color: var(--fraco); font-size: 12px; cursor: grab; user-select: none; }
+.fonte-arrastar:active { cursor: grabbing; }
+

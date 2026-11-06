@@ -162,7 +162,7 @@ export function resumoTimeline(id, { ids } = {}) {
   const linhas = [`${t.largura}x${t.altura} ${t.fps}fps duração ${seg(Math.max(0, ...t.trilhas.flatMap((tr) => tr.itens.map((i) => i.inicio + i.duracao))))}s`];
   for (const tr of t.trilhas) {
     linhas.push(`# ${tr.id} (${tr.tipo}) ${tr.itens.length} itens${tr.oculta ? ' oculta' : ''}${tr.muda ? ' muda' : ''}`);
-    if (tr.tipo === 'legenda') {
+    if (tr.itens.length && tr.itens.every((i) => i.tipo === 'legenda')) {
       if (tr.itens.length) linhas.push(`  de ${seg(tr.itens[0].inicio)}s a ${seg(tr.itens.at(-1).inicio + tr.itens.at(-1).duracao)}s (use ids para ver uma legenda)`);
       continue;
     }

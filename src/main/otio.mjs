@@ -515,9 +515,9 @@ export function deOtio(otio, original, projeto, { novoId, mapaArquivos, base: pa
 
   const trilhaPara = (nome, audio) => {
     const limpo = nome.replace(/ · \d+$/, '');
-    let tr = t.trilhas.find((x) => (x.nome ?? x.id) === limpo && (x.tipo === 'audio') === audio && x.tipo !== 'legenda');
+    let tr = t.trilhas.find((x) => (x.nome ?? x.id) === limpo && (x.tipo === 'audio') === audio && !x.itens.some((i) => i.tipo === 'legenda'));
     if (!tr) {
-      tr = { id: novoId('t'), tipo: audio ? 'audio' : 'sobreposicao', nome: limpo, itens: [] };
+      tr = { id: novoId('t'), tipo: audio ? 'audio' : 'video', nome: limpo, itens: [] };
       ordemNova.push(tr);
     }
     return tr;

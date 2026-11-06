@@ -12,12 +12,30 @@ import { FORMATOS } from './presets.mjs';
 const aqui = path.dirname(fileURLToPath(import.meta.url));
 const MODELO = ['index.ts', 'Root.tsx', 'TimelineVideo.tsx', 'blocos.tsx', 'previa.tsx'];
 
-const TIPOS_POR_TRILHA = {
-  video: ['video', 'imagem'],
-  sobreposicao: ['video', 'imagem', 'texto', 'bloco'],
-  legenda: ['legenda'],
-  audio: ['audio'],
-};
+// Como no Filmcraft e no CapCut, só há faixas de vídeo (V1, V2…, a de cima cobre a de baixo) e de áudio (A1, A2…).
+// Qualquer item visual cabe em qualquer faixa de vídeo.
+const VISUAIS = ['video', 'imagem', 'texto', 'bloco', 'legenda'];
+const TIPOS_POR_TRILHA = { video: VISUAIS, audio: ['audio'] };
+// Tipos antigos de faixa, convertidos ao ler a timeline.
+const TIPOS_ANTIGOS = { sobreposicao: 'video', legenda: 'video' };
+const NOMES_ANTIGOS = new Set(['Vídeo', 'Gráficos', 'Legendas', 'Narração', 'Trilha']);
+
+// Converte timelines do formato antigo (Vídeo, Gráficos, Legendas, Narração, Trilha) para faixas V/A.
+// Devolve true se mudou algo.
+export function migrarTimeline(t) {
+  let mudou = false;
+  for (const tr of t?.trilhas ?? []) {
+    if (TIPOS_ANTIGOS[tr.tipo]) {
+      tr.tipo = TIPOS_ANTIGOS[tr.tipo];
+      mudou = true;
+    }
+    if (tr.nome && NOMES_ANTIGOS.has(tr.nome)) {
+      delete tr.nome;
+      mudou = true;
+    }
+  }
+  return mudou;
+}
 
 export const CURVAS = ['linear', 'hold', 'bezier', 'easeIn', 'easeOut'];
 export const MESCLAGENS = ['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'];
@@ -28,7 +46,10 @@ export const novoId = (prefixo = 'i') => `${prefixo}${Date.now().toString(36)}${
 const arquivoTimeline = (id) => path.join(caminhoTimeline(id), 'timeline.json');
 
 export function lerTimeline(id) {
-  return JSON.parse(fs.readFileSync(arquivoTimeline(id), 'utf8'));
+  const t = JSON.parse(fs.readFileSync(arquivoTimeline(id), 'utf8'));
+  // Grava já no formato novo: o Claude lê o arquivo direto e precisa ver as mesmas faixas que a tela.
+  if (migrarTimeline(t)) fs.writeFileSync(arquivoTimeline(id), JSON.stringify(t, null, 2));
+  return t;
 }
 
 // Confere a timeline antes de gravar ou renderizar. Devolve a lista de problemas (vazia = ok).
@@ -39,7 +60,7 @@ export function validarTimeline(id, t) {
   const assets = caminhoAssets(id);
   const vistos = new Set();
   for (const tr of t.trilhas) {
-    const aceitos = TIPOS_POR_TRILHA[tr.tipo];
+    const aceitos = TIPOS_POR_TRILHA[TIPOS_ANTIGOS[tr.tipo] ?? tr.tipo];
     if (!aceitos) {
       erros.push(`Trilha "${tr.id}": tipo "${tr.tipo}" não existe (use ${Object.keys(TIPOS_POR_TRILHA).join(', ')}).`);
       continue;
@@ -66,7 +87,7 @@ export function validarTimeline(id, t) {
     }
     for (const x of tr.transicoes ?? []) {
       const nome = `Transição "${x.id}" (trilha ${tr.id})`;
-      if (!['video', 'sobreposicao'].includes(tr.tipo)) erros.push(`${nome}: só trilhas de vídeo e sobreposição têm transição.`);
+      if (tr.tipo === 'audio') erros.push(`${nome}: faixa de áudio não tem transição (use fadeIn/fadeOut).`);
       if (!x.id || !x.tipo) erros.push(`${nome}: precisa de "id" e "tipo".`);
       if (!(x.duracao > 0)) erros.push(`${nome}: "duracao" precisa ser > 0.`);
       if (!x.de && !x.para) erros.push(`${nome}: precisa de "de" ou "para".`);
@@ -80,6 +101,7 @@ export function validarTimeline(id, t) {
 }
 
 export function gravarTimeline(id, t) {
+  migrarTimeline(t);
   const erros = validarTimeline(id, t);
   if (erros.length) throw new Error(erros.join('\n'));
   fs.writeFileSync(arquivoTimeline(id), JSON.stringify(t, null, 2));
@@ -121,12 +143,13 @@ export function timelineInicial(p) {
     altura: p.altura,
     fps: p.fps,
     fundo: '#000000',
+    // V1 vídeos, V2 gráficos, V3 legendas; A1 narração, A2 música.
     trilhas: [
-      { id: 'video', tipo: 'video', nome: 'Vídeo', itens: clipes },
-      { id: 'graficos', tipo: 'sobreposicao', nome: 'Gráficos', itens: [] },
-      { id: 'legendas', tipo: 'legenda', nome: 'Legendas', itens: [] },
-      { id: 'narracao', tipo: 'audio', nome: 'Narração', itens: narracao },
-      { id: 'trilha', tipo: 'audio', nome: 'Trilha', itens: trilhaMusical },
+      { id: 'video', tipo: 'video', itens: clipes },
+      { id: 'graficos', tipo: 'video', itens: [] },
+      { id: 'legendas', tipo: 'video', itens: [] },
+      { id: 'narracao', tipo: 'audio', itens: narracao },
+      { id: 'trilha', tipo: 'audio', itens: trilhaMusical },
     ],
   };
 }
@@ -192,9 +215,14 @@ export function gerarLegendas(id, { maxPalavras = 4, maxCaracteres = 26, estilo,
   }
   const palavras = correcao?.usado ? correcao.palavras : transcritas;
   const t = lerTimeline(id);
-  const trilha = t.trilhas.find((tr) => tr.tipo === 'legenda');
-  if (!trilha) throw new Error('A timeline não tem trilha de legendas.');
-  const exemplo = trilha.itens[0];
+  // A faixa das legendas é a que já tem legendas; sem nenhuma, a "legendas" do modelo ou uma faixa de vídeo nova no topo.
+  let trilha = t.trilhas.find((tr) => tr.tipo !== 'audio' && tr.itens.some((i) => i.tipo === 'legenda')) ?? t.trilhas.find((tr) => tr.id === 'legendas' && tr.tipo !== 'audio');
+  if (!trilha) {
+    trilha = { id: novoId('t'), tipo: 'video', itens: [] };
+    const ultimaVideo = t.trilhas.map((tr) => tr.tipo).lastIndexOf('video');
+    t.trilhas.splice(ultimaVideo + 1, 0, trilha);
+  }
+  const exemplo = trilha.itens.find((i) => i.tipo === 'legenda');
   // A fala vem do áudio de narração ou, quando a narração está no vídeo, dos pedaços desse vídeo na timeline.
   const pedacos = projeto.narracao
     ? t.trilhas.filter((tr) => tr.tipo === 'audio').flatMap((tr) => tr.itens).filter((i) => i.arquivo === projeto.narracao.arquivo)
@@ -233,7 +261,8 @@ export function gerarLegendas(id, { maxPalavras = 4, maxCaracteres = 26, estilo,
     const prox = itens[n + 1];
     if (prox && it.inicio + it.duracao > prox.inicio) it.duracao = Math.max(0.05, prox.inicio - it.inicio);
   });
-  trilha.itens = itens;
+  // Só as legendas são trocadas: o que mais estiver nessa faixa fica.
+  trilha.itens = [...trilha.itens.filter((i) => i.tipo !== 'legenda'), ...itens];
   gravarTimeline(id, t);
   return { total: itens.length, roteiro: correcao && { usado: correcao.usado, acerto: correcao.acerto } };
 }
@@ -389,8 +418,44 @@ export function gerarProxyDe(id, arquivo) {
 
 const PASSO_MINIATURA = (dur) => Math.max(1, Math.ceil(dur / 150));
 
+// Capa nítida do cartão, folha de quadros para folhear ao passar o mouse (como no CapCut) e forma de onda do som
+// do vídeo, para quando ele entra numa faixa de áudio. Tudo uma vez só, no cache do projeto.
+const ALTURA_PREVIA = 160;
+async function extrasDoVideo(entrada, pasta, arquivo, m, duracao, hdr) {
+  const ff = carregar().ffmpegPath;
+  const tom = hdr ? ',' + TONEMAP : '';
+  const extras = {};
+  const capa = path.join(pasta, `${arquivo}.capa.jpg`);
+  if (!fs.existsSync(capa)) {
+    await rodar(ff, ['-y', '-ss', String(Math.min(1, duracao * 0.1)), '-i', entrada, '-an', '-frames:v', '1', '-vf', `scale=-2:240${tom}`, '-q:v', '4', capa], { baixa: true });
+  }
+  if (fs.existsSync(capa)) extras.capa = capa;
+  if (m.temAudio) {
+    const onda = path.join(pasta, `${arquivo}.onda.png`);
+    if (!fs.existsSync(onda)) {
+      const largura = Math.min(8000, Math.max(200, Math.round(duracao * 30)));
+      await rodar(ff, ['-y', '-vn', '-i', entrada, '-filter_complex', `aformat=channel_layouts=mono,showwavespic=s=${largura}x48:colors=#7fb4f0`, '-frames:v', '1', onda], { baixa: true });
+    }
+    if (fs.existsSync(onda)) extras.onda = onda;
+  }
+  const quadros = Math.max(8, Math.min(40, Math.ceil(duracao * 2)));
+  const larguraPrevia = Math.round((ALTURA_PREVIA * ((m.largura ?? 16) / (m.altura ?? 9))) / 2) * 2;
+  const previa = path.join(pasta, `${arquivo}.previa.jpg`);
+  for (const rapido of [['-skip_frame', 'nokey'], []]) {
+    if (fs.existsSync(previa)) break;
+    await rodar(ff, [
+      '-y', ...rapido, '-threads', '2', '-i', entrada, '-an',
+      '-vf', `fps=${quadros}/${duracao.toFixed(3)},scale=${larguraPrevia}:${ALTURA_PREVIA}${tom},tile=${quadros}x1`,
+      '-frames:v', '1', '-q:v', '5', previa,
+    ], { baixa: true });
+  }
+  if (fs.existsSync(previa)) extras.previa = { arquivo: previa, quadros, largura: larguraPrevia, altura: ALTURA_PREVIA };
+  return extras;
+}
+
 // Gera (uma vez) a tira de miniaturas do vídeo ou a forma de onda do áudio.
-export async function midiaDoArquivo(id, arquivo) {
+// extras: false devolve só o que a timeline precisa (tira e onda); a capa e a folha de quadros vêm num segundo pedido.
+export async function midiaDoArquivo(id, arquivo, { extras: comExtras = true } = {}) {
   const p = lerProjeto(id);
   const entrada = path.join(caminhoAssets(id), arquivo);
   // Miniaturas e formas de onda são do arquivo, não da timeline: valem para o projeto todo.
@@ -422,7 +487,8 @@ export async function midiaDoArquivo(id, arquivo) {
     const pronta = precisa ? proxyPronto(id, precisa) : null;
     const proxy = pronta;
     base.precisaProxy = !!precisa && !pronta;
-    return fs.existsSync(saida) ? { ...base, proxy, tira: saida, passo, larguraQuadro, altura, quadros } : { ...base, proxy };
+    const extras = comExtras ? await extrasDoVideo(entrada, pasta, arquivo, m, duracao, precisa?.hdr) : {};
+    return fs.existsSync(saida) ? { ...base, ...extras, proxy, tira: saida, passo, larguraQuadro, altura, quadros } : { ...base, ...extras, proxy };
   }
   if (m?.tipo === 'audio' && duracao > 0) {
     const saida = path.join(pasta, `${arquivo}.onda.png`);
