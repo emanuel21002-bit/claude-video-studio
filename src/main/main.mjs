@@ -201,11 +201,23 @@ function turnoClaude(id, mensagem) {
 
 // ---------- fila de montagem ----------
 
-// Os vídeos são montados um de cada vez: GPU de 4 GB, limite de uso do Claude e o Whisper não aguentam vários juntos.
+// Por padrão o primeiro vídeo de um lote é montado sozinho e os outros juntos depois dele. O render segue em fila única (GPU de 4 GB).
 const fila = [];
-let filaAtiva = false;
-let preparando = null;
+const ativos = new Set(); // vídeos sendo montados agora
+const preparando = new Set(); // ativos que ainda estão na preparação (transcrição), antes de o Claude começar
 const desistidos = new Set();
+
+// Modos (Configurações > Montagem do lote): sequencial, depois-da-primeira (padrão) ou todos.
+// Em "depois-da-primeira" o primeiro vídeo do lote roda sozinho e os outros, que leem o visual dele, rodam juntos depois.
+function podeComecar(id) {
+  const modo = carregar().loteModo ?? 'depois-da-primeira';
+  if (modo === 'sequencial') return ativos.size === 0;
+  if (ativos.size >= Math.max(1, Number(carregar().loteMaximo) || 3)) return false;
+  if (modo === 'todos') return true;
+  const ref = lerProjeto(id).pendente?.referencia;
+  if (!ref) return ativos.size === 0;
+  return !fila.includes(ref) && !ativos.has(ref);
+}
 
 function entrarNaFila(id) {
   fila.push(id);
@@ -213,31 +225,46 @@ function entrarNaFila(id) {
   rodarFila();
 }
 
-async function rodarFila() {
-  if (filaAtiva) return;
-  filaAtiva = true;
-  while (fila.length) {
-    const id = fila.shift();
-    try {
-      await montarProjeto(id);
-    } catch (e) {
-      registrarChat(id, { de: 'erro', texto: e.message });
-      enviar('agente', { id, tipo: 'erro', texto: e.message });
-      enviar('agente', { id, tipo: 'parado' });
+function rodarFila() {
+  for (let i = 0; i < fila.length; ) {
+    const id = fila[i];
+    if (!podeComecar(id)) {
+      i++;
+      continue;
     }
+    fila.splice(i, 1);
+    ativos.add(id);
+    montarProjeto(id)
+      .catch((e) => {
+        registrarChat(id, { de: 'erro', texto: e.message });
+        enviar('agente', { id, tipo: 'erro', texto: e.message });
+        enviar('agente', { id, tipo: 'parado' });
+      })
+      .finally(() => {
+        ativos.delete(id);
+        preparando.delete(id);
+        rodarFila();
+      });
   }
-  filaAtiva = false;
+}
+
+// O Whisper usa o processador inteiro: transcrições de vídeos que rodam juntos entram numa fila só.
+let cadeiaWhisper = Promise.resolve();
+function comWhisper(fn) {
+  const r = cadeiaWhisper.then(fn, fn);
+  cadeiaWhisper = r.catch(() => {});
+  return r;
 }
 
 async function montarProjeto(id) {
   const projeto = lerProjeto(id);
   const pendente = projeto.pendente ?? {};
-  preparando = id;
+  preparando.add(id);
   enviar('agente', { id, tipo: 'inicio' });
   let transcricao = null;
   if ((projeto.narracao || projeto.narradoPor) && whisperDisponivel()) {
     try {
-      transcricao = await transcrever(projeto, (l) => enviar('agente', { id, tipo: 'preparo', texto: l }));
+      transcricao = await comWhisper(() => transcrever(projeto, (l) => enviar('agente', { id, tipo: 'preparo', texto: l })));
     } catch (e) {
       registrarChat(id, { de: 'erro', texto: 'Não consegui transcrever: ' + e.message.split('\n')[0] });
       enviar('agente', { id, tipo: 'erro', texto: 'Não consegui transcrever: ' + e.message.split('\n')[0] });
@@ -251,7 +278,7 @@ async function montarProjeto(id) {
       continue;
     }
     try {
-      const r = await transcreverArquivo(path.join(caminhoProjeto(id), 'instrucoes', a.arquivo), (l) => enviar('agente', { id, tipo: 'preparo', texto: 'Áudio de referência: ' + l }));
+      const r = await comWhisper(() => transcreverArquivo(path.join(caminhoProjeto(id), 'instrucoes', a.arquivo), (l) => enviar('agente', { id, tipo: 'preparo', texto: 'Áudio de referência: ' + l })));
       instrucoes.push({ arquivo: a.arquivo, texto: r.segmentos.map((s) => s.texto).join(' ') });
     } catch (e) {
       instrucoes.push({ arquivo: a.arquivo, texto: null });
@@ -259,7 +286,7 @@ async function montarProjeto(id) {
     }
   }
   escreverBriefing(projeto, transcricao, instrucoes);
-  preparando = null;
+  preparando.delete(id);
   if (desistidos.delete(id)) {
     enviar('agente', { id, tipo: 'parado' });
     return;
@@ -268,7 +295,7 @@ async function montarProjeto(id) {
   delete atual.pendente;
   gravarProjeto(atual);
   registrarChat(id, { de: 'usuario', texto: 'Monte o vídeo a partir do briefing.' });
-  await turnoClaude(id, primeiraMensagem(atual, pendente.salvarEstilo, pendente.referencia));
+  await turnoClaude(id, primeiraMensagem(atual, pendente.salvarEstilo, (carregar().loteModo ?? 'depois-da-primeira') === 'todos' ? null : pendente.referencia));
 }
 
 // Um projeto só, com os materiais uma vez; uma timeline por narração (sem narração ou só motion, uma timeline).
@@ -312,7 +339,7 @@ ipcMain.handle('projeto:criar', async (_e, dados) => {
 });
 
 // Timelines dentro de um projeto, sem o Claude e sem copiar materiais.
-const emUso = (id) => ocupado(id) || fila.includes(id) || preparando === id || rendersManuais.has(id);
+const emUso = (id) => ocupado(id) || fila.includes(id) || preparando.has(id) || rendersManuais.has(id);
 
 ipcMain.handle('timeline:nova', (_e, id) => timelineEmBranco(id));
 ipcMain.handle('timeline:duplicar', (_e, id) => duplicarTimeline(id));
@@ -323,7 +350,7 @@ ipcMain.handle('timeline:excluir', (_e, id) => {
   excluirTimeline(id);
 });
 
-ipcMain.handle('fila:pendentes', () => listarProjetos().filter((p) => p.pendente && !fila.includes(p.id) && preparando !== p.id).map((p) => p.id));
+ipcMain.handle('fila:pendentes', () => listarProjetos().filter((p) => p.pendente && !fila.includes(p.id) && !preparando.has(p.id) && !ativos.has(p.id)).map((p) => p.id));
 ipcMain.handle('fila:retomar', (_e, ids) => ids.forEach(entrarNaFila));
 ipcMain.handle('fila:descartar', (_e, ids) => {
   for (const id of ids) {
@@ -348,7 +375,7 @@ ipcMain.handle('chat:cancelar', (_e, id) => {
     enviar('agente', { id, tipo: 'parado' });
     return;
   }
-  if (preparando === id) desistidos.add(id);
+  if (preparando.has(id)) desistidos.add(id);
   cancelar(id);
   rendersManuais.get(id)?.abort();
 });

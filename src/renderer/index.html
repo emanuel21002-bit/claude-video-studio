@@ -495,6 +495,14 @@
         <label>Chave de API da Anthropic (opcional — se vazio, usa o login da sua conta Claude)
           <input id="cfg-apikey" type="password" placeholder="sk-ant-…" />
         </label>
+        <label>Montagem das timelines de um lote
+          <select id="cfg-lote">
+            <option value="depois-da-primeira">A primeira sozinha, as outras juntas depois (recomendado)</option>
+            <option value="sequencial">Uma de cada vez (mais lento, gasto distribuído)</option>
+            <option value="todos">Todas ao mesmo tempo (o visual pode divergir)</option>
+          </select>
+        </label>
+        <label>Máximo de timelines montadas juntas <input id="cfg-lote-max" type="number" min="1" max="6" /></label>
         <label>Pasta do workspace <input id="cfg-workspace" /></label>
         <label>Pasta do whisper.cpp <input id="cfg-whisper" /></label>
         <label>Modelo do Whisper <input id="cfg-whisper-modelo" /></label>

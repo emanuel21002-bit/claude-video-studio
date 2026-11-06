@@ -1666,6 +1666,8 @@ const CAMPOS = {
   'cfg-modelo': 'modeloClaude',
   'cfg-esforco': 'esforcoClaude',
   'cfg-apikey': 'apiKey',
+  'cfg-lote': 'loteModo',
+  'cfg-lote-max': 'loteMaximo',
   'cfg-workspace': 'workspaceDir',
   'cfg-whisper': 'whisperDir',
   'cfg-whisper-modelo': 'whisperModelo',

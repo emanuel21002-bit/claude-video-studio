@@ -21,6 +21,8 @@ export const PADRAO = {
   esforcoClaude: 'high', // low | medium | high | xhigh
   apiKey: '',
   renderModo: 'gpu', // gpu | cpu
+  loteModo: 'depois-da-primeira', // sequencial | depois-da-primeira | todos: como o Claude monta as timelines de um lote
+  loteMaximo: 3, // quantas timelines o Claude monta ao mesmo tempo
   renderMotor: 'filmcraft', // filmcraft | remotion
   renderFormato: 'mp4', // mp4 | mov
   renderResolucao: 0, // lado menor em pixels (720, 1080, 1440, 2160); 0 = a resolução do projeto
