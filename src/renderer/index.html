@@ -12,7 +12,15 @@
   </head>
   <body>
     <header class="topo">
-      <div class="marca"><span class="logo">▶</span> Editor Jaborizador da Silva</div>
+      <div class="topo-esq">
+        <button id="btn-home" class="btn-home" title="Início"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5.5v-6h-5v6H4a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></button>
+        <nav id="abas-app" class="abas-app">
+          <button data-aba-app="inicio">Início</button>
+          <button data-aba-app="transcode">Converter vídeos</button>
+          <button data-aba-app="decupar">Decupar áudios</button>
+        </nav>
+      </div>
+      <div id="topo-titulo" class="topo-titulo">Editor Jaborizador da Silva</div>
       <div class="topo-dir">
         <button id="pill-claude" class="pill" title="Status do Claude">Claude: verificando…</button>
         <button id="btn-config" class="icone" title="Configurações">⚙</button>
@@ -20,19 +28,48 @@
     </header>
 
     <div class="corpo">
-      <aside class="lateral">
-        <button id="btn-novo" class="primario largo">+ Novo projeto</button>
-        <button id="btn-transcode" class="largo ferramenta">⇄ Converter vídeos</button>
-        <button id="btn-decupar" class="largo ferramenta">✂ Decupar áudios</button>
-        <div id="bloco-rascunhos" hidden>
-          <h3>Pré-projetos</h3>
-          <ul id="lista-rascunhos" class="lista-projetos lista-rascunhos"></ul>
-        </div>
-        <h3>Projetos</h3>
-        <ul id="lista-projetos" class="lista-projetos"></ul>
-      </aside>
-
       <main id="conteudo">
+        <!-- Início: criar, continuar e abrir projetos -->
+        <section id="v-inicio" class="vista inicio">
+          <h1>Início</h1>
+          <p class="sub">Crie um projeto novo, continue um pré-projeto ou abra um projeto. Solte vídeos, fotos ou pastas em qualquer lugar desta tela para começar um projeto com eles.</p>
+          <div class="cartoes">
+            <button id="btn-novo" class="cartao">
+              <span class="cartao-icone">＋</span>
+              <strong>Novo projeto</strong>
+              <span>Materiais, narração e estilo: o Claude monta o vídeo</span>
+            </button>
+            <button id="btn-novo-motion" class="cartao">
+              <span class="cartao-icone">✦</span>
+              <strong>Só motion</strong>
+              <span>Sem materiais nem áudio: tudo em animação</span>
+            </button>
+            <button id="btn-transcode" class="cartao">
+              <span class="cartao-icone">⇄</span>
+              <strong>Converter vídeos</strong>
+              <span>H.264, H.265, resolução, GPU ou CPU</span>
+            </button>
+            <button id="btn-decupar" class="cartao">
+              <span class="cartao-icone">✂</span>
+              <strong>Decupar áudios</strong>
+              <span>Corta as pausas e sobrepõe as emendas</span>
+            </button>
+          </div>
+          <div class="inicio-colunas">
+            <div class="inicio-col" id="bloco-rascunhos" hidden>
+              <h3>Pré-projetos</h3>
+              <ul id="lista-rascunhos" class="lista-projetos lista-rascunhos"></ul>
+            </div>
+            <div class="inicio-col inicio-projetos">
+              <div class="inicio-col-cab">
+                <h3>Projetos</h3>
+                <input id="busca-projetos" type="search" placeholder="Buscar projeto" />
+              </div>
+              <ul id="lista-projetos" class="lista-projetos"></ul>
+            </div>
+          </div>
+        </section>
+
         <!-- Preparação -->
         <section id="v-setup" class="vista">
           <h1>Vamos preparar o estúdio</h1>

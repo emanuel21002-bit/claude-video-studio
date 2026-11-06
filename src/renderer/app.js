@@ -31,6 +31,7 @@ function mostrarVista(nome) {
   if (estado.vista === 'wizard' && nome !== 'wizard') salvarRascunhoAgora();
   estado.vista = nome;
   $$('.vista').forEach((v) => v.classList.toggle('ativa', v.id === 'v-' + nome));
+  atualizarTopo();
 }
 
 // ---------- segmentados ----------
@@ -155,8 +156,11 @@ async function carregarProjetos() {
   estado.pastasAbertas ??= new Set();
   const ul = $('#lista-projetos');
   ul.innerHTML = '';
-  if (!lista.length) ul.innerHTML = '<li class="p-meta">Nenhum vídeo ainda.</li>';
-  for (const f of pastasDe(lista)) {
+  if (!lista.length) ul.innerHTML = '<li class="p-meta">Nenhum projeto ainda. Clique em Novo projeto para começar.</li>';
+  const busca = sem($('#busca-projetos')?.value ?? '');
+  const pastas = pastasDe(lista).filter((f) => !busca || sem(f.nome).includes(busca) || f.timelines.some((p) => sem(p.nome).includes(busca)));
+  if (lista.length && !pastas.length) ul.innerHTML = '<li class="p-meta">Nenhum projeto com esse nome.</li>';
+  for (const f of pastas) {
     const ativa = f.timelines.some((p) => p.id === estado.projetoId);
     const aberta = estado.pastasAbertas.has(f.id);
     const primeiro = f.timelines[0];
@@ -173,14 +177,15 @@ async function carregarProjetos() {
       [`${n} timeline${n > 1 ? 's' : ''}`, primeiro.engine === 'remotion' ? 'Remotion' : 'HyperFrames', primeiro.formato, new Date(primeiro.criadoEm).toLocaleDateString('pt-BR'), situacoes.length ? `${situacoes.length > 1 ? situacoes.length + ' ' : ''}${situacoes[0]}` : '']
         .filter(Boolean)
         .join(' · ');
-    cab.onclick = () => {
-      if (n === 1) return abrirProjeto(primeiro.id);
+    li.querySelector('.seta').title = n > 1 ? 'Mostrar as timelines' : '';
+    li.querySelector('.seta').onclick = (ev) => {
+      if (n < 2) return;
+      ev.stopPropagation();
       if (aberta) estado.pastasAbertas.delete(f.id);
       else estado.pastasAbertas.add(f.id);
-      // Ao abrir uma pasta sem nenhuma timeline aberta, abre a primeira.
-      if (estado.pastasAbertas.has(f.id) && !ativa) abrirProjeto(primeiro.id);
-      else carregarProjetos();
+      carregarProjetos();
     };
+    cab.onclick = () => abrirProjeto(primeiro.id);
     if (n > 1 && aberta) {
       const itens = document.createElement('div');
       itens.className = 'pasta-itens';
@@ -354,6 +359,55 @@ function definirSoMotion(sim) {
   $('#campo-duracao').hidden = !sim;
   $('#rotulo-detalhes').textContent = sim ? 'O que o vídeo mostra' : 'Detalhes do estilo (opcional)';
   if (estado.catalogo) escolherEstilo(sim ? 'minimalista' : estado.estiloId);
+}
+
+// ---------- cabeçalho e início (como no Filmcraft) ----------
+
+// Busca sem acento nem maiúscula.
+const sem = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+// Dentro de um projeto o cabeçalho mostra só a casinha e o nome dele; fora, as abas do app.
+function atualizarTopo() {
+  const v = estado.vista;
+  const noProjeto = v === 'editor';
+  document.body.classList.toggle('no-projeto', noProjeto);
+  $('#abas-app').hidden = noProjeto;
+  const aba = v === 'transcode' ? 'transcode' : v === 'decupar' ? 'decupar' : 'inicio';
+  $$('#abas-app button').forEach((b) => b.classList.toggle('ativo', b.dataset.abaApp === aba));
+  if (!noProjeto) $('#topo-titulo').textContent = v === 'wizard' ? 'Novo projeto' : 'Editor Jaborizador da Silva';
+}
+
+function irParaInicio() {
+  TL.fechar();
+  estado.projetoId = null;
+  if (!estado.pronto) {
+    renderChecklist();
+    mostrarVista('setup');
+    return;
+  }
+  mostrarVista('inicio');
+  carregarProjetos();
+  renderRascunhos();
+}
+
+function ligarInicio() {
+  $('#btn-home').onclick = irParaInicio;
+  $$('#abas-app button').forEach((b) => {
+    b.onclick = () => (b.dataset.abaApp === 'transcode' ? abrirTranscode() : b.dataset.abaApp === 'decupar' ? abrirDecupar() : irParaInicio());
+  });
+  $('#btn-novo-motion').onclick = () => {
+    novoVideo();
+    if (estado.vista !== 'wizard') return;
+    definirSoMotion(true);
+    irPasso(3);
+  };
+  $('#busca-projetos').oninput = () => carregarProjetos();
+  // Soltar arquivos no início começa um projeto novo com eles.
+  areaDeSoltar($('#v-inicio'), (caminhos) => {
+    if (!caminhos.length) return;
+    novoVideo();
+    if (estado.vista === 'wizard') adicionarMateriais(caminhos);
+  });
 }
 
 // ---------- pré-projetos (rascunhos da criação) ----------
@@ -909,6 +963,7 @@ async function abrirProjeto(id) {
   const p = await api.projeto(id);
   (estado.pastasAbertas ??= new Set()).add(p.grupo?.id ?? p.id);
   mostrarVista('editor');
+  $('#topo-titulo').textContent = p.grupo?.nome ?? p.nome;
   await TL.fechar();
   $('#ed-nome').textContent = p.nome;
   $('#ed-info').textContent = `${p.estiloNome} · ${p.engine === 'remotion' ? 'Remotion' : 'HyperFrames'} · ${p.largura}x${p.altura}`;
@@ -1762,7 +1817,7 @@ async function iniciar() {
   }
   renderRascunhos();
   if (estado.projetoId) abrirProjeto(estado.projetoId);
-  else novoVideo();
+  else if (estado.vista !== 'decupar') irParaInicio();
   oferecerFilaInterrompida();
 }
 
@@ -1779,6 +1834,7 @@ function ligar() {
   renderEstilosUmaVez();
   ligarTranscode();
   ligarDecupar();
+  ligarInicio();
   $('#chat-esforco').onchange = async (e) => {
     estado.config = await api.salvarConfig({ esforcoClaude: e.target.value });
     preencherEsforcos();

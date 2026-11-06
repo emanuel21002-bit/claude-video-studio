@@ -41,7 +41,7 @@ function criarJanela() {
     height: 900,
     minWidth: 1100,
     minHeight: 700,
-    backgroundColor: '#0f1013',
+    backgroundColor: '#1d1d1d',
     title: 'Editor Jaborizador da Silva',
     icon: path.join(aqui, '..', '..', 'build', 'icon.png'),
     autoHideMenuBar: true,
@@ -597,7 +597,7 @@ ipcMain.handle('decupar:conferir', async (_e, { arquivos, roteiro }) => {
 async function reorganizarProjetos() {
   const { ws } = dirs();
   if (!ws || !haProjetosAntigos(ws)) return;
-  const aviso = new BrowserWindow({ width: 460, height: 130, frame: false, resizable: false, backgroundColor: '#0f1013', show: true });
+  const aviso = new BrowserWindow({ width: 460, height: 130, frame: false, resizable: false, backgroundColor: '#1d1d1d', show: true });
   aviso.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent('<body style="font:14px sans-serif;color:#ddd;background:#0f1013;padding:30px;text-align:center">Reorganizando os projetos para o novo formato…<br><small>Só desta vez. Não feche o app.</small></body>'));
   const { erros } = await migrarProjetos(ws);
   aviso.destroy();

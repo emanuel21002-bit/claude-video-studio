@@ -619,3 +619,132 @@ body.redimensionando video, body.redimensionando .previa-host { pointer-events: 
 
 /* Seleção por retângulo na timeline */
 .tl-marquee { position: fixed; z-index: 50; pointer-events: none; border: 1px solid var(--acento-2); background: rgba(245, 184, 143, 0.16); }
+
+/* ==========================================================================
+   Tema Filmcraft: cinza neutro, bordas finas, azul de destaque, cabeçalho de 38 px
+   com a casinha à esquerda, as abas do app e o título no centro.
+   ========================================================================== */
+:root {
+  --fundo: #1d1d1d;
+  --painel: #1d1d1d;
+  --painel-2: #2c2c2c;
+  --borda: #303030;
+  --texto: #d1d1d1;
+  --fraco: #b0b0b0;
+  --apagado: #6e6e6e;
+  --acento: #2f6bdf;
+  --acento-2: #4096f3;
+  --ok: #2d9d78;
+  --erro: #dc513d;
+  --roxo: #8c96ff;
+  --madeira: #303030;
+  --campo: #0e0e0e;
+  --raio: 6px;
+}
+body { background: #000; font-size: 13px; }
+
+/* cabeçalho */
+.topo {
+  height: 38px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  padding: 0 14px;
+  background: #1d1d1d;
+  border-bottom: 1px solid #000;
+  box-shadow: none;
+}
+.topo-esq { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.btn-home { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: none; border-radius: 4px; background: transparent; color: var(--fraco); }
+.btn-home:hover:not(:disabled) { background: var(--painel-2); color: var(--texto); }
+.abas-app { display: flex; gap: 8px; }
+.abas-app button { position: relative; padding: 6px 6px; border: none; background: transparent; color: var(--fraco); font-size: 14px; border-radius: 0; }
+.abas-app button:hover:not(:disabled) { color: var(--texto); background: transparent; }
+.abas-app button.ativo { color: var(--texto); }
+.abas-app button.ativo::after { content: ""; position: absolute; left: 6px; right: 6px; bottom: -4px; height: 2px; background: var(--texto); }
+.topo-titulo { align-self: center; color: var(--texto); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 50vw; }
+.topo-dir { justify-self: end; }
+.topo .pill { padding: 3px 10px; font-size: 12px; }
+.topo #btn-config { padding: 2px 8px; border: none; background: transparent; color: var(--fraco); }
+.topo #btn-config:hover { background: var(--painel-2); color: var(--texto); }
+
+/* controles */
+button { background: #2a2a2a; border: 1px solid #3a3a3a; border-radius: 4px; color: var(--texto); }
+button:hover:not(:disabled) { background: #333; border-color: #4b4b4b; }
+button.primario { background: var(--acento); border-color: var(--acento); color: #fff; box-shadow: none; font-weight: 600; }
+button.primario:hover:not(:disabled) { background: #3f7ce8; border-color: #3f7ce8; }
+input, textarea, select { background: var(--campo); border-color: var(--borda); border-radius: 4px; }
+input:focus, textarea:focus, select:focus { outline: 1px solid #5794ec; border-color: #5794ec; }
+h1 { font-size: 22px; font-weight: 600; }
+h3 { color: var(--fraco); font-weight: 600; letter-spacing: 0.04em; }
+.segmentado { border-color: #3a3a3a; border-radius: 4px; }
+.segmentado button { background: #242424; }
+.segmentado button.ativo { background: #3a3a3a; color: var(--texto); box-shadow: inset 0 -2px 0 var(--acento-2); }
+.passos li.ativo { border-color: var(--acento-2); }
+.passos li.ativo::before { background: var(--acento); color: #fff; }
+.estilo.ativo { border-color: var(--acento-2); background: #232a38; }
+.drop { background: #181818; border-color: #3a3a3a; }
+.drop.sobre { border-color: var(--acento-2); background: #1c2433; }
+.msg.usuario { background: #23324d; }
+.msg.claude { border-left-color: var(--acento-2); }
+.aba-timeline.ativo { background: var(--acento); border-color: var(--acento); }
+.dif-texto ins { color: var(--acento-2); }
+.conf-meio { color: #f0c04f; }
+
+/* sem barra lateral: o conteúdo ocupa a janela toda */
+.corpo { background: #000; }
+main { background: var(--fundo); }
+main::before { opacity: 0.06; }
+
+/* início */
+.vista.inicio { padding: 26px 28px 40px; text-align: left; }
+.inicio h1 { margin-bottom: 6px; }
+.inicio > .sub { max-width: 820px; margin-bottom: 20px; }
+.cartoes { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 260px)); gap: 16px; }
+.cartao {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 4px;
+  height: 150px;
+  padding: 16px;
+  text-align: left;
+  border: none;
+  border-radius: 8px;
+  background: #252525;
+}
+.cartao:hover:not(:disabled) { background: var(--painel-2); border: none; }
+.cartao .cartao-icone { margin-bottom: auto; font-size: 34px; line-height: 1; color: var(--roxo); }
+.cartao strong { font-size: 14px; font-weight: 600; color: var(--texto); }
+.cartao span:last-child { font-size: 11.5px; color: var(--fraco); }
+.inicio-colunas { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(320px, 2fr); gap: 28px; margin-top: 30px; align-items: start; }
+.inicio-colunas:has(#bloco-rascunhos[hidden]) { grid-template-columns: 1fr; }
+.inicio-col h3 { margin: 0 0 10px; text-transform: none; font-size: 15px; color: var(--texto); letter-spacing: 0; }
+.inicio-col-cab { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.inicio-col-cab h3 { margin: 0; }
+#busca-projetos { width: 240px; padding: 5px 10px; }
+.inicio .lista-projetos { border-top: 1px solid var(--borda); }
+.inicio .lista-projetos > li { margin: 0; border-bottom: 1px solid var(--borda); border-radius: 0; }
+.inicio .lista-projetos > li:nth-child(even) { background: #212121; }
+.inicio .pasta-cab, .inicio .lista-rascunhos li.rascunho { border-radius: 0; padding: 9px 10px; }
+.inicio .pasta-cab:hover, .inicio .lista-rascunhos li.rascunho:hover { background: var(--painel-2); }
+.inicio .pasta-cab.ativo { outline: none; background: #2a3242; }
+.inicio .seta { cursor: pointer; }
+.inicio .lista-rascunhos li.rascunho { border-left: 3px solid var(--roxo); }
+
+/* dentro do projeto: tela cheia */
+body.no-projeto .vista.editor.ativa { height: 100%; }
+.cab-editor h2 { font-size: 15px; font-weight: 600; }
+
+/* cores dos itens da timeline como no Filmcraft */
+.tl-item { border-color: rgba(255, 255, 255, 0.12); }
+.item-video { background: #2b5277; }
+.item-imagem { background: #3d4f8a; }
+.item-texto { background: #8b1e3f; }
+.item-legenda { background: #5a3a8a; }
+.item-bloco { background: #7a2348; }
+.item-audio { background: #24537e; }
+.tl-cursor, .tl-cursor::before { background: #5895ec; border-top-color: #5895ec; }
+.tl-cursor::before { background: transparent; }
+.cartao span:last-child { min-height: 2.7em; }
+.cab-editor .linha-botoes button { white-space: nowrap; padding: 5px 12px; }
