@@ -1,6 +1,6 @@
-# Raio Jaborizador de videos
+# MovAi
 
-**Editor Jaborizador da Silva** — app de desktop (Electron) que edita vídeos sozinho com o Claude, usando Remotion ou HyperFrames, com conversor de vídeo próprio (H.264, H.265, AV1 e outros, em CPU ou placa de vídeo).
+**MovAi** — app de desktop (Electron) que edita vídeos sozinho com o Claude, usando Remotion ou HyperFrames, com conversor de vídeo próprio (H.264, H.265, AV1 e outros, em CPU ou placa de vídeo).
 
 📖 **Primeira vez aqui? Siga o [GUIA.md](GUIA.md)**: tudo o que precisa ser instalado e o passo a passo de uso.
 

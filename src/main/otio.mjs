@@ -339,7 +339,7 @@ export function paraOtio(t, projeto, { assets, camada, hdr = false } = {}) {
   return {
     otio: {
       OTIO_SCHEMA: 'Timeline.1',
-      name: projeto.nome ?? 'Editor Jaborizador da Silva',
+      name: projeto.nome ?? 'MovAi',
       global_start_time: null,
       metadata: { filmcraft: { settings: configuracao(t, hdr), start_timecode: 0, master_volume_db: 0, master_effects: [] } },
       tracks: { OTIO_SCHEMA: 'Stack.1', name: 'tracks', children: [...videos, ...audios], effects: [], markers: [], enabled: true, source_range: null, metadata: {} },

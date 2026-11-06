@@ -65,7 +65,7 @@ estilo: fonte (Montserrat|Inter|Poppins|Roboto|Anton|Bebas Neue|Oswald|Playfair 
 function promptSistema(p) {
   const rel = relTimeline(p.id);
   return `
-Você está dentro do Editor Jaborizador da Silva, um app de edição automática de vídeo. Você é o editor: monta, ajusta e exporta o vídeo do usuário.
+Você está dentro do MovAi, um app de edição automática de vídeo. Você é o editor: monta, ajusta e exporta o vídeo do usuário.
 
 TIMELINE ATUAL: ${rel}/  (trabalhe somente dentro desta pasta)
 MATERIAIS DO PROJETO: ${relAssets(p.id)}/  (uma pasta só, compartilhada com as outras timelines do projeto. Pode acrescentar arquivos, sempre com nome novo; nunca apague nem sobrescreva os que já existem)

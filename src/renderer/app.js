@@ -374,7 +374,7 @@ function atualizarTopo() {
   $('#abas-app').hidden = noProjeto;
   const aba = v === 'transcode' ? 'transcode' : v === 'decupar' ? 'decupar' : 'inicio';
   $$('#abas-app button').forEach((b) => b.classList.toggle('ativo', b.dataset.abaApp === aba));
-  if (!noProjeto) $('#topo-titulo').textContent = v === 'wizard' ? 'Novo projeto' : 'Editor Jaborizador da Silva';
+  if (!noProjeto) $('#topo-titulo').textContent = v === 'wizard' ? 'Novo projeto' : 'MovAi';
 }
 
 function irParaInicio() {

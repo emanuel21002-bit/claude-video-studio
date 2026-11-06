@@ -42,7 +42,7 @@ function criarJanela() {
     minWidth: 1100,
     minHeight: 700,
     backgroundColor: '#1d1d1d',
-    title: 'Editor Jaborizador da Silva',
+    title: 'MovAi',
     icon: path.join(aqui, '..', '..', 'build', 'icon.png'),
     autoHideMenuBar: true,
     webPreferences: {

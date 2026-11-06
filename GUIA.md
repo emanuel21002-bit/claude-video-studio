@@ -1,6 +1,6 @@
-# Guia de instalação e uso — Raio Jaborizador de videos
+# Guia de instalação e uso — MovAi
 
-Este guia leva você do zero até o primeiro vídeo pronto. O app (**Editor Jaborizador da Silva**) é um programa de desktop para **Windows 10/11 64 bits**. Ele edita vídeos sozinho com o Claude, usando Remotion ou HyperFrames, e tem um conversor de vídeo próprio.
+Este guia leva você do zero até o primeiro vídeo pronto. O app (**MovAi**) é um programa de desktop para **Windows 10/11 64 bits**. Ele edita vídeos sozinho com o Claude, usando Remotion ou HyperFrames, e tem um conversor de vídeo próprio.
 
 ---
 
@@ -90,8 +90,8 @@ Se quiser exportar pelo Filmcraft, baixe o pacote portátil Windows x64 em <http
 Em um terminal, na pasta onde quer guardar o projeto (por exemplo `D:\Repositórios`):
 
 ```bash
-git clone https://github.com/emanuel21002-bit/Raio-Jaborizador-de-videos.git
-cd Raio-Jaborizador-de-videos
+git clone https://github.com/emanuel21002-bit/claude-video-studio.git
+cd claude-video-studio
 npm install
 ```
 

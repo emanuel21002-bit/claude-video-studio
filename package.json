@@ -24,7 +24,7 @@
   "author": "Emanuel",
   "build": {
     "appId": "com.emanuel.claudevideostudio",
-    "productName": "Editor Jaborizador da Silva",
+    "productName": "MovAi",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -53,7 +53,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Editor Jaborizador da Silva",
+      "shortcutName": "MovAi",
       "artifactName": "Claude-Video-Studio-Setup-${version}.${ext}"
     },
     "portable": {
