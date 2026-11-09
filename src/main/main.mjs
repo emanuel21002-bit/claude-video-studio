@@ -13,6 +13,7 @@ import { listarMateriais,
 } from './workspace.mjs';
 import { migrarProjetos, haProjetosAntigos, PASTA_ANTIGOS } from './migracao.mjs';
 import { decuparAudio } from './decupar.mjs';
+import { listarPacks, criarPack, atualizarPack, excluirPack, adicionarAoPack, removerDoPack, definirPacksDoProjeto, usarDoPack } from './packs.mjs';
 import { lerRoteiro, EXTENSOES_ROTEIRO } from './roteiro.mjs';
 import { conferir, trechosSemAudio } from './conferir-nucleo.mjs';
 import { whisperDisponivel, transcrever, transcreverArquivo } from './transcricao.mjs';
@@ -486,6 +487,17 @@ ipcMain.handle('transcode:iniciar', async (_e, { arquivos, formato, modo, pastaS
 });
 
 ipcMain.handle('transcode:cancelar', () => conversaoAtual?.abort());
+
+// ---------- packs de edição ----------
+
+ipcMain.handle('packs:listar', () => listarPacks());
+ipcMain.handle('packs:criar', (_e, nome) => criarPack(nome));
+ipcMain.handle('packs:atualizar', (_e, { id, ...campos }) => atualizarPack(id, campos));
+ipcMain.handle('packs:excluir', (_e, id) => excluirPack(id));
+ipcMain.handle('packs:adicionar', (_e, { id, caminhos }) => adicionarAoPack(id, caminhos, (p) => enviar('packs:progresso', p)));
+ipcMain.handle('packs:remover', (_e, { id, arquivos }) => removerDoPack(id, arquivos));
+ipcMain.handle('packs:projeto', (_e, { id, packs }) => definirPacksDoProjeto(id, packs));
+ipcMain.handle('packs:usar', (_e, { id, pack, arquivos }) => usarDoPack(id, pack, arquivos));
 
 // ---------- decupagem de narrações ----------
 

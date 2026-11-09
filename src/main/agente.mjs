@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { carregar } from './settings.mjs';
 import { dirs, lerProjeto, gravarProjeto, hyperframesBin, relTimeline, relAssets } from './workspace.mjs';
 import { renderizar } from './render.mjs';
+import { resumoPacks, textoDaLista, usarDoPack, permitido } from './packs.mjs';
 import { folhaDeQuadros, folhaDeMateriais, folhaDeReferencia, resumoTimeline, editarTimeline, resumirErro } from './ferramentas.mjs';
 const imagem = (arquivo) => ({ type: 'image', data: fs.readFileSync(arquivo).toString('base64'), mimeType: 'image/jpeg' });
 import { salvarEstilo } from './presets.mjs';
@@ -84,7 +85,7 @@ FERRAMENTAS DO APP:
 ${p.referencias?.length ? '- mcp__studio__ver_referencia — estuda o material de referência que o usuário enviou: quadros com o segundo, duração e instantes dos cortes. Chame uma vez antes de montar (de novo só com momentos específicos) e reproduza a linguagem de edição dela (ritmo, legendas, transições, cores, efeitos), nunca o conteúdo. Ao salvar o estilo, inclua na receita o que aprendeu da referência.\n' : ''}
 ${p.timeline ? '- mcp__studio__resumo_timeline — a timeline sem as palavras das legendas; com ids, os itens completos.\n- mcp__studio__editar_timeline — altera, adiciona ou remove itens pelo id.\n' : ''}${p.timeline ? '- mcp__studio__gerar_legendas — cria a trilha de legendas a partir da transcrição, seguindo os pedaços de narração que estão na timeline.\n' : ''}- mcp__studio__salvar_estilo — guarda o estilo deste vídeo como preset reutilizável no app. Use quando o usuário pedir para salvar o estilo. Escreva as instruções como receita completa e concreta (fontes, tamanhos, posições, cores em hex, ritmo de cortes, transições, efeitos), para outro vídeo sair igual sem ver este código.
 
-ECONOMIA (cada imagem e cada arquivo lido é reenviado em todos os turnos; siga sempre):
+${resumoPacks(p) ? resumoPacks(p) + '\n\n' : ''}ECONOMIA (cada imagem e cada arquivo lido é reenviado em todos os turnos; siga sempre):
 - Conversão de vídeo (codec, formato, compressão) não é com você: o app cuida dos materiais (a cópia leve da prévia é feita por ele) e tem um conversor próprio. Nunca rode ffmpeg nem HandBrake; se um material não abrir, avise o usuário.
 - Veja os clipes com mcp__studio__ver_materiais, nunca extraindo quadros com ffmpeg nem lendo imagens soltas. Só peça clipes específicos para decidir um corte difícil.
 - PARE ANTES DE CONFERIR: o usuário confere e renderiza sozinho, para poupar créditos. Não use mcp__studio__ver_quadros nem mcp__studio__renderizar por conta própria; só use se o usuário pedir explicitamente. Ao terminar a montagem, avise que está pronta para conferência.
@@ -123,6 +124,8 @@ function resumoFerramenta(nome, input = {}) {
   if (nome === 'mcp__studio__ver_quadros') return 'Conferindo quadros do vídeo';
   if (nome === 'mcp__studio__ver_materiais') return 'Vendo os materiais';
   if (nome === 'mcp__studio__ver_referencia') return 'Estudando o material de referência';
+  if (nome === 'mcp__studio__listar_pack') return 'Procurando nos packs de edição';
+  if (nome === 'mcp__studio__usar_do_pack') return 'Pegando materiais do pack';
   if (nome === 'mcp__studio__resumo_timeline') return 'Lendo a timeline';
   if (nome === 'mcp__studio__editar_timeline') return 'Editando a timeline';
   if (nome === 'mcp__studio__gerar_legendas') return 'Gerando as legendas';
@@ -173,6 +176,28 @@ export async function conversar(id, mensagem, onEvento) {
             return { content: [imagem(await folhaDeQuadros(id, segundos))] };
           } catch (e) {
             return { content: [{ type: 'text', text: resumirErro(e.message) }], isError: true };
+          }
+        },
+      ),
+      tool(
+        'listar_pack',
+        'Lista os arquivos dos packs de edição liberados neste projeto (até 60 por página). Use os filtros para gastar pouco: tipo, busca por nome ou pasta.',
+        { pack: z.string().optional(), tipo: z.enum(['video', 'imagem', 'audio']).optional(), busca: z.string().optional(), pasta: z.string().optional(), pagina: z.number().int().min(1).optional() },
+        async (args) => ({ content: [{ type: 'text', text: textoDaLista(lerProjeto(id), args) }] }),
+      ),
+      tool(
+        'usar_do_pack',
+        'Liga arquivos de um pack ao projeto, sem copiar. Devolve o nome de cada um em assets/, que é o que vai no "arquivo" da timeline. Só ligue o que for usar.',
+        { pack: z.string(), arquivos: z.array(z.string()).min(1).max(40) },
+        async ({ pack, arquivos }) => {
+          try {
+            if (!permitido(lerProjeto(id), pack)) return { content: [{ type: 'text', text: `O pack "${pack}" não está liberado para este projeto.` }], isError: true };
+            const { ligados, naoAchados } = await usarDoPack(id, pack, arquivos);
+            const linhas = ligados.map((m) => `${m.arquivo} | ${m.tipo} | ${m.tipo === 'imagem' ? '-' : `${Number(m.duracao ?? 0).toFixed(2)}s`}`);
+            if (naoAchados.length) linhas.push(`Não encontrados no pack: ${naoAchados.join(', ')}`);
+            return { content: [{ type: 'text', text: linhas.join('\n') }] };
+          } catch (e) {
+            return { content: [{ type: 'text', text: e.message }], isError: true };
           }
         },
       ),
@@ -309,7 +334,7 @@ export async function conversar(id, mensagem, onEvento) {
         permissionMode: 'dontAsk',
         allowedTools: [
           'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash', 'Skill',
-          'mcp__studio__renderizar', 'mcp__studio__ver_quadros', 'mcp__studio__ver_materiais', 'mcp__studio__ver_referencia', 'mcp__studio__resumo_timeline', 'mcp__studio__editar_timeline', 'mcp__studio__gerar_legendas', 'mcp__studio__salvar_estilo',
+          'mcp__studio__renderizar', 'mcp__studio__ver_quadros', 'mcp__studio__ver_materiais', 'mcp__studio__listar_pack', 'mcp__studio__usar_do_pack', 'mcp__studio__ver_referencia', 'mcp__studio__resumo_timeline', 'mcp__studio__editar_timeline', 'mcp__studio__gerar_legendas', 'mcp__studio__salvar_estilo',
         ],
         stderr: (d) => onEvento({ tipo: 'log', texto: d }),
       },

@@ -372,7 +372,7 @@ function atualizarTopo() {
   const noProjeto = v === 'editor';
   document.body.classList.toggle('no-projeto', noProjeto);
   $('#abas-app').hidden = noProjeto;
-  const aba = v === 'transcode' ? 'transcode' : v === 'decupar' ? 'decupar' : 'inicio';
+  const aba = ['transcode', 'decupar', 'packs'].includes(v) ? v : 'inicio';
   $$('#abas-app button').forEach((b) => b.classList.toggle('ativo', b.dataset.abaApp === aba));
   if (!noProjeto) $('#topo-titulo').textContent = v === 'wizard' ? 'Novo projeto' : 'MovAi';
 }
@@ -393,7 +393,7 @@ function irParaInicio() {
 function ligarInicio() {
   $('#btn-home').onclick = irParaInicio;
   $$('#abas-app button').forEach((b) => {
-    b.onclick = () => (b.dataset.abaApp === 'transcode' ? abrirTranscode() : b.dataset.abaApp === 'decupar' ? abrirDecupar() : irParaInicio());
+    b.onclick = () => (b.dataset.abaApp === 'transcode' ? abrirTranscode() : b.dataset.abaApp === 'decupar' ? abrirDecupar() : b.dataset.abaApp === 'packs' ? abrirPacks() : irParaInicio());
   });
   $('#btn-novo-motion').onclick = () => {
     novoVideo();
@@ -442,6 +442,7 @@ function coletarRascunho() {
     referencias: estado.referencias,
     audiosInstrucao: estado.audiosInstrucao,
     roteiros: estado.roteiros,
+    packs: estado.packs ?? null,
     semNarracao: estado.semNarracao,
     soMotion: estado.soMotion,
     estiloId: estado.estiloId,
@@ -540,6 +541,8 @@ function abrirRascunho(id) {
   estado.referencias = d.referencias ?? [];
   estado.audiosInstrucao = d.audiosInstrucao ?? [];
   estado.roteiros = d.roteiros ?? [];
+  estado.packs = d.packs ?? null;
+  renderPacksWizard();
   estado.semNarracao = !!d.semNarracao;
   $('#sem-narracao').checked = estado.semNarracao;
   $('#nome-video').value = d.nome ?? '';
@@ -587,6 +590,8 @@ function novoVideo() {
   estado.referencias = [];
   estado.audiosInstrucao = [];
   estado.roteiros = [];
+  estado.packs = null;
+  renderPacksWizard();
   renderRoteirosNovos();
   renderReferencias();
   renderAudioInstrucao();
@@ -907,6 +912,7 @@ async function criar() {
       referencias: estado.referencias,
       audiosInstrucao: estado.audiosInstrucao,
       roteiros: estado.roteiros,
+      packs: packsDoWizard(),
       narradoNoVideo: estado.narradoNoVideo,
       narracoes: estado.soMotion || estado.semNarracao ? [] : estado.narracoes.map((n) => ({ nome: n.nome, arquivos: n.arquivos })),
       duracaoMotion: estado.soMotion ? Math.max(1, Math.min(600, Number($('#duracao-motion').value) || 15)) : null,
@@ -1817,7 +1823,7 @@ async function iniciar() {
   }
   renderRascunhos();
   if (estado.projetoId) abrirProjeto(estado.projetoId);
-  else if (estado.vista !== 'decupar') irParaInicio();
+  else if (estado.vista !== 'decupar' && estado.vista !== 'packs') irParaInicio();
   oferecerFilaInterrompida();
 }
 
@@ -1835,6 +1841,7 @@ function ligar() {
   ligarTranscode();
   ligarDecupar();
   ligarInicio();
+  ligarPacks();
   $('#chat-esforco').onchange = async (e) => {
     estado.config = await api.salvarConfig({ esforcoClaude: e.target.value });
     preencherEsforcos();

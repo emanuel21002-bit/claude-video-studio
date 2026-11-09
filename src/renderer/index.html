@@ -18,6 +18,7 @@
           <button data-aba-app="inicio">Início</button>
           <button data-aba-app="transcode">Converter vídeos</button>
           <button data-aba-app="decupar">Decupar áudios</button>
+          <button data-aba-app="packs">Packs</button>
         </nav>
       </div>
       <div id="topo-titulo" class="topo-titulo">MovAi</div>
@@ -48,6 +49,11 @@
               <span class="cartao-icone">⇄</span>
               <strong>Converter vídeos</strong>
               <span>H.264, H.265, resolução, GPU ou CPU</span>
+            </button>
+            <button id="btn-packs" class="cartao">
+              <span class="cartao-icone">▦</span>
+              <strong>Packs de edição</strong>
+              <span>Seus efeitos, músicas e overlays, sem duplicar arquivos</span>
             </button>
             <button id="btn-decupar" class="cartao">
               <span class="cartao-icone">✂</span>
@@ -168,6 +174,11 @@
               <label id="campo-duracao" hidden>Duração (s)
                 <input id="duracao-motion" type="number" min="1" max="600" value="15" />
               </label>
+            </div>
+            <div class="bloco" id="bloco-packs" hidden>
+              <span>Packs de edição</span>
+              <p class="sub">O Claude pode usar os materiais dos packs marcados. Nada é copiado.</p>
+              <div id="wizard-packs" class="wizard-packs"></div>
             </div>
             <div class="bloco" id="bloco-referencia">
               <span>Material de referência (opcional)</span>
@@ -338,6 +349,45 @@
               <button id="btn-dc-cancelar" class="perigo" hidden>Cancelar</button>
               <button id="btn-dc-conferir" disabled title="Transcreve os áudios e compara com o roteiro">Conferir com o roteiro</button>
               <button id="btn-dc-iniciar" class="primario" disabled>Decupar</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Packs de edição -->
+        <section id="v-packs" class="vista inicio packs">
+          <h1>Packs de edição</h1>
+          <p class="sub">Guarde aqui os materiais que você repete nos vídeos. Eles ficam uma vez só no disco: o Claude escolhe o que precisa e o arquivo entra no projeto ligado, sem ocupar espaço de novo.</p>
+          <div class="packs-colunas">
+            <div class="packs-lateral">
+              <button id="btn-pack-novo" class="primario largo">+ Novo pack</button>
+              <ul id="lista-packs" class="lista-packs"></ul>
+              <p id="packs-vazio" class="sub">Nenhum pack ainda.</p>
+            </div>
+            <div class="packs-conteudo">
+              <p id="pack-nenhum" class="sub" hidden>Escolha um pack na lista.</p>
+              <div id="pack-detalhe" hidden>
+                <div class="pack-campos">
+                  <label>Nome <input id="pack-nome" maxlength="60" /></label>
+                  <label>Quando usar (o Claude lê isto)
+                    <textarea id="pack-descricao" rows="2" placeholder="Ex.: whoosh nas transições, caixa registradora quando falar preço"></textarea>
+                  </label>
+                </div>
+                <div id="pack-drop" class="drop compacto">
+                  <div class="drop-txt">Solte arquivos ou pastas aqui</div>
+                  <div class="linha-botoes">
+                    <button id="btn-pack-arquivos">Selecionar arquivos</button>
+                    <button id="btn-pack-pasta">Selecionar pasta</button>
+                  </div>
+                  <small id="pack-progresso" class="sub"></small>
+                </div>
+                <div id="pack-previa" class="pack-previa" hidden></div>
+                <div class="inicio-col-cab pack-cab-lista">
+                  <span id="pack-total" class="sub"></span>
+                  <input id="pack-busca" type="search" placeholder="Buscar neste pack" />
+                </div>
+                <ul id="pack-itens" class="pack-itens"></ul>
+                <div class="rodape-passo"><span></span><button id="btn-pack-excluir" class="perigo">Apagar este pack</button></div>
+              </div>
             </div>
           </div>
         </section>
@@ -549,6 +599,7 @@
 
     <script src="previas-estilo.js"></script>
     <script src="app.js"></script>
+    <script src="packs.js"></script>
     <script src="dock.js"></script>
     <script src="timeline.js"></script>
   </body>

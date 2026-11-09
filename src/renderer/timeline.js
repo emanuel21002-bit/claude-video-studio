@@ -1945,7 +1945,17 @@ const TL = (() => {
     pasta.textContent = '+ Importar pasta';
     pasta.title = 'Importa os materiais da pasta e das subpastas';
     pasta.onclick = async () => adicionarAoProjeto(await api.escolherPasta());
-    box.append(importar, pasta, blocoRoteiro());
+    const packs = document.createElement('button');
+    packs.textContent = 'Packs de edição…';
+    packs.title = 'Escolha o que o Claude pode usar e traga arquivos dos packs, sem copiar';
+    packs.onclick = () => {
+      if (s.bloqueada) return avisar('Espere o Claude terminar.');
+      abrirPacksDoProjeto(s.id, async () => {
+        await carregarMateriais();
+        carregarMidia();
+      });
+    };
+    box.append(importar, pasta, packs, blocoRoteiro());
     const cartao = (m) => {
       const card = document.createElement('div');
       card.className = 'material';

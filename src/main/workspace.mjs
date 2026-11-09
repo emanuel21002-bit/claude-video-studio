@@ -184,7 +184,7 @@ function ffprobePath() {
   return ff === 'ffmpeg' ? 'ffprobe' : path.join(path.dirname(ff), 'ffprobe.exe');
 }
 
-async function sondarCompleto(arquivo) {
+export async function sondarCompleto(arquivo) {
   let saida = '';
   await rodar(
     ffprobePath(),
@@ -205,7 +205,7 @@ async function sondarCompleto(arquivo) {
   }
 }
 
-function nomeSeguro(nome, usados) {
+export function nomeSeguro(nome, usados) {
   const ext = path.extname(nome).toLowerCase();
   let base = path
     .basename(nome, path.extname(nome))
@@ -224,7 +224,7 @@ function nomeSeguro(nome, usados) {
 // Hard link quando está no mesmo disco (instantâneo, sem ocupar espaço); senão copia.
 // No mesmo disco é um link, na hora. Em outro disco é cópia de verdade: vídeo 4K leva segundos ou minutos,
 // e copiar de forma síncrona deixaria o app inteiro em "Não respondendo". O nome final só existe com o arquivo completo.
-async function trazerArquivo(origem, destino) {
+export async function trazerArquivo(origem, destino) {
   try {
     fs.linkSync(origem, destino);
   } catch {
@@ -281,7 +281,7 @@ function gravarNoDisco(projeto) {
   }
 }
 
-const COMPARTILHADOS = ['materiais', 'referencias', 'audiosInstrucao', 'roteiros'];
+const COMPARTILHADOS = ['materiais', 'referencias', 'audiosInstrucao', 'roteiros', 'packs'];
 
 function vista(projeto, ordem) {
   const t = projeto.timelines[ordem];
@@ -459,7 +459,7 @@ export function textoDosRoteiros(id) {
     .join('\n\n');
 }
 
-export async function criarProjeto({ nome, materiais = [], pastas, referencias: refs, audiosInstrucao: audios, roteiros: arquivosRoteiro }, onLinha) {
+export async function criarProjeto({ nome, materiais = [], pastas, referencias: refs, audiosInstrucao: audios, roteiros: arquivosRoteiro, packs = [] }, onLinha) {
   const agora = new Date();
   const base = `${carimbo(agora)}-${slug(nome) || 'video'}`;
   const { projetos } = dirs();
@@ -527,6 +527,7 @@ export async function criarProjeto({ nome, materiais = [], pastas, referencias: 
     referencias,
     audiosInstrucao,
     roteiros,
+    packs,
     timelines: [],
   });
   return id;
