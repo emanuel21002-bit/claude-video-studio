@@ -401,6 +401,11 @@
                 <div id="ed-abas" class="abas-timeline-linha" hidden></div>
               </div>
               <div class="linha-botoes">
+                <div class="barra-render">
+                  <button id="btn-render" class="primario">Renderizar</button>
+                  <button id="btn-render-todos" title="Exporta, um depois do outro, todos os vídeos desta pasta" hidden>Exportar todos</button>
+                  <div class="progresso"><div id="prog-barra"></div><span id="prog-txt">Pronto</span></div>
+                </div>
                 <div class="segmentado" id="seg-player" hidden>
                   <button data-v="previa">Prévia ao vivo</button>
                   <button data-v="render">Último render</button>
@@ -421,11 +426,6 @@
                 <video id="player" controls></video>
                 <div id="player-vazio" class="player-vazio">O vídeo aparece aqui quando o primeiro render terminar.</div>
               </div>
-            <div class="barra-render">
-              <button id="btn-render" class="primario">Renderizar</button>
-              <button id="btn-render-todos" title="Exporta, um depois do outro, todos os vídeos desta pasta" hidden>Exportar todos</button>
-              <div class="progresso"><div id="prog-barra"></div><span id="prog-txt">Pronto</span></div>
-            </div>
             <details class="renders">
               <summary id="renders-resumo">Renders</summary>
               <ul id="renders-ativos" class="renders-ativos"></ul>

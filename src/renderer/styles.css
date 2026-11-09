@@ -882,3 +882,9 @@ body.dock-arrastando video, body.dock-arrastando .previa-host, body.dock-arrasta
 .dlg-packs-itens li .check { margin: 0; color: var(--texto); min-width: 0; }
 .dlg-packs-itens li small { color: var(--fraco); white-space: nowrap; }
 .dlg-packs-rodape { justify-content: space-between; align-items: center; margin-top: 12px; }
+
+/* Botões de renderizar na barra de cima da janela */
+.cab-editor .linha-botoes { align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.cab-editor .barra-render { margin: 0; flex-wrap: nowrap; gap: 8px; }
+.cab-editor .progresso { flex: none; width: 260px; min-width: 0; height: 30px; }
+.cab-editor #prog-txt { line-height: 28px; font-size: 12px; }
