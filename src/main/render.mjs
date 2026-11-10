@@ -23,7 +23,11 @@ const semCores = (texto) => texto.replace(/\x1b\[[0-9;]*m/g, '');
 // Sem nenhuma saída por este tempo, o processo travou: melhor falhar com um aviso do que ficar parado para sempre.
 const LIMITE_SEM_SAIDA = 10 * 60 * 1000;
 
+// Quanto cada etapa do render levou (em segundos): mostra onde o tempo e a CPU vão. Um render por vez, então vale um vetor só.
+let temposAtual = [];
+
 async function etapa(nome, cmd, args, { cwd, env, onEvento, sinal, peso = [0, 1], limiteSemSaida = LIMITE_SEM_SAIDA }) {
+  const inicioEtapa = Date.now();
   onEvento?.({ etapa: nome, progresso: peso[0] });
   const vigia = new AbortController();
   sinal?.addEventListener('abort', () => vigia.abort());
@@ -51,6 +55,7 @@ async function etapa(nome, cmd, args, { cwd, env, onEvento, sinal, peso = [0, 1]
   clearTimeout(timer);
   if (travou) throw new Error(`${nome} travou: nenhuma resposta por ${Math.round(limiteSemSaida / 60000)} minutos.`);
   if (sinal?.aborted) throw new Error('Render cancelado.');
+  if (r.codigo === 0) temposAtual.push([nome, Math.round((Date.now() - inicioEtapa) / 1000)]);
   if (r.codigo !== 0) throw new Error(`${nome} falhou (código ${r.codigo}):\n${semCores(r.cauda)}`);
 }
 
@@ -292,11 +297,13 @@ async function exportarPeloFilmcraft(id, saida, { modo, codec, formato, escala, 
     ...(fps && !hevc ? { frameRate: { num: fps, den: 1 } } : {}),
   };
   try {
+    const inicioCamada = Date.now();
     await prepararProjetoFilmcraft(id, projetoFc, (l) => {
       opts.onEvento?.({ log: l });
       // O app mostra se a camada de textos foi reaproveitada ou está sendo renderizada.
       if (/reaproveitando|Renderizando textos/.test(l)) opts.onEvento?.({ etapa: l.replace(/ para o Filmcraft/, '').replace(/…$/, ''), progresso: 0.05 });
     });
+    temposAtual.push(['Textos e legendas (Remotion, CPU)', Math.round((Date.now() - inicioCamada) / 1000)]);
     if (opts.sinal?.aborted) throw new Error('Render cancelado.');
     await etapa('Exportando pelo Filmcraft', cli(), [
       '--project', projetoFc, 'export', destino, '--format', codec === 'prores' ? 'prores' : 'h264', '--gpu-rendering', modo === 'gpu' ? 'auto' : 'off',
@@ -311,6 +318,7 @@ async function exportarPeloFilmcraft(id, saida, { modo, codec, formato, escala, 
 }
 
 async function executarRender(id, { modo, formato, codec, motor: motorPedido, fps, marca, pastaSaida, nome, resolucao, qualidade, semAudio }, onEvento, sinal) {
+  temposAtual = [];
   const s = carregar();
   const encoderId = await encoderGpu();
   const encoder = ENCODERS_GPU[encoderId];
@@ -465,10 +473,10 @@ async function executarRender(id, { modo, formato, codec, motor: motorPedido, fp
     await transcodificar(saida, { formato: 'mp4', modo: encoder ? 'gpu' : 'cpu', saida: preview });
   }
   const atual = lerProjeto(id);
-  atual.renders.unshift({ arquivo: saida, preview, modo, motor, formato, codec, fps: fps || projeto.fps, resolucao: escala === 1 ? null : Math.round(projeto.largura * escala) + 'x' + Math.round(projeto.altura * escala), qualidade, semAudio, data: new Date().toISOString(), segundos, impressao: marca });
+  atual.renders.unshift({ etapas: temposAtual, arquivo: saida, preview, modo, motor, formato, codec, fps: fps || projeto.fps, resolucao: escala === 1 ? null : Math.round(projeto.largura * escala) + 'x' + Math.round(projeto.altura * escala), qualidade, semAudio, data: new Date().toISOString(), segundos, impressao: marca });
   gravarProjeto(atual);
   onEvento?.({ etapa: 'Pronto', progresso: 1 });
-  return { arquivo: saida, preview, segundos };
+  return { arquivo: saida, preview, segundos, etapas: temposAtual };
 }
 
 // Extrai quadros do último render para o Claude conferir o resultado visualmente.

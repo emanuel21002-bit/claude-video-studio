@@ -417,7 +417,7 @@ ipcMain.handle('render:todos', async (_e, { ids, chave, ...opcoes }) => {
           if (e.etapa) lote({ etapa: e.etapa, progresso: e.progresso ?? 0 });
         }, controle.signal);
         enviar('agente', { id, tipo: 'render', concluido: r.preview ?? r.arquivo });
-        resultados.push({ id, nome, ok: true, arquivo: r.arquivo });
+        resultados.push({ id, nome, ok: true, arquivo: r.arquivo, etapas: r.etapas });
       } catch (e) {
         const motivo = e.message.split('\n')[0];
         enviar('agente', { id, tipo: 'render', falhou: motivo });

@@ -1245,6 +1245,9 @@ async function renderTodos() {
     const falhas = r.resultados.filter((x) => !x.ok);
     const feitos = r.resultados.length - falhas.length;
     progresso(r.cancelado ? 0 : 1, r.cancelado ? `Exportação cancelada: ${feitos} de ${r.total} prontos` : `Exportação concluída: ${feitos} de ${r.total} vídeos`);
+    // Onde o tempo foi em cada vídeo: mostra se a CPU (textos e legendas, ProRes) ou a GPU (Filmcraft, codificação) pesou mais.
+    const dur = (s) => (s >= 60 ? `${Math.floor(s / 60)}min ${String(s % 60).padStart(2, '0')}s` : `${s}s`);
+    for (const x of r.resultados) if (x.ok && x.etapas?.length) addMsg('info', `${x.nome}: ` + x.etapas.map(([n, s]) => `${n} ${dur(s)}`).join(' · '));
     for (const f of falhas) addMsg('erro', `Não exportou "${f.nome}": ${f.erro}`);
     if (ocupados) addMsg('info', `${ocupados} vídeo${ocupados > 1 ? 's' : ''} da pasta ficou de fora porque o Claude ainda está montando.`);
     if (feitos && !r.cancelado) addMsg('info', `${feitos} vídeo${feitos > 1 ? 's' : ''} exportado${feitos > 1 ? 's' : ''}, um por vez, em ${pastaSaida}.`);
