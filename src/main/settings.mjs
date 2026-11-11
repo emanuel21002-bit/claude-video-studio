@@ -24,7 +24,7 @@ export const PADRAO = {
   renderModo: 'gpu', // gpu | cpu
   loteModo: 'depois-da-primeira', // sequencial | depois-da-primeira | todos: como o Claude monta as timelines de um lote
   loteMaximo: 3, // quantas timelines o Claude monta ao mesmo tempo
-  renderMotor: 'filmcraft', // filmcraft | remotion
+  renderMotor: 'rapido', // rapido (ffmpeg direto, volta ao Filmcraft no que ele não cobre) | filmcraft | remotion
   renderFormato: 'mp4', // mp4 | mov
   renderResolucao: 0, // lado menor em pixels (720, 1080, 1440, 2160); 0 = a resolução do projeto
   renderQualidade: 'recomendado', // alta | recomendado | baixa (taxa de bits)
@@ -49,6 +49,12 @@ export function carregar() {
   // Caminhos salvos que deixaram de existir (pasta apagada, app reinstalado em outro lugar) voltam ao padrão.
   if (!fs.existsSync(path.join(atual.whisperDir, atual.whisperModelo))) Object.assign(atual, WHISPER_PADRAO);
   if (!fs.existsSync(atual.skillsOrigem)) atual.skillsOrigem = PADRAO.skillsOrigem;
+  // O modo rápido (ffmpeg direto) chegou depois: quem montava pelo Filmcraft passa para ele uma vez; ele mesmo volta
+  // ao Filmcraft no que não cobre. Escolher Filmcraft de novo depois disso fica valendo.
+  if (!atual.motorRapidoOferecido) {
+    if (atual.renderMotor === 'filmcraft') atual.renderMotor = 'rapido';
+    atual.motorRapidoOferecido = true;
+  }
   if (!atual.workspaceDir) {
     atual.workspaceDir = path.join(app.getPath('documents'), 'Claude Video Studio');
   }

@@ -62,7 +62,7 @@ async function verificarAmbiente() {
 const nomeEncoderGpu = () => ({ nvenc: 'NVENC', amf: 'AMF' })[estado.ambiente?.encoderGpu];
 
 function rotularBotoesGpu() {
-  $('#seg-motor').hidden = !estado.ambiente?.filmcraft;
+  $('#seg-motor [data-v="filmcraft"]').hidden = !estado.ambiente?.filmcraft;
   const nome = nomeEncoderGpu();
   document.querySelectorAll('#seg-modo [data-v="gpu"], #seg-tc-modo [data-v="gpu"]').forEach((b) => {
     b.textContent = nome ? `GPU (${nome})` : 'GPU';

@@ -7,6 +7,7 @@ import { dirs, caminhoTimeline, caminhoAssets, caminhoCache, relTimeline, hyperf
 import { ENCODERS_GPU, encoderGpu, infoVideo, transcodificar, TONEMAP } from './transcodificar.mjs';
 import { escreverModelo, lerTimeline, validarTimeline } from './timeline.mjs';
 import { normalizarSaida, kbpsDe, argsVideo, limparNome } from './exportacao.mjs';
+import { motivosSemFfmpeg, planoFfmpeg, prepararAuxiliares } from './exportar-ffmpeg.mjs';
 
 // Progresso vem como "123/900" (frames) ou "45%" nas linhas dos CLIs.
 function lerProgresso(linha) {
@@ -26,7 +27,7 @@ const LIMITE_SEM_SAIDA = 10 * 60 * 1000;
 // Quanto cada etapa do render levou (em segundos): mostra onde o tempo e a CPU vão. Um render por vez, então vale um vetor só.
 let temposAtual = [];
 
-async function etapa(nome, cmd, args, { cwd, env, onEvento, sinal, peso = [0, 1], limiteSemSaida = LIMITE_SEM_SAIDA }) {
+async function etapa(nome, cmd, args, { cwd, env, onEvento, sinal, peso = [0, 1], limiteSemSaida = LIMITE_SEM_SAIDA, duracao = 0 }) {
   const inicioEtapa = Date.now();
   onEvento?.({ etapa: nome, progresso: peso[0] });
   const vigia = new AbortController();
@@ -48,7 +49,8 @@ async function etapa(nome, cmd, args, { cwd, env, onEvento, sinal, peso = [0, 1]
     onLinha: (l) => {
       rearmar();
       onEvento?.({ log: l });
-      const p = lerProgresso(l);
+      const tempo = duracao > 0 && l.match(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/);
+      const p = tempo ? Math.min(1, (Number(tempo[1]) * 3600 + Number(tempo[2]) * 60 + Number(tempo[3])) / duracao) : lerProgresso(l);
       if (p != null) onEvento?.({ etapa: nome, progresso: peso[0] + p * (peso[1] - peso[0]) });
     },
   });
@@ -286,6 +288,51 @@ export function renderizar(id, opcoes = {}, onEvento, sinal) {
 // O CLI só imprime o resultado no fim: em vídeos longos, ficar sem saída não quer dizer que travou.
 const LIMITE_FILMCRAFT = 60 * 60 * 1000;
 
+// Motor rápido: um ffmpeg monta o vídeo todo (ver exportar-ffmpeg.mjs), com a camada de textos do Remotion por cima,
+// e já sai no codec final. Na placa de vídeo; se ela recusar, na CPU.
+async function exportarPeloFfmpeg(id, saida, { modo, codec, escala, semAudio, fps, kbps, tmp, encoderId }, opts) {
+  const { renderizarCamada } = await import('./filmcraft.mjs');
+  const s = carregar();
+  const t = lerTimeline(id);
+  const assets = caminhoAssets(id);
+  const infos = {};
+  for (const a of new Set(t.trilhas.flatMap((tr) => tr.itens).map((i) => i.arquivo).filter(Boolean))) {
+    if (['video', 'imagem'].includes(tipoDe(a)) || t.trilhas.some((tr) => tr.itens.some((i) => i.arquivo === a && i.tipo === 'video'))) infos[a] = await infoVideo(path.join(assets, a));
+  }
+  opts.onEvento?.({ etapa: 'Preparando textos e legendas', progresso: 0.02 });
+  const inicioCamada = Date.now();
+  const camada = await renderizarCamada(id, t, (l) => {
+    opts.onEvento?.({ log: l });
+    if (/reaproveitando|Renderizando textos/.test(l)) opts.onEvento?.({ etapa: l.replace(/ para o Filmcraft/, '').replace(/…$/, ''), progresso: 0.05 });
+  });
+  if (camada) temposAtual.push(['Textos e legendas (Remotion)', Math.round((Date.now() - inicioCamada) / 1000)]);
+  if (opts.sinal?.aborted) throw new Error('Render cancelado.');
+  const trab = path.join(tmp, 'ffmpeg');
+  fs.mkdirSync(trab, { recursive: true });
+  const plano = planoFfmpeg(t, { infos, assets, camada, tonemap: TONEMAP, escala, fpsSaida: fps });
+  await prepararAuxiliares(plano.auxiliares, trab, (args) => rodar(s.ffmpegPath, args, { cwd: trab }).then((r) => {
+    if (r.codigo !== 0) throw new Error(r.cauda);
+  }));
+  fs.writeFileSync(path.join(trab, 'grafo.txt'), plano.grafo);
+  const args = (enc) => [
+    '-y', '-hide_banner', '-stats', ...plano.entradas.flat(), '-filter_complex_threads', '12', '-/filter_complex', 'grafo.txt',
+    '-map', '[vout]', ...(plano.temAudio && !semAudio ? ['-map', '[aout]', '-c:a', 'aac', '-b:a', '320k'] : ['-an']),
+    ...argsVideo({ codec, encoderId: enc, kbps }), '-movflags', '+faststart', saida,
+  ];
+  const o = { ...opts, cwd: trab, peso: [0.3, 1], duracao: plano.duracao };
+  const naGpu = modo === 'gpu' && codec !== 'prores' && ENCODERS_GPU[encoderId];
+  if (naGpu) {
+    try {
+      await etapa(`Montando o vídeo (ffmpeg + ${ENCODERS_GPU[encoderId].nome})`, s.ffmpegPath, args(encoderId), o);
+      return;
+    } catch (e) {
+      if (opts.sinal?.aborted) throw e;
+      opts.onEvento?.({ log: `${ENCODERS_GPU[encoderId].nome} falhou, montando na CPU: ${semCores(e.message).slice(0, 200)}` });
+    }
+  }
+  await etapa('Montando o vídeo (ffmpeg, CPU)', s.ffmpegPath, args(null), o);
+}
+
 // Composição e decodificação na GPU, em um passo só; textos, legendas e blocos vêm do Remotion como camada.
 async function exportarPeloFilmcraft(id, saida, { modo, codec, formato, escala, semAudio, fps, kbps, tmp, codificarFinal }, opts) {
   const { prepararProjetoFilmcraft, cli } = await import('./filmcraft.mjs');
@@ -379,8 +426,28 @@ async function executarRender(id, { modo, formato, codec, motor: motorPedido, fp
   let motor = 'remotion';
   // Camada de ajuste só existe no app (o OTIO não leva): com ela o vídeo sai pelo Remotion, que a desenha.
   const temAjuste = projeto.timeline && lerTimeline(id).trilhas.some((tr) => tr.itens.some((i) => i.tipo === 'ajuste'));
-  if (temAjuste && motorPedido === 'filmcraft') onEvento?.({ log: 'A timeline tem camada de ajuste: exportando pelo Remotion, que é quem a desenha.' });
-  if (projeto.engine === 'remotion' && projeto.timeline && motorPedido === 'filmcraft' && !temAjuste) {
+  // Rápido: ffmpeg direto; o que ele não cobre vai para o Filmcraft (e, sem ele, para o Remotion).
+  let motorVez = motorPedido;
+  if (projeto.engine === 'remotion' && projeto.timeline && motorPedido === 'rapido') {
+    const motivos = motivosSemFfmpeg(lerTimeline(id));
+    if (!motivos.length) {
+      try {
+        await exportarPeloFfmpeg(id, saida, { modo, codec, escala, semAudio, fps: fpsNovo, kbps, tmp, encoderId }, opts);
+        motor = 'rapido';
+      } catch (e) {
+        if (sinal?.aborted) {
+          fs.rmSync(tmp, { recursive: true, force: true });
+          throw e;
+        }
+        fs.rmSync(saida, { force: true });
+        onEvento?.({ log: `O modo rápido falhou, exportando pelo Filmcraft: ${semCores(e.message).slice(0, 300)}` });
+        onEvento?.({ etapa: 'Modo rápido falhou: usando o Filmcraft', progresso: 0 });
+      }
+    } else onEvento?.({ log: `Modo rápido não cobre ${motivos.join(', ')}: exportando pelo Filmcraft.` });
+    motorVez = 'filmcraft';
+  }
+  if (temAjuste && motorVez === 'filmcraft' && motor !== 'rapido') onEvento?.({ log: 'A timeline tem camada de ajuste: exportando pelo Remotion, que é quem a desenha.' });
+  if (motor !== 'rapido' && projeto.engine === 'remotion' && projeto.timeline && motorVez === 'filmcraft' && !temAjuste) {
     const { filmcraftDisponivel } = await import('./filmcraft.mjs');
     if (filmcraftDisponivel()) {
       try {
@@ -401,7 +468,7 @@ async function executarRender(id, { modo, formato, codec, motor: motorPedido, fp
   try {
     // Os clipes entram como estão (H.265, ProRes…). Só o OffthreadVideo da timeline Remotion lê esses codecs;
     // HyperFrames e código Remotion escrito à mão usam o <video> do Chrome, que não lê H.265.
-    if (motor !== 'filmcraft' && !(projeto.engine === 'remotion' && projeto.timeline)) {
+    if (motor !== 'filmcraft' && motor !== 'rapido' && !(projeto.engine === 'remotion' && projeto.timeline)) {
       const ruins = [];
       for (const e of fs.readdirSync(caminhoAssets(id), { withFileTypes: true })) {
         if (!e.isFile() || tipoDe(e.name) !== 'video') continue;
@@ -410,7 +477,7 @@ async function executarRender(id, { modo, formato, codec, motor: motorPedido, fp
       }
       if (ruins.length) onEvento?.({ log: `Aviso: este render usa o Chrome, que pode não ler: ${ruins.join(', ')}. Se o vídeo sair em branco, converta esses clipes para H.264 em "Converter vídeos".` });
     }
-    if (motor === 'filmcraft') {
+    if (motor === 'filmcraft' || motor === 'rapido') {
       // Já exportado acima.
     } else if (projeto.engine === 'remotion') {
       const cli = path.join(dirs().ws, 'node_modules', '@remotion', 'cli', 'remotion-cli.js');
@@ -452,7 +519,7 @@ async function executarRender(id, { modo, formato, codec, motor: motorPedido, fp
     }
     // O último passo já cuidou de resolução e áudio do HyperFrames.
     const faltaAjustar = (codec === 'prores' && modo !== 'gpu') || !precisaFinal;
-    if (projeto.engine !== 'remotion' && motor !== 'filmcraft' && faltaAjustar && (escala !== 1 || semAudio)) {
+    if (projeto.engine !== 'remotion' && motor !== 'filmcraft' && motor !== 'rapido' && faltaAjustar && (escala !== 1 || semAudio)) {
       const ajustado = path.join(tmp, 'ajustado' + path.extname(saida));
       const par = (x) => Math.max(2, Math.round((x * escala) / 2) * 2);
       const video = codec === 'prores'

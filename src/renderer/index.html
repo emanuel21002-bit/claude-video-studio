@@ -544,7 +544,8 @@
           <label class="exp-marca"><input type="checkbox" id="render-sem-audio" /> Sem áudio</label>
           <hr />
           <div class="exp-linha" id="exp-linha-motor">Montar com
-            <div class="segmentado" id="seg-motor" title="Quem monta o vídeo final. Se o Filmcraft falhar, o app usa o Remotion." hidden>
+            <div class="segmentado" id="seg-motor" title="Quem monta o vídeo final. Rápido: o ffmpeg monta tudo de uma vez, na placa de vídeo; o que ele não cobre (transições especiais, keyframes em clipes, camada de ajuste) vai para o Filmcraft. Se o Filmcraft falhar, o app usa o Remotion.">
+              <button type="button" data-v="rapido">Rápido</button>
               <button type="button" data-v="filmcraft">Filmcraft</button>
               <button type="button" data-v="remotion">Remotion</button>
             </div>

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import { spawn } from 'node:child_process';
 import { carregar } from './settings.mjs';
 import { recurso, temRecurso } from './recursos.mjs';
@@ -26,6 +27,8 @@ const projetoFc = (id) => path.join(pasta(id), 'projeto.fcproj');
 const temCamada = (i) => !i.arquivo && i.tipo !== 'ajuste';
 
 const CAMADAS_GUARDADAS = 4;
+// Só texto e gráficos: mais quadros ao mesmo tempo aceleram bem (medido: 2 → 10 deixou a camada cerca de duas vezes mais rápida).
+const PARALELO_CAMADA = Math.max(2, Math.min(10, os.cpus().length - 2));
 
 // Tudo o que muda o desenho da camada: os itens gráficos, o código do modelo e dos blocos e os arquivos que os blocos citam
 // (logo, selo, música de fundo). Mexer só nos cortes dos vídeos não muda nada disso.
@@ -52,7 +55,7 @@ function hashDaCamada(id, soGraficos) {
 }
 
 // Texto, legendas e blocos são desenhados pelo Remotion: vão como um vídeo transparente, só para referência.
-async function renderizarCamada(id, t, onLinha) {
+export async function renderizarCamada(id, t, onLinha) {
   const soGraficos = {
     ...t,
     fundo: 'transparent',
@@ -86,7 +89,7 @@ async function renderizarCamada(id, t, onLinha) {
     await rodarOuFalhar(s.nodePath, [
       path.join(ws, 'node_modules', '@remotion', 'cli', 'remotion-cli.js'), 'render',
       path.join(projeto, 'src', 'index.ts'), 'Main', parcial,
-      '--public-dir', publica, `--props=${props}`, '--concurrency=2', '--timeout=120000',
+      '--public-dir', publica, `--props=${props}`, `--concurrency=${PARALELO_CAMADA}`, '--timeout=120000',
       '--codec=prores', '--prores-profile=4444', '--pixel-format=yuva444p10le', '--image-format=png', '--gl=angle',
       `--frames=0-${Math.ceil(duracao * t.fps) - 1}`,
     ], { cwd: ws, env: { TEMP: tmp, TMP: tmp } });
