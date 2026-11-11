@@ -855,48 +855,252 @@ const TL = (() => {
     window.addEventListener('pointerup', soltar);
   }
 
-  // Move todos os itens selecionados juntos, mantendo a distância entre eles.
-  function arrastarGrupo(e, principal) {
+  // Mover itens (um, o vídeo com o áudio vinculado ou uma seleção), como o Filmcraft faz: durante o arraste
+  // nada muda em s.t nem no DOM das faixas; só uma camada de "fantasmas" mostra onde os itens vão cair, e o
+  // mouse é lido no máximo uma vez por quadro. A faixa de destino sai da posição do mouse: o deslocamento em
+  // faixas (do mesmo tipo da faixa onde o arraste começou) vale para todos, cada um dentro do seu tipo; acima da
+  // faixa de vídeo mais alta, ou abaixo da de áudio mais baixa, os itens desse tipo vão para uma faixa nova.
+  // Ao soltar é um passo só: cada item cai na faixa de destino sobrescrevendo o que estiver embaixo
+  // (o trecho coberto sai, como no Filmcraft e no Premiere). Esc cancela.
+  function arrastarMover(e, principal, ids, { cliqueSoltaGrupo = false } = {}) {
     const el = e.currentTarget;
     el.setPointerCapture(e.pointerId);
     const x0 = e.clientX;
-    const antes = JSON.stringify(s.t);
+    const y0 = e.clientY;
+    const idsSet = new Set(ids);
     const membros = todosItens()
-      .filter((i) => s.selecao.has(i.id))
-      .map((i) => ({ i, inicio: i.inicio, el: qs(`.tl-item[data-id="${CSS.escape(i.id)}"]`) }));
+      .filter((i) => idsSet.has(i.id))
+      .map((i) => ({ i, tr: trilhaDe(i.id), inicio: i.inicio, el: qs(`.tl-item[data-id="${CSS.escape(i.id)}"]`) }));
+    if (!membros.length) return;
+    const ref = membros.find((m) => m.i === principal) ?? membros[0];
     const menor = Math.min(...membros.map((m) => m.inicio));
     const pontos = [0, s.tempo];
-    for (const i of todosItens()) if (!s.selecao.has(i.id)) pontos.push(i.inicio, i.inicio + i.duracao);
-    const ref = membros.find((m) => m.i === principal);
+    for (const i of todosItens()) if (!idsSet.has(i.id)) pontos.push(i.inicio, i.inicio + i.duracao);
+    const listaDo = (audio) => s.t.trilhas.filter((tr) => ehAudio(tr) === audio);
+    const tipoInicial = ehAudio(ref.tr);
+
     let mudou = false;
-    const aoMover = (ev) => {
-      if (Math.abs(ev.clientX - x0) > 2) mudou = true;
-      if (!mudou) return;
+    let ultimo = null;
+    let quadro = 0;
+    let plano = { delta: 0, faixas: 0, nova: false };
+    let camada = null;
+    let alvoMarcado = null;
+
+    const linhas = () =>
+      [...qs('#tl-trilhas').querySelectorAll('.tl-pista')].map((p) => ({ el: p, tr: s.t.trilhas.find((x) => x.id === p.dataset.trilha), r: p.getBoundingClientRect() }));
+
+    function comecarVisual() {
+      const box = qs('#tl-trilhas');
+      camada = document.createElement('div');
+      camada.className = 'tl-fantasmas';
+      const rb = box.getBoundingClientRect();
+      for (const m of membros) {
+        if (!m.el) continue;
+        const r = m.el.getBoundingClientRect();
+        const f = m.el.cloneNode(true);
+        f.classList.add('tl-fantasma');
+        f.style.left = r.left - rb.left + box.scrollLeft + 'px';
+        f.style.top = r.top - rb.top + box.scrollTop + 'px';
+        f.style.width = r.width + 'px';
+        f.style.height = r.height + 'px';
+        m.fantasma = f;
+        m.el.classList.add('tl-origem');
+        camada.append(f);
+      }
+      box.append(camada);
+      document.body.classList.add('movendo-itens');
+    }
+
+    function limparVisual() {
+      camada?.remove();
+      camada = null;
+      for (const m of membros) m.el?.classList.remove('tl-origem');
+      alvoMarcado?.classList.remove('alvo-soltar');
+      alvoMarcado = null;
+      document.body.classList.remove('movendo-itens');
+      mostrarGuia(null);
+    }
+
+    // Tempo: o mesmo ímã de antes, pela ponta (começo ou fim) do item agarrado que estiver mais perto.
+    function calcularDelta(ev) {
       let delta = Math.max(-menor, (ev.clientX - x0) / s.pps);
       const a = imantar(ref.inicio + delta, pontos);
       const b = imantar(ref.inicio + delta + principal.duracao, pontos);
       const peloFim = b.guia != null && (a.guia == null || Math.abs(b.valor - (ref.inicio + delta + principal.duracao)) < Math.abs(a.valor - (ref.inicio + delta)));
       delta = (peloFim ? b.valor - principal.duracao : a.valor) - ref.inicio;
       mostrarGuia(peloFim ? b.guia : a.guia);
-      delta = Math.max(-menor, noQuadro(delta));
+      return Math.max(-menor, noQuadro(delta));
+    }
+
+    // Faixa: quantas faixas do mesmo tipo o mouse subiu ou desceu, ou "nova" fora das faixas.
+    function calcularFaixas(ev, rows) {
+      const sob = rows.find((x) => ev.clientY >= x.r.top && ev.clientY < x.r.bottom);
+      const lista = listaDo(tipoInicial);
+      const i0 = lista.indexOf(ref.tr);
+      if (sob && sob.tr && ehAudio(sob.tr) === tipoInicial) return { faixas: lista.indexOf(sob.tr) - i0, nova: false };
+      const doTipo = rows.filter((x) => x.tr && ehAudio(x.tr) === tipoInicial);
+      if (!doTipo.length) return { faixas: 0, nova: false };
+      // Vídeo: a V mais alta é a primeira na tela; acima dela, faixa nova. Áudio: abaixo da última.
+      if (!tipoInicial && ev.clientY < doTipo[0].r.top) return { faixas: 0, nova: true };
+      if (tipoInicial && ev.clientY >= doTipo.at(-1).r.bottom) return { faixas: 0, nova: true };
+      return { faixas: plano.faixas, nova: false };
+    }
+
+    // Faixa de destino de cada membro: a sua, deslocada dentro do seu tipo (presa às que existem).
+    function destinoDe(m) {
+      if (plano.nova) return ehAudio(m.tr) === tipoInicial ? 'nova' : m.tr;
+      const lista = listaDo(ehAudio(m.tr));
+      const n = Math.max(0, Math.min(lista.length - 1, lista.indexOf(m.tr) + plano.faixas));
+      return lista[n];
+    }
+
+    function desenharQuadro() {
+      quadro = 0;
+      const ev = ultimo;
+      if (!ev || !camada) return;
+      const rows = linhas();
+      const delta = calcularDelta(ev);
+      plano = { delta, ...calcularFaixas(ev, rows) };
+      const linhaDe = (tr) => rows.find((x) => x.tr === tr);
+      let alvo = null;
       for (const m of membros) {
-        m.i.inicio = arredondar(m.inicio + delta);
-        if (m.el) posicionar(m.el, m.i);
+        if (!m.fantasma) continue;
+        const origem = linhaDe(m.tr);
+        const dest = destinoDe(m);
+        let dy = 0;
+        if (dest === 'nova') {
+          const doTipo = rows.filter((x) => x.tr && ehAudio(x.tr) === ehAudio(m.tr));
+          dy = ehAudio(m.tr) ? doTipo.at(-1).r.bottom - origem.r.top : doTipo[0].r.top - origem.r.height - origem.r.top;
+        } else {
+          const ld = linhaDe(dest);
+          if (ld && origem) dy = ld.r.top - origem.r.top;
+          if (m === ref) alvo = ld?.el ?? null;
+        }
+        m.fantasma.style.transform = `translate(${delta * s.pps}px, ${dy}px)`;
       }
+      if (alvo !== alvoMarcado) {
+        alvoMarcado?.classList.remove('alvo-soltar');
+        alvo?.classList.add('alvo-soltar');
+        alvoMarcado = alvo;
+      }
+      const it = qs('#tl-inspetor-tempo');
+      if (it && membros.length === 1) it.textContent = `${(principal.inicio + delta).toFixed(2)} s → ${(principal.inicio + delta + principal.duracao).toFixed(2)} s`;
+    }
+
+    const aoMover = (ev) => {
+      if (!mudou) {
+        if (Math.abs(ev.clientX - x0) <= 3 && Math.abs(ev.clientY - y0) <= 3) return;
+        mudou = true;
+        comecarVisual();
+      }
+      ultimo = ev;
+      if (!quadro) quadro = requestAnimationFrame(desenharQuadro);
     };
-    const aoSoltar = () => {
+
+    const fim = () => {
       el.removeEventListener('pointermove', aoMover);
       el.removeEventListener('pointerup', aoSoltar);
-      el.removeEventListener('pointercancel', aoSoltar);
-      mostrarGuia(null);
-      // Clicar num item do grupo, sem arrastar, deixa só ele selecionado.
-      if (!mudou) return selecionar(principal.id);
-      empilharDesfazer(antes);
-      aposAlterar();
+      el.removeEventListener('pointercancel', cancelarArraste);
+      window.removeEventListener('keydown', aoTecla, true);
+      if (quadro) cancelAnimationFrame(quadro);
+      quadro = 0;
     };
+    const cancelarArraste = () => {
+      fim();
+      limparVisual();
+    };
+    const aoTecla = (ev) => {
+      if (ev.key !== 'Escape') return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      cancelarArraste();
+      try {
+        el.releasePointerCapture(e.pointerId);
+      } catch {}
+    };
+    const aoSoltar = (ev) => {
+      fim();
+      if (!mudou) {
+        limparVisual();
+        // Clicar num item do grupo, sem arrastar, deixa só ele selecionado.
+        if (cliqueSoltaGrupo) selecionar(principal.id);
+        return;
+      }
+      ultimo = ev;
+      desenharQuadro();
+      limparVisual();
+      const { delta } = plano;
+      const destinos = membros.map((m) => [m, destinoDe(m)]);
+      if (!delta && destinos.every(([m, d]) => d === m.tr)) return;
+      alterar(() => aplicarMovimento(destinos, delta));
+    };
+
     el.addEventListener('pointermove', aoMover);
     el.addEventListener('pointerup', aoSoltar);
-    el.addEventListener('pointercancel', aoSoltar);
+    el.addEventListener('pointercancel', cancelarArraste);
+    window.addEventListener('keydown', aoTecla, true);
+  }
+
+  // O passo único do soltar: tira os itens das faixas de origem, cria a faixa nova se for o caso, abre espaço
+  // na de destino (sobrescrever) e coloca cada um no lugar. Transições só viajam quando todos os itens em que
+  // elas se apoiam vão juntos para a mesma faixa; com um parceiro ficando para trás, a transição sai.
+  function aplicarMovimento(destinos, delta) {
+    const novas = {};
+    const faixaDe = (m, d) => {
+      if (d !== 'nova') return d;
+      const audio = ehAudio(m.tr);
+      return (novas[audio] ??= novaFaixa(audio ? 'audio' : 'video', { acimaDeTudo: true }));
+    };
+    const plano = destinos.map(([m, d]) => ({ m, dest: faixaDe(m, d) }));
+    const movendo = new Map(plano.map((p) => [p.m.i.id, p.dest]));
+    // Transições: decididas antes de mexer, com as faixas de origem ainda intactas.
+    const levar = [];
+    for (const tr of new Set(plano.map((p) => p.m.tr))) {
+      if (!tr.transicoes) continue;
+      tr.transicoes = tr.transicoes.filter((x) => {
+        const pontas = [x.de, x.para].filter(Boolean);
+        if (!pontas.some((id) => movendo.has(id))) return true;
+        const dests = new Set(pontas.map((id) => movendo.get(id)));
+        if (pontas.every((id) => movendo.has(id)) && dests.size === 1) levar.push([[...dests][0], x]);
+        return false;
+      });
+      if (!tr.transicoes.length) delete tr.transicoes;
+    }
+    for (const { m } of plano) m.tr.itens.splice(m.tr.itens.indexOf(m.i), 1);
+    for (const { m, dest } of plano) {
+      m.i.inicio = arredondar(Math.max(0, m.inicio + delta));
+      sobrescrever(dest, m.i.inicio, m.i.inicio + m.i.duracao);
+      dest.itens.push(m.i);
+    }
+    for (const [dest, x] of levar) (dest.transicoes ??= []).push(x);
+  }
+
+  // Abre o trecho [a, b) numa faixa: o que estava inteiro dentro sai, o que cruzava uma ponta é aparado e o
+  // que cobria o trecho todo vira dois pedaços.
+  function sobrescrever(tr, a, b) {
+    const tirar = (o) => {
+      tr.itens.splice(tr.itens.indexOf(o), 1);
+      if (tr.transicoes) {
+        tr.transicoes = tr.transicoes.filter((x) => x.de !== o.id && x.para !== o.id);
+        if (!tr.transicoes.length) delete tr.transicoes;
+      }
+    };
+    for (const o of [...tr.itens]) {
+      const fimO = o.inicio + o.duracao;
+      if (fimO <= a + 0.001 || o.inicio >= b - 0.001) continue;
+      const antesDe = o.inicio < a - 0.001;
+      const depoisDe = fimO > b + 0.001;
+      if (antesDe && depoisDe) {
+        dividirItem(o, tr, b);
+        o.duracao = arredondar(a - o.inicio);
+      } else if (antesDe) {
+        o.duracao = arredondar(a - o.inicio);
+        delete o.saida;
+      } else if (depoisDe) {
+        moverComeco(o, b - o.inicio);
+        delete o.entrada;
+      } else tirar(o);
+    }
   }
 
   // ---------- copiar e colar ----------
@@ -1148,7 +1352,12 @@ const TL = (() => {
     const naBorda = modo !== 'mover';
     if ((f === 'ripple' || f === 'roll' || f === 'taxa') && naBorda) return iniciarFerramenta(e, item, trilha, modo);
     if ((f === 'slip' || f === 'slide') && !naBorda) return iniciarFerramenta(e, item, trilha, modo);
-    if (grupo) return arrastarGrupo(e, item);
+    // Mover: o item com o que estiver selecionado junto (o vídeo e o áudio vinculado, ou a seleção toda).
+    // Alt pega só ele.
+    if (modo === 'mover') {
+      const ids = grupo || (!sozinho && s.ferramenta === 'selecao') ? [...s.selecao] : sozinho ? [item.id] : [item.id, ...parceiros(item.id).map((p) => p.id)];
+      return arrastarMover(e, item, ids.includes(item.id) ? ids : [item.id, ...ids], { cliqueSoltaGrupo: grupo });
+    }
     const el = e.currentTarget;
     el.setPointerCapture(e.pointerId);
     const x0 = e.clientX;
@@ -1157,28 +1366,13 @@ const TL = (() => {
     const pontos = pontosDeImã(item.id);
     const vel = item.velocidade ?? 1;
     const temFonte = item.tipo === 'video' || item.tipo === 'audio';
-    let destino = trilha;
     let mudou = false;
 
+    // Aqui só as pontas (aparar); mover é arrastarMover.
     const aoMover = (ev) => {
       const delta = (ev.clientX - x0) / s.pps;
       if (Math.abs(ev.clientX - x0) > 2) mudou = true;
-      if (modo === 'mover') {
-        let inicio = Math.max(0, original.inicio + delta);
-        const a = imantar(inicio, pontos);
-        const b = imantar(inicio + original.duracao, pontos);
-        const peloFim = b.guia != null && (a.guia == null || Math.abs(b.valor - (inicio + original.duracao)) < Math.abs(a.valor - inicio));
-        inicio = peloFim ? b.valor - original.duracao : a.valor;
-        item.inicio = noQuadro(Math.max(0, inicio));
-        mostrarGuia(peloFim ? b.guia : a.guia);
-        const alvo = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('.tl-pista');
-        const tr = alvo && s.t.trilhas.find((x) => x.id === alvo.dataset.trilha);
-        if (tr && tr !== destino && ACEITA[tr.tipo].includes(item.tipo)) {
-          destino = tr;
-          alvo.append(el);
-          mudou = true;
-        }
-      } else if (modo === 'esq') {
+      if (modo === 'esq') {
         // Aparar o começo: o corte no arquivo anda junto, e o fim do item fica onde está.
         const fim = original.inicio + original.duracao;
         let inicio = imantar(original.inicio + delta, pontos);
@@ -1215,13 +1409,6 @@ const TL = (() => {
           p.duracao = item.duracao;
           if (item.corteInicio != null && (p.tipo === 'video' || p.tipo === 'audio')) p.corteInicio = item.corteInicio;
         }
-      }
-      if (destino !== trilha) {
-        trilha.itens.splice(trilha.itens.indexOf(item), 1);
-        destino.itens.push(item);
-        // Transição só existe entre itens da mesma trilha.
-        trilha.transicoes = (trilha.transicoes ?? []).filter((x) => x.de !== item.id && x.para !== item.id);
-        if (!trilha.transicoes.length) delete trilha.transicoes;
       }
       empilharDesfazer(antes);
       aposAlterar();

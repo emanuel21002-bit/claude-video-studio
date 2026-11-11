@@ -888,3 +888,10 @@ body.dock-arrastando video, body.dock-arrastando .previa-host, body.dock-arrasta
 .cab-editor .barra-render { margin: 0; flex-wrap: nowrap; gap: 8px; }
 .cab-editor .progresso { flex: none; width: 260px; min-width: 0; height: 30px; }
 .cab-editor #prog-txt { line-height: 28px; font-size: 12px; }
+
+/* Mover itens na timeline: fantasmas numa camada por cima das faixas (o original fica onde está até soltar) */
+#tl-trilhas { position: relative; }
+.tl-fantasmas { position: absolute; inset: 0; z-index: 20; pointer-events: none; }
+.tl-fantasma { position: absolute; margin: 0; opacity: 0.85; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5); will-change: transform; pointer-events: none; }
+.tl-item.tl-origem { opacity: 0.35; }
+body.movendo-itens, body.movendo-itens * { cursor: grabbing !important; }
