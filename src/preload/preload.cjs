@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld('studio', {
   filaPendentes: chamar('fila:pendentes'),
   retomarFila: chamar('fila:retomar'),
   descartarFila: chamar('fila:descartar'),
+  listarLuts: chamar('lut:listar'),
+  importarLuts: chamar('lut:importar'),
   tipoArquivo: chamar('tipoArquivo'),
   mostrarNaPasta: chamar('mostrarNaPasta'),
   abrirPasta: chamar('abrirPasta'),

@@ -9,6 +9,7 @@ const Dock = (() => {
   const PAINEIS = {
     materiais: { titulo: 'Materiais', el: () => document.querySelector('#painel-materiais') },
     propriedades: { titulo: 'Propriedades', el: () => document.querySelector('#painel-propriedades') },
+    efeitos: { titulo: 'Efeitos', el: () => document.querySelector('#painel-efeitos') },
     origem: { titulo: 'Origem', el: () => document.querySelector('#painel-origem') },
     previa: { titulo: 'Prévia', el: () => document.querySelector('#painel-previa') },
     claude: { titulo: 'Claude', el: () => document.querySelector('#painel-claude') },
@@ -16,7 +17,7 @@ const Dock = (() => {
   };
   // Materiais, propriedades e timeline só existem nos projetos com timeline; a origem só quando há algo aberto nela.
   const disponivel = (id) => {
-    if (id === 'materiais' || id === 'propriedades' || id === 'timeline') return !document.querySelector('#tl').hidden;
+    if (id === 'materiais' || id === 'propriedades' || id === 'efeitos' || id === 'timeline') return !document.querySelector('#tl').hidden;
     if (id === 'origem') {
       const f = document.querySelector('#fonte');
       return !!f && !f.hidden;
@@ -28,7 +29,7 @@ const Dock = (() => {
   const split = (dir, filhos, tamanhos) => ({ t: 'split', dir, filhos, tamanhos });
   const padrao = () =>
     split('row', [
-      split('col', [split('row', [grupo(['materiais', 'propriedades']), grupo(['origem']), grupo(['previa'])], [22, 30, 48]), grupo(['timeline'])], [62, 38]),
+      split('col', [split('row', [grupo(['materiais', 'efeitos', 'propriedades']), grupo(['origem']), grupo(['previa'])], [22, 30, 48]), grupo(['timeline'])], [62, 38]),
       grupo(['claude']),
     ], [76, 24]);
 
@@ -58,6 +59,16 @@ const Dock = (() => {
       const ids = valido(l) ? idsDe(l) : [];
       const todos = Object.keys(PAINEIS);
       if (ids.length === todos.length && todos.every((id) => ids.includes(id))) return l;
+      // Layout salvo antes de um painel novo existir: ele entra no grupo dos Materiais, sem perder o resto.
+      const faltam = todos.filter((id) => !ids.includes(id));
+      if (ids.every((id) => todos.includes(id)) && new Set(ids).size === ids.length && faltam.length) {
+        const achar = (no) => (no.t === 'grupo' ? (no.paineis.includes('materiais') ? no : null) : no.filhos.map(achar).find(Boolean));
+        const g = achar(l);
+        if (g) {
+          g.paineis.push(...faltam);
+          return l;
+        }
+      }
     } catch {}
     return padrao();
   }

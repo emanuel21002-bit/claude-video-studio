@@ -5,7 +5,8 @@ const TL = (() => {
   const LARGURA_CAB = 120;
   // Como no Filmcraft e no CapCut: faixas de vídeo (V1 embaixo, as de cima cobrem as de baixo) e de áudio (A1, A2…).
   // Qualquer item visual cabe em qualquer faixa de vídeo. sobreposicao e legenda são tipos antigos, tratados como vídeo.
-  const VISUAIS = ['video', 'imagem', 'texto', 'bloco', 'legenda'];
+  // ajuste: camada de ajuste, sem arquivo; os efeitos dela valem para tudo o que está nas faixas de vídeo abaixo.
+  const VISUAIS = ['video', 'imagem', 'texto', 'bloco', 'legenda', 'ajuste'];
   const ACEITA = { video: VISUAIS, sobreposicao: VISUAIS, legenda: VISUAIS, audio: ['audio'] };
   const ehAudio = (tr) => tr.tipo === 'audio';
   // Faixa com vídeo ou imagem mostra miniaturas: fica mais alta que as de texto e legenda.
@@ -24,7 +25,7 @@ const TL = (() => {
   const FORMATOS = { '9:16': [1080, 1920], '16:9': [1920, 1080], '1:1': [1080, 1080], '4:5': [1080, 1350] };
   const ICONES = { video: '🎬', imagem: '🖼', audio: '🎵' };
   const FERRAMENTAS = { v: 'selecao', b: 'ripple', n: 'roll', y: 'slip', u: 'slide', r: 'taxa', c: 'navalha' };
-  const ANIMAVEIS = new Set(['x', 'y', 'escala', 'rotacao', 'opacidade', 'efeitos.cor.exposicao', 'efeitos.cor.contraste', 'efeitos.cor.saturacao', 'efeitos.cor.temperatura', 'efeitos.cor.matiz', 'efeitos.desfoque.raio', 'efeitos.corte.esquerda', 'efeitos.corte.cima', 'efeitos.corte.direita', 'efeitos.corte.baixo', 'efeitos.vinheta.quantidade']);
+  const ANIMAVEIS = new Set(['x', 'y', 'escala', 'rotacao', 'opacidade', 'efeitos.cor.exposicao', 'efeitos.cor.contraste', 'efeitos.cor.saturacao', 'efeitos.cor.temperatura', 'efeitos.cor.matiz', 'efeitos.cor.destaques', 'efeitos.cor.sombras', 'efeitos.cor.brancos', 'efeitos.cor.pretos', 'efeitos.cor.vibracao', 'efeitos.desfoque.raio', 'efeitos.corte.esquerda', 'efeitos.corte.cima', 'efeitos.corte.direita', 'efeitos.corte.baixo', 'efeitos.vinheta.quantidade']);
 
   const s = {
     id: null,
@@ -472,6 +473,9 @@ const TL = (() => {
       if (e.target !== pista || e.button !== 0) return;
       iniciarMarquee(e);
     });
+    pista.addEventListener('contextmenu', (e) => {
+      if (e.target === pista) menuDaFaixa(e, trilha);
+    });
     for (const item of trilha.itens) {
       const el = desenharItem(item, trilha);
       el.style.top = faixas.get(item.id) * alturaFaixa + 2 + 'px';
@@ -497,6 +501,7 @@ const TL = (() => {
 
   function rotuloItem(item) {
     if (item.tipo === 'bloco') return `✦ ${item.componente}`;
+    if (item.tipo === 'ajuste') return '◐ Camada de ajuste';
     if (item.texto != null) return item.texto;
     return item.arquivo ?? item.tipo;
   }
@@ -522,6 +527,7 @@ const TL = (() => {
     el.append(rotulo, esq, dir);
     for (const t of temposKeyframe(item)) el.append(desenharMarcaKf(item, t));
     el.addEventListener('pointerdown', (e) => iniciarArraste(e, item, trilha, e.target === esq ? 'esq' : e.target === dir ? 'dir' : 'mover'));
+    el.addEventListener('contextmenu', (e) => menuDoItem(e, item));
     return el;
   }
 
@@ -983,6 +989,7 @@ const TL = (() => {
         alvo?.classList.add('alvo-soltar');
         alvoMarcado = alvo;
       }
+      camada.classList.toggle('inserindo', !!(ev.ctrlKey || ev.metaKey));
       const it = qs('#tl-inspetor-tempo');
       if (it && membros.length === 1) it.textContent = `${(principal.inicio + delta).toFixed(2)} s → ${(principal.inicio + delta + principal.duracao).toFixed(2)} s`;
     }
@@ -1032,7 +1039,8 @@ const TL = (() => {
       const { delta } = plano;
       const destinos = membros.map((m) => [m, destinoDe(m)]);
       if (!delta && destinos.every(([m, d]) => d === m.tr)) return;
-      alterar(() => aplicarMovimento(destinos, delta));
+      // Ctrl (ou Cmd) ao soltar insere: empurra o que está na faixa de destino em vez de sobrescrever.
+      alterar(() => aplicarMovimento(destinos, delta, { inserir: ev.ctrlKey || ev.metaKey }));
     };
 
     el.addEventListener('pointermove', aoMover);
@@ -1044,7 +1052,7 @@ const TL = (() => {
   // O passo único do soltar: tira os itens das faixas de origem, cria a faixa nova se for o caso, abre espaço
   // na de destino (sobrescrever) e coloca cada um no lugar. Transições só viajam quando todos os itens em que
   // elas se apoiam vão juntos para a mesma faixa; com um parceiro ficando para trás, a transição sai.
-  function aplicarMovimento(destinos, delta) {
+  function aplicarMovimento(destinos, delta, { inserir = false } = {}) {
     const novas = {};
     const faixaDe = (m, d) => {
       if (d !== 'nova') return d;
@@ -1067,12 +1075,27 @@ const TL = (() => {
       if (!tr.transicoes.length) delete tr.transicoes;
     }
     for (const { m } of plano) m.tr.itens.splice(m.tr.itens.indexOf(m.i), 1);
+    for (const { m } of plano) m.i.inicio = arredondar(Math.max(0, m.inicio + delta));
+    if (inserir) {
+      // Por faixa de destino: abre um vão do tamanho do bloco que chega, a partir do começo dele.
+      for (const dest of new Set(plano.map((p) => p.dest))) {
+        const doBloco = plano.filter((p) => p.dest === dest).map((p) => p.m.i);
+        const a = Math.min(...doBloco.map((i) => i.inicio));
+        const vao = Math.max(...doBloco.map((i) => i.inicio + i.duracao)) - a;
+        abrirVao(dest, a, vao);
+      }
+    }
     for (const { m, dest } of plano) {
-      m.i.inicio = arredondar(Math.max(0, m.inicio + delta));
-      sobrescrever(dest, m.i.inicio, m.i.inicio + m.i.duracao);
+      if (!inserir) sobrescrever(dest, m.i.inicio, m.i.inicio + m.i.duracao);
       dest.itens.push(m.i);
     }
     for (const [dest, x] of levar) (dest.transicoes ??= []).push(x);
+  }
+
+  // Inserir: o item que cruza o ponto a é dividido ali, e tudo o que começa dali em diante anda o tamanho do vão.
+  function abrirVao(tr, a, vao) {
+    for (const o of [...tr.itens]) if (o.inicio < a - 0.001 && o.inicio + o.duracao > a + 0.001) dividirItem(o, tr, a);
+    for (const o of tr.itens) if (o.inicio >= a - 0.001) o.inicio = arredondar(o.inicio + vao);
   }
 
   // Abre o trecho [a, b) numa faixa: o que estava inteiro dentro sai, o que cruzava uma ponta é aparado e o
@@ -1610,6 +1633,8 @@ const TL = (() => {
     s.roteiros = p.roteiros ?? [];
     desenharMateriais();
     desenharInspetor();
+    // As LUTs (.cube) também ficam em assets/: a lista vai para o Lumetri do inspetor.
+    carregarLuts().then(() => s.id === id && desenharInspetor());
   }
 
   const materialDe = (arquivo) => s.materiais.find((m) => m.arquivo === arquivo);
@@ -2352,11 +2377,16 @@ const TL = (() => {
     texto: [['texto', 'Texto', 'area'], ...ESTILO, ...COMUNS_VISUAIS],
     legenda: [['texto', 'Texto', 'area'], ...ESTILO, ['estilo.corDestaque', 'Cor da palavra falada', 'cor'], ['x', 'Posição X', 'num'], ['y', 'Posição Y', 'num']],
     bloco: [['props', 'Propriedades (JSON)', 'json'], ...COMUNS_VISUAIS],
+    ajuste: [],
   };
 
   // Liga-se o efeito pela marca; os campos só aparecem com ele ligado.
   const EFEITOS = [
-    ['cor', 'Correção de cor', [['exposicao', 'Exposição', 0.1, 0], ['contraste', 'Contraste', 1, 0], ['saturacao', 'Saturação', 1, 100], ['temperatura', 'Temperatura', 1, 0], ['matiz', 'Matiz', 1, 0]]],
+    ['cor', 'Lumetri Color', [
+      ['temperatura', 'Temperatura', 1, 0], ['matiz', 'Matiz', 1, 0], ['exposicao', 'Exposição', 0.1, 0], ['contraste', 'Contraste', 1, 0],
+      ['destaques', 'Destaques', 1, 0], ['sombras', 'Sombras', 1, 0], ['brancos', 'Brancos', 1, 0], ['pretos', 'Pretos', 1, 0],
+      ['saturacao', 'Saturação', 1, 100], ['vibracao', 'Vibração', 1, 0],
+    ]],
     ['desfoque', 'Desfoque', [['raio', 'Quantidade', 1, 10]]],
     ['corte', 'Recorte (%)', [['esquerda', 'Esquerda', 1, 0], ['cima', 'Cima', 1, 0], ['direita', 'Direita', 1, 0], ['baixo', 'Baixo', 1, 0]]],
     ['vinheta', 'Vinheta', [['quantidade', 'Quantidade', 1, -50]]],
@@ -2371,6 +2401,7 @@ const TL = (() => {
     box.className = 'ins-secao';
     box.innerHTML = '<h5>Efeitos</h5>';
     for (const [id, nome, campos] of EFEITOS) {
+      if (!efeitoCabe(item, id)) continue;
       const linha = document.createElement('label');
       linha.className = 'ins-marca';
       const marca = document.createElement('input');
@@ -2390,6 +2421,7 @@ const TL = (() => {
       linha.append(marca, document.createTextNode(nome));
       box.append(linha);
       if (marca.checked && campos) for (const [c, rotulo, passo] of campos) box.append(criarCampo(item, [`efeitos.${id}.${c}`, rotulo, 'num', passo]));
+      if (marca.checked && id === 'cor') box.append(camposDaLut(item));
     }
     for (const e of item.filmcraft?.efeitos ?? []) {
       const aviso = document.createElement('div');
@@ -2616,7 +2648,13 @@ const TL = (() => {
       return;
     }
     const titulo = document.createElement('h4');
-    titulo.textContent = { video: 'Vídeo', imagem: 'Imagem', audio: 'Áudio', texto: 'Texto', legenda: 'Legenda', bloco: `Efeito: ${item.componente}` }[item.tipo];
+    titulo.textContent = { video: 'Vídeo', imagem: 'Imagem', audio: 'Áudio', texto: 'Texto', legenda: 'Legenda', bloco: `Efeito: ${item.componente}`, ajuste: 'Camada de ajuste' }[item.tipo];
+    if (item.tipo === 'ajuste') {
+      const dica = document.createElement('div');
+      dica.className = 'tl-inspetor-tempo';
+      dica.textContent = 'Os efeitos valem para tudo o que está nas faixas de vídeo abaixo dela.';
+      titulo.after(dica);
+    }
     const tempo = document.createElement('div');
     tempo.id = 'tl-inspetor-tempo';
     tempo.className = 'tl-inspetor-tempo';
@@ -2632,7 +2670,7 @@ const TL = (() => {
     if (item.arquivo) box.append(secaoArquivo(item));
     if (item.tipo !== 'audio' && item.tipo !== 'legenda') box.append(secaoEfeitos(item));
     const trilhaDoItem = trilhaDe(item.id);
-    if (trilhaDoItem && !ehAudio(trilhaDoItem)) box.append(secaoTransicao(item, trilhaDoItem));
+    if (trilhaDoItem && !ehAudio(trilhaDoItem) && item.tipo !== 'ajuste') box.append(secaoTransicao(item, trilhaDoItem));
     atualizarCamposKf();
     if (item.tipo === 'legenda') {
       const b = document.createElement('button');
@@ -2647,6 +2685,479 @@ const TL = (() => {
         });
       box.append(b);
     }
+  }
+
+  // ---------- efeitos: catálogo, aba Efeitos, camada de ajuste e menu do botão direito (como no Filmcraft) ----------
+
+  // Pastas como as do painel Efeitos do Filmcraft, só com o que a prévia e o render do app desenham.
+  // Os ids são os de item.efeitos (ver EFEITOS); cada um vira o efeito equivalente do Filmcraft na ida.
+  const CATALOGO_EFEITOS = [
+    ['Correção de cor', [['cor', 'Lumetri Color'], ['pb', 'Preto e branco'], ['inverter', 'Inverter']]],
+    ['Desfoque e nitidez', [['desfoque', 'Desfoque gaussiano']]],
+    ['Transformar', [['corte', 'Cortar'], ['espelhoH', 'Espelhar na horizontal'], ['espelhoV', 'Espelhar na vertical']]],
+    ['Estilizar', [['vinheta', 'Vinheta']]],
+  ];
+  // Predefinições Lumetri: pontos de partida da correção básica e criativa.
+  const PRESETS_LUMETRI = [
+    ['Cinema quente', { temperatura: 22, matiz: 4, contraste: 15, destaques: -15, sombras: -8, saturacao: 108 }],
+    ['Teal & orange', { temperatura: 12, matiz: -8, contraste: 20, saturacao: 112, vibracao: 22, sombras: -10 }],
+    ['Frio azulado', { temperatura: -28, contraste: 10, saturacao: 95, destaques: -5 }],
+    ['Hora dourada', { temperatura: 38, exposicao: 0.15, destaques: -12, vibracao: 15 }],
+    ['Filme desbotado', { contraste: -25, pretos: 30, saturacao: 82, destaques: -10 }],
+    ['Alto contraste', { contraste: 40, brancos: 15, pretos: -15, vibracao: 10 }],
+    ['P&B dramático', { saturacao: 0, contraste: 35, brancos: 10, pretos: -10 }],
+    ['Noite', { temperatura: -40, exposicao: -0.8, saturacao: 70, destaques: -20 }],
+    ['Vivo (Reels)', { contraste: 12, vibracao: 35, saturacao: 110, sombras: 10 }],
+  ];
+  const NAO_CABE_NO_AJUSTE = new Set(['corte', 'espelhoH', 'espelhoV']);
+  const efeitoCabe = (item, id) => item.tipo !== 'audio' && item.tipo !== 'legenda' && !(item.tipo === 'ajuste' && NAO_CABE_NO_AJUSTE.has(id));
+  const nomeDoEfeito = (id) => EFEITOS.find(([x]) => x === id)?.[1] ?? id;
+  const padroesDe = (id) => {
+    const campos = EFEITOS.find(([x]) => x === id)?.[2];
+    return campos ? Object.fromEntries(campos.map(([c, , , p]) => [c, p])) : true;
+  };
+
+  const itensAlvo = (ids) => todosItens().filter((i) => ids.includes(i.id));
+
+  // Liga o efeito nos itens (mantém os valores de quem já o tinha).
+  function aplicarEfeito(ids, id) {
+    const alvos = itensAlvo(ids).filter((i) => efeitoCabe(i, id));
+    if (!alvos.length) return avisar(`${nomeDoEfeito(id)} não cabe nesse item.`);
+    alterar(() => {
+      for (const i of alvos) {
+        i.efeitos ??= {};
+        if (!i.efeitos[id]) i.efeitos[id] = padroesDe(id);
+      }
+    });
+    avisar(`${nomeDoEfeito(id)} aplicado a ${alvos.length > 1 ? `${alvos.length} itens` : rotuloItem(alvos[0])}.`);
+  }
+
+  function aplicarPreset(ids, nome) {
+    const valores = PRESETS_LUMETRI.find(([n]) => n === nome)?.[1];
+    const alvos = itensAlvo(ids).filter((i) => efeitoCabe(i, 'cor'));
+    if (!valores || !alvos.length) return;
+    alterar(() => {
+      for (const i of alvos) {
+        i.efeitos ??= {};
+        const lut = i.efeitos.cor?.lut ? { lut: i.efeitos.cor.lut, lutIntensidade: i.efeitos.cor.lutIntensidade } : {};
+        i.efeitos.cor = { ...padroesDe('cor'), ...valores, ...lut };
+        for (const p of Object.keys(i.keyframes ?? {})) if (p.startsWith('efeitos.cor.')) delete i.keyframes[p];
+        limparKeyframes(i);
+      }
+    });
+    avisar(`Predefinição "${nome}" aplicada.`);
+  }
+
+  function removerEfeitos(ids) {
+    const alvos = itensAlvo(ids).filter((i) => i.efeitos);
+    if (!alvos.length) return;
+    alterar(() => {
+      for (const i of alvos) {
+        delete i.efeitos;
+        for (const p of Object.keys(i.keyframes ?? {})) if (p.startsWith('efeitos.')) delete i.keyframes[p];
+        limparKeyframes(i);
+      }
+    });
+  }
+
+  // Transição de entrada: a mesma regra do inspetor (encosta no anterior, se houver; alinha onde houver sobra).
+  function aplicarTransicaoEntrada(ids, tipo, duracao = 0.5) {
+    const alvos = itensAlvo(ids).filter((i) => !ehAudio(trilhaDe(i.id)) && i.tipo !== 'ajuste');
+    if (!alvos.length) return;
+    let seco = false;
+    alterar(() => {
+      for (const item of alvos) {
+        const trilha = trilhaDe(item.id);
+        const atual = (trilha.transicoes ?? []).find((x) => x.para === item.id);
+        trilha.transicoes = (trilha.transicoes ?? []).filter((x) => x.para !== item.id);
+        if (tipo) {
+          const { antes } = vizinhos(item, trilha);
+          const d = Math.max(umQuadro(), duracao);
+          const lugar = alinhamentoPossivel(antes, item, d);
+          if (!lugar) seco = true;
+          trilha.transicoes.push({ id: atual?.id ?? novoId(), tipo, duracao: arredondar(d), alinhamento: lugar ?? 'centro', ...(antes ? { de: antes.id } : {}), para: item.id });
+        }
+        if (!trilha.transicoes.length) delete trilha.transicoes;
+      }
+    });
+    if (seco) avisar('Falta sobra de arquivo em algum clipe: a transição fica seca em parte. Apare as pontas para dar folga.');
+  }
+
+  // Camada de ajuste: na faixa pedida se ela estiver livre nesse trecho; senão na faixa de vídeo mais alta, se livre;
+  // senão numa faixa nova acima de tudo.
+  function novaCamadaAjuste(inicio = s.tempo, duracao = 5, faixa = null) {
+    if (s.bloqueada) return;
+    const a = noQuadro(Math.max(0, inicio));
+    const d = Math.max(umQuadro(), arredondar(duracao));
+    const livre = (tr) => tr && !ehAudio(tr) && !tr.itens.some((o) => o.inicio < a + d - 0.001 && o.inicio + o.duracao > a + 0.001);
+    const item = { id: novoId(), tipo: 'ajuste', inicio: a, duracao: d, efeitos: { cor: padroesDe('cor') } };
+    alterar(() => {
+      const topo = s.t.trilhas.filter((tr) => !ehAudio(tr)).at(-1);
+      const tr = livre(faixa) ? faixa : livre(topo) ? topo : novaFaixa('video', { acimaDeTudo: true });
+      tr.itens.push(item);
+    });
+    selecionar(item.id);
+    mostrarAba('inspetor');
+  }
+
+  // Velocidade pelo menu: o trecho do arquivo fica o mesmo, a duração na timeline muda (com o vinculado junto).
+  function mudarVelocidade(ids, v) {
+    const alvos = itensAlvo(ids).filter((i) => i.tipo === 'video' || i.tipo === 'audio');
+    if (!alvos.length) return;
+    alterar(() => {
+      for (const i of alvos) {
+        const trecho = i.duracao * (i.velocidade ?? 1);
+        const dur = arredondar(trecho / v);
+        const fator = dur / i.duracao;
+        for (const kfs of Object.values(i.keyframes ?? {})) for (const k of kfs) k.t = arredondar(k.t * fator);
+        i.duracao = dur;
+        if (v === 1) delete i.velocidade;
+        else i.velocidade = v;
+      }
+    });
+  }
+
+  function vincular(ids) {
+    const alvos = itensAlvo(ids);
+    if (alvos.length < 2) return;
+    const v = 'k' + novoId();
+    alterar(() => alvos.forEach((i) => (i.vinculo = v)));
+  }
+
+  function desvincular(ids) {
+    const alvos = itensAlvo(ids).filter((i) => i.vinculo);
+    if (!alvos.length) return;
+    const vinculos = new Set(alvos.map((i) => i.vinculo));
+    alterar(() => todosItens().forEach((i) => vinculos.has(i.vinculo) && delete i.vinculo));
+  }
+
+  // ---------- LUTs (.cube em assets/) ----------
+
+  async function carregarLuts() {
+    const id = s.id;
+    try {
+      const luts = await api.listarLuts(id);
+      if (s.id === id) s.luts = luts;
+    } catch {
+      s.luts = [];
+    }
+  }
+
+  function camposDaLut(item) {
+    const caixa = document.createElement('div');
+    caixa.className = 'ins-lut';
+    const rotulo = document.createElement('label');
+    rotulo.textContent = 'LUT';
+    const sel = document.createElement('select');
+    const atual = item.efeitos?.cor?.lut ?? '';
+    for (const [v, t] of [['', 'Nenhuma'], ...(s.luts ?? []).map((n) => [n, n.replace(/\.cube$/i, '')])]) sel.append(new Option(t, v));
+    if (atual && !(s.luts ?? []).includes(atual)) sel.append(new Option(`${atual} (não encontrada)`, atual));
+    sel.value = atual;
+    sel.onchange = () =>
+      alterar(() => {
+        if (sel.value) item.efeitos.cor.lut = sel.value;
+        else {
+          delete item.efeitos.cor.lut;
+          delete item.efeitos.cor.lutIntensidade;
+        }
+      });
+    rotulo.append(sel);
+    const carregar = document.createElement('button');
+    carregar.textContent = 'Carregar LUT…';
+    carregar.title = 'Copia um arquivo .cube para os materiais do projeto';
+    carregar.disabled = s.bloqueada;
+    carregar.onclick = async () => {
+      try {
+        const nomes = await api.importarLuts(s.id);
+        if (!nomes.length) return;
+        await carregarLuts();
+        alterar(() => {
+          item.efeitos.cor.lut = nomes[0];
+        });
+        avisar(nomes.length > 1 ? `${nomes.length} LUTs carregadas; "${nomes[0]}" aplicada.` : `LUT "${nomes[0]}" aplicada.`);
+      } catch (e) {
+        avisar('LUT: ' + e.message.split('\n').at(-1).replace(/^Error: /, ''));
+      }
+    };
+    caixa.append(rotulo, carregar);
+    if (atual) caixa.append(criarCampo(item, ['efeitos.cor.lutIntensidade', 'Intensidade da LUT (%)', 'num', 1, 100]));
+    return caixa;
+  }
+
+  // ---------- aba Efeitos ----------
+
+  function entradaDeEfeito(nome, pedido, aoDuploClique, dica) {
+    const el = document.createElement('div');
+    el.className = 'fx-item';
+    el.textContent = nome;
+    el.title = dica ?? 'Arraste para um clipe ou clique duas vezes para aplicar aos selecionados';
+    el.draggable = true;
+    el.addEventListener('dragstart', (e) => {
+      s.arrastandoEfeito = pedido;
+      e.dataTransfer.setData('text/plain', nome);
+      e.dataTransfer.effectAllowed = 'copy';
+    });
+    el.addEventListener('dragend', () => {
+      s.arrastandoEfeito = null;
+      limparAlvosDeSoltar();
+    });
+    el.addEventListener('dblclick', aoDuploClique);
+    return el;
+  }
+
+  function desenharEfeitos() {
+    const box = qs('#efeitos');
+    if (!box) return;
+    const busca = (s.buscaEfeitos ?? '').trim().toLowerCase();
+    const casa = (n) => !busca || n.toLowerCase().includes(busca);
+    box.innerHTML = '';
+    const topo = document.createElement('div');
+    topo.className = 'fx-topo';
+    const campo = document.createElement('input');
+    campo.type = 'search';
+    campo.placeholder = 'Procurar efeitos';
+    campo.value = s.buscaEfeitos ?? '';
+    campo.oninput = () => {
+      s.buscaEfeitos = campo.value;
+      const pos = campo.selectionStart;
+      desenharEfeitos();
+      const novo = qs('#efeitos input[type=search]');
+      novo?.focus();
+      novo?.setSelectionRange(pos, pos);
+    };
+    topo.append(campo);
+    box.append(topo);
+    const selecionados = () => [...s.selecao];
+    const semSelecao = () => avisar('Selecione um ou mais clipes na timeline, ou arraste o efeito até o clipe.');
+    const pasta = (titulo, filhos, aberta = true) => {
+      if (!filhos.length) return null;
+      const d = document.createElement('details');
+      d.className = 'fx-pasta';
+      d.open = aberta || !!busca;
+      const sum = document.createElement('summary');
+      sum.textContent = titulo;
+      d.append(sum, ...filhos);
+      return d;
+    };
+    const ajuste = entradaDeEfeito('◐ Camada de ajuste', { tipo: 'ajuste' }, () => novaCamadaAjuste(), 'Arraste para uma faixa de vídeo, ou clique duas vezes para criar no cursor');
+    if (casa('camada de ajuste')) box.append(pasta('Novo item', [ajuste]));
+    const presets = PRESETS_LUMETRI.filter(([n]) => casa(n)).map(([n]) =>
+      entradaDeEfeito(n, { tipo: 'preset', id: n }, () => (s.selecao.size ? aplicarPreset(selecionados(), n) : semSelecao())),
+    );
+    const p1 = pasta('Predefinições Lumetri', presets, false);
+    if (p1) box.append(p1);
+    const subpastas = CATALOGO_EFEITOS.map(([sub, lista]) =>
+      pasta(sub, lista.filter(([, n]) => casa(n)).map(([id, n]) => entradaDeEfeito(n, { tipo: 'efeito', id }, () => (s.selecao.size ? aplicarEfeito(selecionados(), id) : semSelecao())))),
+    ).filter(Boolean);
+    const p2 = pasta('Efeitos de vídeo', subpastas);
+    if (p2) box.append(p2);
+    const transicoes = TRANSICOES.filter(([id, n]) => id && casa(n)).map(([id, n]) =>
+      entradaDeEfeito(n, { tipo: 'transicao', id }, () => (s.selecao.size ? aplicarTransicaoEntrada(selecionados(), id) : semSelecao()), 'Arraste para o começo de um clipe, ou clique duas vezes para pôr na entrada dos selecionados'),
+    );
+    const p3 = pasta('Transições de vídeo', transicoes, false);
+    if (p3) box.append(p3);
+    if (!box.querySelector('.fx-item')) {
+      const vazio = document.createElement('div');
+      vazio.className = 'tl-inspetor-tempo';
+      vazio.textContent = 'Nada com esse nome.';
+      box.append(vazio);
+    }
+  }
+
+  // Soltar um efeito num clipe (se o clipe faz parte da seleção, vale para a seleção toda), uma transição no começo
+  // dele, e a camada de ajuste numa faixa de vídeo, no ponto do mouse.
+  function ligarSoltarEfeitos() {
+    const trilhas = qs('#tl-trilhas');
+    const alvoDe = (e) => {
+      const p = s.arrastandoEfeito;
+      if (p.tipo === 'ajuste') {
+        const pista = e.target.closest('.tl-pista');
+        const tr = pista && s.t.trilhas.find((x) => x.id === pista.dataset.trilha);
+        return tr && !ehAudio(tr) ? { el: pista, tr } : null;
+      }
+      const clipe = e.target.closest('.tl-item');
+      const it = clipe && todosItens().find((i) => i.id === clipe.dataset.id);
+      if (!it) return null;
+      if (p.tipo === 'transicao' ? ehAudio(trilhaDe(it.id)) || it.tipo === 'ajuste' : !efeitoCabe(it, p.tipo === 'preset' ? 'cor' : p.id)) return null;
+      return { el: clipe, it };
+    };
+    trilhas.addEventListener('dragover', (e) => {
+      if (!s.arrastandoEfeito || s.bloqueada) return;
+      limparAlvosDeSoltar();
+      const alvo = alvoDe(e);
+      if (!alvo) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      alvo.el.classList.add(alvo.it ? 'alvo-troca' : 'alvo-soltar');
+      if (s.arrastandoEfeito.tipo === 'ajuste') mostrarGuia(imantar(tempoDoEvento(e), pontosDeImã(null)).valor);
+    });
+    trilhas.addEventListener('drop', (e) => {
+      const p = s.arrastandoEfeito;
+      if (!p || s.bloqueada) return;
+      const alvo = alvoDe(e);
+      e.preventDefault();
+      limparAlvosDeSoltar();
+      s.arrastandoEfeito = null;
+      if (!alvo) return;
+      if (p.tipo === 'ajuste') return novaCamadaAjuste(imantar(tempoDoEvento(e), pontosDeImã(null)).valor, 5, alvo.tr);
+      const ids = s.selecao.has(alvo.it.id) ? [...s.selecao] : [alvo.it.id];
+      if (p.tipo === 'efeito') aplicarEfeito(ids, p.id);
+      else if (p.tipo === 'preset') aplicarPreset(ids, p.id);
+      else if (p.tipo === 'transicao') aplicarTransicaoEntrada(ids, p.id);
+      if (!s.selecao.has(alvo.it.id)) selecionar(alvo.it.id);
+    });
+  }
+
+  // ---------- menu do botão direito ----------
+
+  function fecharMenu() {
+    document.querySelector('.tl-menu')?.remove();
+    window.removeEventListener('pointerdown', foraDoMenu, true);
+    window.removeEventListener('keydown', escDoMenu, true);
+    window.removeEventListener('blur', fecharMenu);
+  }
+  function foraDoMenu(e) {
+    if (!e.target.closest?.('.tl-menu')) fecharMenu();
+  }
+  function escDoMenu(e) {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    e.stopPropagation();
+    fecharMenu();
+  }
+
+  // entradas: { rotulo, acao, atalho, desativado, sub: [entradas] } | 'sep' | falsy (ignorada)
+  function montarMenu(entradas) {
+    const ul = document.createElement('div');
+    ul.className = 'tl-menu-lista';
+    let anterior = 'sep';
+    for (const e of entradas.filter(Boolean)) {
+      if (e === 'sep') {
+        if (anterior !== 'sep') ul.append(Object.assign(document.createElement('div'), { className: 'tl-menu-sep' }));
+        anterior = 'sep';
+        continue;
+      }
+      anterior = e;
+      const li = document.createElement('div');
+      li.className = 'tl-menu-item' + (e.desativado ? ' desativado' : '') + (e.sub ? ' com-sub' : '');
+      const r = document.createElement('span');
+      r.textContent = e.rotulo;
+      const a = document.createElement('span');
+      a.className = 'tl-menu-atalho';
+      a.textContent = e.sub ? '▸' : e.atalho ?? '';
+      li.append(r, a);
+      if (e.sub && !e.desativado) {
+        const sub = montarMenu(e.sub);
+        sub.classList.add('tl-menu-sub');
+        li.append(sub);
+        li.addEventListener('pointerenter', () => {
+          // Abre para o lado que cabe na tela.
+          sub.classList.remove('para-esquerda');
+          const r2 = li.getBoundingClientRect();
+          if (r2.right + 220 > window.innerWidth) sub.classList.add('para-esquerda');
+        });
+      } else if (!e.desativado && e.acao) {
+        li.addEventListener('click', () => {
+          fecharMenu();
+          e.acao();
+        });
+      }
+      ul.append(li);
+    }
+    if (ul.lastChild?.classList?.contains('tl-menu-sep')) ul.lastChild.remove();
+    return ul;
+  }
+
+  function abrirMenu(x, y, entradas) {
+    fecharMenu();
+    const menu = document.createElement('div');
+    menu.className = 'tl-menu';
+    menu.append(montarMenu(entradas));
+    document.body.append(menu);
+    const r = menu.getBoundingClientRect();
+    menu.style.left = Math.max(4, Math.min(x, window.innerWidth - r.width - 4)) + 'px';
+    menu.style.top = Math.max(4, Math.min(y, window.innerHeight - r.height - 4)) + 'px';
+    setTimeout(() => {
+      window.addEventListener('pointerdown', foraDoMenu, true);
+      window.addEventListener('keydown', escDoMenu, true);
+      window.addEventListener('blur', fecharMenu);
+    });
+  }
+
+  function menuDoItem(e, item) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!s.selecao.has(item.id)) selecionar(item.id);
+    const ids = [...s.selecao];
+    const alvos = itensAlvo(ids);
+    const travada = s.bloqueada;
+    const visuais = alvos.filter((i) => !ehAudio(trilhaDe(i.id)));
+    const comFonte = alvos.filter((i) => i.tipo === 'video' || i.tipo === 'audio');
+    const midias = alvos.filter((i) => i.tipo === 'video' || i.tipo === 'imagem');
+    const noCursor = alvos.some((i) => i.inicio < s.tempo - 0.001 && i.inicio + i.duracao > s.tempo + 0.001);
+    const vinculados = alvos.some((i) => i.vinculo);
+    const cabe = (id) => visuais.some((i) => efeitoCabe(i, id));
+    const menuEfeitos = CATALOGO_EFEITOS.map(([pasta, lista]) => ({
+      rotulo: pasta,
+      sub: lista.map(([id, n]) => ({ rotulo: n, acao: () => aplicarEfeito(ids, id), desativado: !cabe(id) })),
+    }));
+    const vel = comFonte.length === 1 ? comFonte[0].velocidade ?? 1 : null;
+    abrirMenu(e.clientX, e.clientY, [
+      { rotulo: 'Recortar', atalho: 'Ctrl+X', acao: () => copiarSelecao() && excluir(false), desativado: travada },
+      { rotulo: 'Copiar', atalho: 'Ctrl+C', acao: copiarSelecao },
+      { rotulo: 'Colar no cursor', atalho: 'Ctrl+V', acao: colarSelecao, desativado: travada || !areaTransferencia },
+      { rotulo: 'Excluir', atalho: 'Del', acao: () => excluir(false), desativado: travada },
+      { rotulo: 'Excluir e fechar o vão', atalho: 'Shift+Del', acao: () => excluir(true), desativado: travada },
+      'sep',
+      { rotulo: 'Dividir no cursor', atalho: 'S', acao: dividir, desativado: travada || !noCursor },
+      alvos.length > 1 && !vinculados && { rotulo: 'Vincular', acao: () => vincular(ids), desativado: travada },
+      vinculados && { rotulo: 'Desvincular', acao: () => desvincular(ids), desativado: travada },
+      'sep',
+      visuais.length && { rotulo: 'Adicionar efeito', sub: menuEfeitos, desativado: travada },
+      visuais.length && { rotulo: 'Predefinição Lumetri', sub: PRESETS_LUMETRI.map(([n]) => ({ rotulo: n, acao: () => aplicarPreset(ids, n) })), desativado: travada || !cabe('cor') },
+      visuais.some((i) => i.tipo !== 'ajuste') && {
+        rotulo: 'Transição de entrada',
+        sub: TRANSICOES.map(([id, n]) => ({ rotulo: n, acao: () => aplicarTransicaoEntrada(ids, id) })),
+        desativado: travada,
+      },
+      alvos.some((i) => i.efeitos) && { rotulo: 'Remover efeitos', acao: () => removerEfeitos(ids), desativado: travada },
+      'sep',
+      midias.length && { rotulo: 'Ajustar ao quadro', acao: () => alterar(() => midias.forEach((i) => (i.ajuste = 'contain'))), desativado: travada },
+      midias.length && { rotulo: 'Preencher o quadro', acao: () => alterar(() => midias.forEach((i) => (i.ajuste = 'cover'))), desativado: travada },
+      comFonte.length && {
+        rotulo: 'Velocidade',
+        sub: [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 4].map((v) => ({ rotulo: `${String(v).replace('.', ',')}x${vel === v ? '  ✓' : ''}`, acao: () => mudarVelocidade(ids, v) })),
+        desativado: travada,
+      },
+      'sep',
+      visuais.length && {
+        rotulo: 'Camada de ajuste por cima',
+        acao: () => {
+          const ini = Math.min(...alvos.map((i) => i.inicio));
+          novaCamadaAjuste(ini, Math.max(...alvos.map((i) => i.inicio + i.duracao)) - ini);
+        },
+        desativado: travada,
+      },
+    ]);
+  }
+
+  function menuDaFaixa(e, trilha) {
+    e.preventDefault();
+    const t = noQuadro(imantar(tempoDoEvento(e), pontosDeImã(null)).valor);
+    const travada = s.bloqueada;
+    const audio = ehAudio(trilha);
+    abrirMenu(e.clientX, e.clientY, [
+      { rotulo: 'Colar aqui', acao: () => { irPara(t); colarSelecao(); }, desativado: travada || !areaTransferencia },
+      !audio && { rotulo: 'Nova camada de ajuste aqui', acao: () => novaCamadaAjuste(t, 5, trilha), desativado: travada },
+      'sep',
+      { rotulo: 'Nova faixa de vídeo', acao: () => alterar(() => novaFaixa('video', { acimaDeTudo: true })), desativado: travada },
+      { rotulo: 'Nova faixa de áudio', acao: () => alterar(() => novaFaixa('audio')), desativado: travada },
+      !trilha.itens.length && s.t.trilhas.filter((x) => ehAudio(x) === audio).length > 1 && {
+        rotulo: 'Remover esta faixa',
+        acao: () => alterar(() => s.t.trilhas.splice(s.t.trilhas.indexOf(trilha), 1)),
+        desativado: travada,
+      },
+    ]);
   }
 
   // ---------- teclado e mouse ----------
@@ -2737,6 +3248,8 @@ const TL = (() => {
     qs('#tl-add-midia').onclick = async () => adicionarArquivos(await api.escolher({ tipo: 'materiais', multiplos: true }));
     qs('#tl-legendas').onclick = gerarLegendas;
     ligarSoltarMateriais();
+    ligarSoltarEfeitos();
+    desenharEfeitos();
     document.querySelectorAll('.abas-lateral button').forEach((b) => {
       b.onclick = () => mostrarAba(b.dataset.aba);
     });

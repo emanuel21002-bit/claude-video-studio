@@ -375,7 +375,10 @@ async function executarRender(id, { modo, formato, codec, motor: motorPedido, fp
   const baseH264 = precisaFinal ? path.join(tmp, 'base.mp4') : saida;
 
   let motor = 'remotion';
-  if (projeto.engine === 'remotion' && projeto.timeline && motorPedido === 'filmcraft') {
+  // Camada de ajuste só existe no app (o OTIO não leva): com ela o vídeo sai pelo Remotion, que a desenha.
+  const temAjuste = projeto.timeline && lerTimeline(id).trilhas.some((tr) => tr.itens.some((i) => i.tipo === 'ajuste'));
+  if (temAjuste && motorPedido === 'filmcraft') onEvento?.({ log: 'A timeline tem camada de ajuste: exportando pelo Remotion, que é quem a desenha.' });
+  if (projeto.engine === 'remotion' && projeto.timeline && motorPedido === 'filmcraft' && !temAjuste) {
     const { filmcraftDisponivel } = await import('./filmcraft.mjs');
     if (filmcraftDisponivel()) {
       try {

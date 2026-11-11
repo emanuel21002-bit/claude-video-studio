@@ -22,7 +22,8 @@ export const filmcraftDisponivel = () => temRecurso('filmcraft', 'filmcraft.exe'
 const pasta = (id) => path.join(caminhoTimeline(id), 'filmcraft');
 const projetoFc = (id) => path.join(pasta(id), 'projeto.fcproj');
 
-const temCamada = (i) => !i.arquivo;
+// A camada de ajuste não entra: ela não desenha nada sozinha (no Filmcraft o render cai no Remotion, ver render.mjs).
+const temCamada = (i) => !i.arquivo && i.tipo !== 'ajuste';
 
 const CAMADAS_GUARDADAS = 4;
 
@@ -32,7 +33,7 @@ function hashDaCamada(id, soGraficos) {
   const src = path.join(caminhoTimeline(id), 'src');
   const h = crypto.createHash('sha1').update(JSON.stringify(soGraficos));
   let codigo = '';
-  for (const n of ['index.ts', 'Root.tsx', 'TimelineVideo.tsx', 'blocos.tsx']) {
+  for (const n of ['index.ts', 'Root.tsx', 'TimelineVideo.tsx', 'lut.tsx', 'blocos.tsx']) {
     const c = path.join(src, n);
     if (!fs.existsSync(c)) continue;
     const txt = fs.readFileSync(c, 'utf8');

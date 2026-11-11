@@ -895,3 +895,35 @@ body.dock-arrastando video, body.dock-arrastando .previa-host, body.dock-arrasta
 .tl-fantasma { position: absolute; margin: 0; opacity: 0.85; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5); will-change: transform; pointer-events: none; }
 .tl-item.tl-origem { opacity: 0.35; }
 body.movendo-itens, body.movendo-itens * { cursor: grabbing !important; }
+
+/* Inserir (Ctrl ao soltar): os fantasmas mostram que o resto da faixa vai ser empurrado */
+.tl-fantasmas.inserindo .tl-fantasma { outline: 2px dashed #f0c25a; outline-offset: -2px; }
+
+/* Camada de ajuste na timeline */
+.item-ajuste { background: repeating-linear-gradient(135deg, #4b4f63 0 8px, #42465a 8px 16px); }
+
+/* Aba Efeitos (como o painel Efeitos do Filmcraft) */
+.fx-topo { position: sticky; top: -10px; z-index: 1; padding: 0 0 8px; background: inherit; }
+.fx-topo input { width: 100%; }
+.fx-pasta { margin: 2px 0; }
+.fx-pasta > summary { cursor: pointer; padding: 3px 2px; font-size: 12px; color: var(--fraco); user-select: none; }
+.fx-pasta .fx-pasta { margin-left: 12px; }
+.fx-item { margin-left: 14px; padding: 3px 8px; border-radius: 4px; font-size: 12px; cursor: grab; user-select: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fx-item:hover { background: rgba(255, 255, 255, 0.07); }
+.fx-item:active { cursor: grabbing; }
+
+/* LUT no Lumetri do inspetor */
+.ins-lut { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 6px; padding: 6px 0 0; border-top: 1px dashed rgba(255, 255, 255, 0.1); }
+.ins-lut button { align-self: flex-start; }
+
+/* Menu do botão direito */
+.tl-menu { position: fixed; z-index: 1000; }
+.tl-menu-lista { min-width: 210px; padding: 4px 0; background: #26272f; border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); font-size: 12.5px; }
+.tl-menu-item { position: relative; display: flex; justify-content: space-between; gap: 18px; padding: 5px 12px; cursor: default; white-space: nowrap; color: #e8e8ee; }
+.tl-menu-item:hover:not(.desativado) { background: #3d6fd1; color: #fff; }
+.tl-menu-item.desativado { opacity: 0.4; }
+.tl-menu-atalho { opacity: 0.6; }
+.tl-menu-sep { height: 1px; margin: 4px 0; background: rgba(255, 255, 255, 0.1); }
+.tl-menu-sub { display: none; position: absolute; top: -5px; left: 100%; }
+.tl-menu-sub.para-esquerda { left: auto; right: 100%; }
+.tl-menu-item.com-sub:hover > .tl-menu-sub { display: block; }

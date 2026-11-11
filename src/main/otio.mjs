@@ -130,6 +130,19 @@ function opacityDe(item) {
 
 const fx = (effect, params) => ({ effect, enabled: true, params });
 
+// Pasta assets/ do projeto sendo exportado: a LUT vai para o Lumetri do Filmcraft com o caminho completo.
+let assetsAtual = null;
+
+// LUT com intensidade cheia é a "LUT de entrada" (antes da correção básica, como na prévia); com outra intensidade
+// vira o look criativo, que é o que tem intensidade no Lumetri.
+function paramsDaLut(cor) {
+  if (!cor?.lut || !assetsAtual) return {};
+  const arq = path.join(assetsAtual, cor.lut);
+  const intensidade = cor.lutIntensidade ?? 100;
+  if (intensidade === 100) return { input_lut: { value: { Text: arq } } };
+  return { creative_on: { value: { Bool: true } }, look_lut: { value: { Text: arq } }, look_intensity: { value: { Float: intensidade } } };
+}
+
 function efeitosExtras(item) {
   const e = item.efeitos ?? {};
   const kf = item.keyframes ?? {};
@@ -139,7 +152,13 @@ function efeitosExtras(item) {
     lista.push(fx('lumetri', {
       ...LUMETRI_PADRAO,
       ...item.filmcraft?.lumetri,
-      ...(e.cor ? { exposure: num('cor.exposicao', 0), contrast: num('cor.contraste', 0), saturation: num('cor.saturacao', 100), temperature: num('cor.temperatura', 0), tint: num('cor.matiz', 0) } : {}),
+      ...(e.cor
+        ? {
+            exposure: num('cor.exposicao', 0), contrast: num('cor.contraste', 0), saturation: num('cor.saturacao', 100), temperature: num('cor.temperatura', 0), tint: num('cor.matiz', 0),
+            highlights: num('cor.destaques', 0), shadows: num('cor.sombras', 0), whites: num('cor.brancos', 0), blacks: num('cor.pretos', 0), vibrance: num('cor.vibracao', 0),
+            ...paramsDaLut(e.cor),
+          }
+        : {}),
     }));
   }
   if (e.desfoque) lista.push(fx('gaussian_blur', { blurriness: num('desfoque.raio', 0) }));
@@ -301,8 +320,11 @@ function configuracao(t, hdr) {
 // camada: vídeo transparente com texto, legendas e blocos, já renderizado pelo Remotion.
 export function paraOtio(t, projeto, { assets, camada, hdr = false } = {}) {
   const fps = t.fps;
+  assetsAtual = assets ?? null;
   const materiais = [...(projeto.materiais ?? []), ...(projeto.narracao ? [{ ...projeto.narracao, tipo: 'audio' }] : [])];
   const avisos = [];
+  const ajustes = t.trilhas.flatMap((tr) => tr.itens).filter((i) => i.tipo === 'ajuste').length;
+  if (ajustes) avisos.push(`${ajustes > 1 ? `${ajustes} camadas de ajuste ficam` : 'A camada de ajuste fica'} só no app: o Filmcraft não as recebe, e o render com elas sai pelo Remotion.`);
   const videos = [];
   const audios = [];
   const comAudio = [];
@@ -406,7 +428,13 @@ function aplicarMotion(item, params, t, materiais) {
 }
 
 const MAPA_EFEITOS = {
-  lumetri: { chave: 'cor', campos: { exposure: ['exposicao', 0], contrast: ['contraste', 0], saturation: ['saturacao', 100], temperature: ['temperatura', 0], tint: ['matiz', 0] } },
+  lumetri: {
+    chave: 'cor',
+    campos: {
+      exposure: ['exposicao', 0], contrast: ['contraste', 0], saturation: ['saturacao', 100], temperature: ['temperatura', 0], tint: ['matiz', 0],
+      highlights: ['destaques', 0], shadows: ['sombras', 0], whites: ['brancos', 0], blacks: ['pretos', 0], vibrance: ['vibracao', 0],
+    },
+  },
   gaussian_blur: { chave: 'desfoque', campos: { blurriness: ['raio', 0] } },
   crop: { chave: 'corte', campos: { left: ['esquerda', 0], top: ['cima', 0], right: ['direita', 0], bottom: ['baixo', 0] } },
   vignette: { chave: 'vinheta', campos: { amount: ['quantidade', -50] } },
@@ -414,9 +442,9 @@ const MAPA_EFEITOS = {
 const MAPA_LIGADOS = { black_white: 'pb', invert: 'inverter', horizontal_flip: 'espelhoH', vertical_flip: 'espelhoV' };
 
 // Lumetri além do básico (curvas, LUTs, looks) não tem como desenhar aqui: segue guardado para o Filmcraft.
-function lumetriExtra(params) {
+function lumetriExtra(params, tambem = []) {
   const extra = {};
-  const conhecidos = Object.keys(MAPA_EFEITOS.lumetri.campos);
+  const conhecidos = [...Object.keys(MAPA_EFEITOS.lumetri.campos), ...tambem];
   for (const [k, v] of Object.entries(params)) {
     if (conhecidos.includes(k)) continue;
     if (JSON.stringify(v) !== JSON.stringify(LUMETRI_PADRAO[k])) extra[k] = v;
@@ -452,10 +480,22 @@ function aplicarEfeitos(item, efeitos, avisos) {
       else novos[mapa.chave][campo] = lido.valor ?? padrao;
     }
     if (e.effect === 'lumetri') {
-      const extra = lumetriExtra(e.params ?? {});
+      // LUT que está em assets/ volta para o app (de entrada, ou o look com a intensidade dele).
+      const texto = (k) => e.params?.[k]?.value?.Text ?? '';
+      const lidas = [];
+      for (const [k, intens] of [['input_lut', null], ['look_lut', 'look_intensity']]) {
+        const arq = texto(k);
+        if (!arq || novos.cor.lut || !fs.existsSync(arq) || path.basename(path.dirname(arq)) !== 'assets') continue;
+        novos.cor.lut = path.basename(arq);
+        const i = intens ? lerFloat(item, e.params?.[intens]).valor : null;
+        if (i != null && i !== 100) novos.cor.lutIntensidade = i;
+        lidas.push(k, ...(intens ? [intens] : []));
+      }
+      if (lidas.includes('look_lut')) lidas.push('creative_on');
+      const extra = lumetriExtra(e.params ?? {}, lidas);
       if (Object.keys(extra).length) {
         (item.filmcraft ??= {}).lumetri = extra;
-        avisos.push(`${item.arquivo}: curvas, LUT ou look do Lumetri valem só no Filmcraft; a prévia usa exposição, contraste, saturação, temperatura e matiz.`);
+        avisos.push(`${item.arquivo}: curvas, rodas de cor ou look pronto do Lumetri valem só no Filmcraft; a prévia usa a correção básica, a vibração e a LUT.`);
       }
     }
   }

@@ -9,7 +9,7 @@ import { todosEstilos, excluirEstilo, FORMATOS } from './presets.mjs';
 import { listarMateriais,
   workspacePronto, prepararWorkspace, criarProjeto, novaTimeline, videosNarrados, timelineEmBranco, duplicarTimeline, renomearTimeline, renomearProjeto, excluirTimeline,
   listarProjetos, lerProjeto, gravarProjeto, escreverBriefing, caminhoProjeto, tipoDe, resolverNarracoes, atualizarDocumentacao, dirs,
-  adicionarRoteiros, removerRoteiro, timelinesDoProjeto,
+  adicionarRoteiros, removerRoteiro, timelinesDoProjeto, caminhoAssets,
 } from './workspace.mjs';
 import { migrarProjetos, haProjetosAntigos, PASTA_ANTIGOS } from './migracao.mjs';
 import { decuparAudio } from './decupar.mjs';
@@ -174,6 +174,33 @@ ipcMain.handle('escolherPastas', async () => {
 });
 
 ipcMain.handle('narracoes:resolver', (_e, caminhos) => resolverNarracoes(caminhos));
+
+// ---------- LUTs (.cube) do Lumetri: ficam em assets/ do projeto, como os outros materiais ----------
+
+const ehLut = (n) => /\.cube$/i.test(n);
+ipcMain.handle('lut:listar', (_e, id) => {
+  const dir = caminhoAssets(id);
+  return fs.existsSync(dir) ? fs.readdirSync(dir).filter(ehLut).sort((a, b) => a.localeCompare(b)) : [];
+});
+// Copia as LUTs escolhidas para assets/; o mesmo arquivo de novo não duplica, e nome igual com conteúdo diferente
+// ganha um número, para não sobrescrever o que outra timeline usa.
+ipcMain.handle('lut:importar', async (_e, id) => {
+  const r = await dialog.showOpenDialog(janela, { title: 'Carregar LUT', properties: ['openFile', 'multiSelections'], filters: [{ name: 'LUT 3D (.cube)', extensions: ['cube'] }] });
+  if (r.canceled) return [];
+  const dir = caminhoAssets(id);
+  fs.mkdirSync(dir, { recursive: true });
+  const nomes = [];
+  for (const origem of r.filePaths) {
+    const conteudo = fs.readFileSync(origem);
+    if (!/LUT_3D_SIZE/i.test(conteudo.toString('utf8', 0, Math.min(conteudo.length, 65536)))) throw new Error(`${path.basename(origem)} não é uma LUT 3D (.cube com LUT_3D_SIZE).`);
+    const base = path.basename(origem, path.extname(origem)).replace(/[^\w\- .()À-ú]/g, '_');
+    let nome = `${base}.cube`;
+    for (let n = 2; fs.existsSync(path.join(dir, nome)) && !fs.readFileSync(path.join(dir, nome)).equals(conteudo); n++) nome = `${base} (${n}).cube`;
+    if (!fs.existsSync(path.join(dir, nome))) fs.writeFileSync(path.join(dir, nome), conteudo);
+    nomes.push(nome);
+  }
+  return nomes;
+});
 
 ipcMain.handle('tipoArquivo', (_e, arquivo) => tipoDe(arquivo));
 ipcMain.handle('mostrarNaPasta', (_e, arquivo) => shell.showItemInFolder(arquivo));

@@ -10,11 +10,12 @@ import { infoVideo, TONEMAP, TONEMAP_GPU, ENCODERS_GPU, encoderGpu } from './tra
 import { FORMATOS } from './presets.mjs';
 
 const aqui = path.dirname(fileURLToPath(import.meta.url));
-const MODELO = ['index.ts', 'Root.tsx', 'TimelineVideo.tsx', 'blocos.tsx', 'previa.tsx'];
+const MODELO = ['index.ts', 'Root.tsx', 'TimelineVideo.tsx', 'lut.tsx', 'blocos.tsx', 'previa.tsx'];
 
 // Como no Filmcraft e no CapCut, só há faixas de vídeo (V1, V2…, a de cima cobre a de baixo) e de áudio (A1, A2…).
 // Qualquer item visual cabe em qualquer faixa de vídeo.
-const VISUAIS = ['video', 'imagem', 'texto', 'bloco', 'legenda'];
+// ajuste: camada de ajuste (sem arquivo); os efeitos dela valem para tudo o que está nas faixas de vídeo abaixo.
+const VISUAIS = ['video', 'imagem', 'texto', 'bloco', 'legenda', 'ajuste'];
 const TIPOS_POR_TRILHA = { video: VISUAIS, audio: ['audio'] };
 // Tipos antigos de faixa, convertidos ao ler a timeline.
 const TIPOS_ANTIGOS = { sobreposicao: 'video', legenda: 'video' };
@@ -113,6 +114,8 @@ export function validarTimeline(id, t) {
       if (['video', 'imagem', 'audio'].includes(i.tipo) && !fs.existsSync(path.join(assets, i.arquivo ?? ''))) {
         erros.push(`${nome}: arquivo "${i.arquivo}" não está em assets/.`);
       }
+      const lut = i.efeitos?.cor?.lut;
+      if (lut && !fs.existsSync(path.join(assets, lut))) erros.push(`${nome}: LUT "${lut}" não está em assets/.`);
       if (i.mesclagem && !MESCLAGENS.includes(i.mesclagem)) erros.push(`${nome}: mesclagem "${i.mesclagem}" não existe (use ${MESCLAGENS.join(', ')}).`);
       for (const [param, kfs] of Object.entries(i.keyframes ?? {})) {
         if (!Array.isArray(kfs) || kfs.some((k) => !(k.t >= 0) || typeof k.v !== 'number')) erros.push(`${nome}: keyframes de "${param}" precisam de t >= 0 e v numérico.`);

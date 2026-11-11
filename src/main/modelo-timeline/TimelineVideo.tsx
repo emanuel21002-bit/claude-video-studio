@@ -13,6 +13,7 @@ import { loadFont as redHatDisplay } from '@remotion/google-fonts/RedHatDisplay'
 import { loadFont as redHatText } from '@remotion/google-fonts/RedHatText';
 import { loadFont as roboto } from '@remotion/google-fonts/Roboto';
 import { blocos } from './blocos';
+import { ImagemComLut, VideoComLut, type PedidoLut } from './lut';
 
 // Desenha o vídeo a partir de timeline.json. O mesmo componente roda no render e na prévia ao vivo do app.
 // Este arquivo é mantido pelo app: efeitos novos vão em blocos.tsx.
@@ -83,8 +84,34 @@ function parametro(item: any, caminho: string, t: number, padrao: number): numbe
 
 // ---------- efeitos ----------
 
-function filtroCss(item: any, t: number, idCor: string, temCor: boolean) {
-  const e = item.efeitos ?? {};
+// Curva de tons do Lumetri (destaques, sombras, brancos, pretos), em 17 pontos para o feComponentTransfer.
+function curvaDeTons(destaques: number, sombras: number, brancos: number, pretos: number) {
+  const pts: string[] = [];
+  for (let k = 0; k <= 16; k++) {
+    const x = k / 16;
+    let y = x;
+    y += (sombras / 100) * 0.35 * x * (1 - x) * (1 - x) * 2.2;
+    y += (destaques / 100) * 0.35 * x * x * (1 - x) * 2.2;
+    y += (pretos / 100) * 0.12 * Math.pow(1 - x, 3);
+    y += (brancos / 100) * 0.12 * Math.pow(x, 3);
+    pts.push(Math.max(0, Math.min(1, y)).toFixed(4));
+  }
+  return pts.join(' ');
+}
+
+// LUTs pedidas por um item: a dele (efeitos.cor.lut) e as das camadas de ajuste ativas acima dele.
+function lutsDe(item: any, ajustes: any[], tAbs: number, url: (a: string) => string): PedidoLut[] {
+  const lista: PedidoLut[] = [];
+  const de = (alvo: any) => {
+    const c = alvo.efeitos?.cor;
+    if (c?.lut) lista.push({ url: url(c.lut), intensidade: c.lutIntensidade ?? 100 });
+  };
+  de(item);
+  for (const aj of ajustes) if (tAbs >= aj.inicio && tAbs < aj.inicio + aj.duracao) de(aj);
+  return lista;
+}
+
+function filtroCss(item: any, e: any, t: number, idCor: string, temCor: boolean) {
   const f: string[] = [];
   const n = (c: string, p: number) => parametro(item, 'efeitos.' + c, t, p);
   if (e.cor) {
@@ -100,25 +127,39 @@ function filtroCss(item: any, t: number, idCor: string, temCor: boolean) {
   return f.join(' ') || undefined;
 }
 
-function Efeitos({ item, t, children }: { item: any; t: number; children: React.ReactNode }) {
-  const e = item.efeitos ?? {};
+// soCor: a camada de ajuste passando seus efeitos para quem está embaixo (cor, desfoque, P&B, inverter);
+// a vinheta dela é desenhada uma vez só, na própria camada.
+function Efeitos({ item, t, children, soCor = false, sufixo = '' }: { item: any; t: number; children: React.ReactNode; soCor?: boolean; sufixo?: string }) {
+  const e0 = item.efeitos ?? {};
   if (!item.efeitos) return <>{children}</>;
-  const idCor = `cor-${String(item.id).replace(/[^\w-]/g, '')}`;
+  const e = soCor ? { cor: e0.cor, desfoque: e0.desfoque, pb: e0.pb, inverter: e0.inverter } : e0;
+  const idCor = `cor-${String(item.id).replace(/[^\w-]/g, '')}${sufixo}`;
   const n = (c: string, p: number) => parametro(item, 'efeitos.' + c, t, p);
   const temp = e.cor ? n('cor.temperatura', 0) / 100 : 0;
   const matiz = e.cor ? n('cor.matiz', 0) / 100 : 0;
-  const temCor = !!(temp || matiz);
+  const tons = e.cor ? [n('cor.destaques', 0), n('cor.sombras', 0), n('cor.brancos', 0), n('cor.pretos', 0)] : [0, 0, 0, 0];
+  const temTons = tons.some((x) => x);
+  const vib = e.cor ? n('cor.vibracao', 0) / 100 : 0;
+  const temCor = !!(temp || matiz || temTons || vib);
   const corte = e.corte
     ? `inset(${n('corte.cima', 0)}% ${n('corte.direita', 0)}% ${n('corte.baixo', 0)}% ${n('corte.esquerda', 0)}%)`
     : undefined;
   const espelho = [e.espelhoH ? 'scaleX(-1)' : '', e.espelhoV ? 'scaleY(-1)' : ''].join(' ').trim() || undefined;
   const vinheta = e.vinheta ? n('vinheta.quantidade', -50) : 0;
   return (
-    <AbsoluteFill style={{ clipPath: corte, transform: espelho, filter: filtroCss(item, t, idCor, temCor), alignItems: 'center', justifyContent: 'center' }}>
+    <AbsoluteFill style={{ clipPath: corte, transform: espelho, filter: filtroCss(item, e, t, idCor, temCor), alignItems: 'center', justifyContent: 'center' }}>
       {temCor ? (
         <svg style={{ position: 'absolute', width: 0, height: 0 }}>
           <filter id={idCor} colorInterpolationFilters="sRGB">
+            {temTons ? (
+              <feComponentTransfer>
+                <feFuncR type="table" tableValues={curvaDeTons(tons[0], tons[1], tons[2], tons[3])} />
+                <feFuncG type="table" tableValues={curvaDeTons(tons[0], tons[1], tons[2], tons[3])} />
+                <feFuncB type="table" tableValues={curvaDeTons(tons[0], tons[1], tons[2], tons[3])} />
+              </feComponentTransfer>
+            ) : null}
             <feColorMatrix type="matrix" values={`${1 + temp * 0.25} 0 0 0 0 0 ${1 - matiz * 0.2} 0 0 0 0 0 ${1 - temp * 0.25} 0 0 0 0 0 1 0`} />
+            {vib ? <feColorMatrix type="saturate" values={String(Math.max(0, 1 + vib * 0.6))} /> : null}
           </filter>
         </svg>
       ) : null}
@@ -258,7 +299,7 @@ function animacao(item: any, frame: number, fps: number, total: number) {
   return { opacidade, dx, dy, escala };
 }
 
-function Caixa({ item, durFrames, atraso = 0, children }: { item: any; durFrames: number; atraso?: number; children: React.ReactNode }) {
+function Caixa({ item, durFrames, atraso = 0, ajustes = [], children }: { item: any; durFrames: number; atraso?: number; ajustes?: any[]; children: React.ReactNode }) {
   const { fps } = useVideoConfig();
   // Quem entra por transição começa antes do seu início: tempos e animações continuam contando dele.
   const frame = useCurrentFrame() - Math.round(atraso * fps);
@@ -275,7 +316,17 @@ function Caixa({ item, durFrames, atraso = 0, children }: { item: any; durFrames
   ].join(' ');
   return (
     <AbsoluteFill style={{ opacity: parametro(item, 'opacidade', t, 1) * a.opacidade, transform, alignItems: 'center', justifyContent: 'center' }}>
-      <Efeitos item={item} t={t}>{children}</Efeitos>
+      <Efeitos item={item} t={t}>
+        {ajustes.reduce((dentro: React.ReactNode, aj: any) => {
+          const tAj = item.inicio + t - aj.inicio;
+          if (tAj < 0 || tAj >= aj.duracao) return dentro;
+          return (
+            <Efeitos item={aj} t={tAj} soCor sufixo={`-${String(item.id).replace(/[^\w-]/g, '')}`}>
+              {dentro}
+            </Efeitos>
+          );
+        }, children)}
+      </Efeitos>
     </AbsoluteFill>
   );
 }
@@ -322,7 +373,21 @@ function Legenda({ item }: { item: any }) {
   );
 }
 
-function Item({ item, fps, url, volumeTrilha, proxies, atraso = 0 }: { item: any; fps: number; url: (a: string) => string; volumeTrilha: number; proxies?: Record<string, string | null>; atraso?: number }) {
+// Camada de ajuste: os efeitos valem para tudo o que está nas faixas de baixo (ver Caixa); aqui só a vinheta.
+function CamadaAjuste({ item }: { item: any }) {
+  const { fps } = useVideoConfig();
+  const t = useCurrentFrame() / fps;
+  if (!item.efeitos?.vinheta) return null;
+  const v = parametro(item, 'efeitos.vinheta.quantidade', t, -50);
+  if (!v) return null;
+  return <AbsoluteFill style={{ opacity: parametro(item, 'opacidade', t, 1), background: `radial-gradient(ellipse at center, transparent 45%, ${v < 0 ? 'rgba(0,0,0,' : 'rgba(255,255,255,'}${Math.abs(v) / 100}) 100%)` }} />;
+}
+
+function Item({ item, fps, url, volumeTrilha, proxies, atraso = 0, ajustes = [] }: { item: any; fps: number; url: (a: string) => string; volumeTrilha: number; proxies?: Record<string, string | null>; atraso?: number; ajustes?: any[] }) {
+  const quadro = useCurrentFrame();
+  if (item.tipo === 'ajuste') return <CamadaAjuste item={item} />;
+  const tAbs = item.inicio - atraso + quadro / fps;
+  const luts = item.tipo === 'video' || item.tipo === 'imagem' ? lutsDe(item, ajustes, tAbs, url) : [];
   const durFrames = Math.max(1, Math.round(item.duracao * fps));
   const velocidade = item.velocidade ?? 1;
   const trim = Math.max(0, Math.round(((item.corteInicio ?? 0) - atraso * velocidade) * fps));
@@ -347,8 +412,12 @@ function Item({ item, fps, url, volumeTrilha, proxies, atraso = 0 }: { item: any
     }
     const estilo: React.CSSProperties = { width: '100%', height: '100%', objectFit: item.ajuste ?? 'cover' };
     return (
-      <Caixa item={item} durFrames={durFrames} atraso={atraso}>
-        <OffthreadVideo src={proxies?.[item.arquivo] ?? url(item.arquivo)} trimBefore={trim} playbackRate={velocidade} volume={(item.volume ?? 0) * volumeTrilha} muted={!(item.volume ?? 0) || !volumeTrilha} style={estilo} />
+      <Caixa item={item} durFrames={durFrames} atraso={atraso} ajustes={ajustes}>
+        {luts.length ? (
+          <VideoComLut luts={luts} src={proxies?.[item.arquivo] ?? url(item.arquivo)} trimBefore={trim} playbackRate={velocidade} volume={(item.volume ?? 0) * volumeTrilha} muted={!(item.volume ?? 0) || !volumeTrilha} style={estilo} />
+        ) : (
+          <OffthreadVideo src={proxies?.[item.arquivo] ?? url(item.arquivo)} trimBefore={trim} playbackRate={velocidade} volume={(item.volume ?? 0) * volumeTrilha} muted={!(item.volume ?? 0) || !volumeTrilha} style={estilo} />
+        )}
       </Caixa>
     );
   }
@@ -358,21 +427,21 @@ function Item({ item, fps, url, volumeTrilha, proxies, atraso = 0 }: { item: any
       ? { width: item.largura }
       : { width: '100%', height: '100%', objectFit: ajuste };
     return (
-      <Caixa item={item} durFrames={durFrames} atraso={atraso}>
-        <Img src={url(item.arquivo)} style={estilo} />
+      <Caixa item={item} durFrames={durFrames} atraso={atraso} ajustes={ajustes}>
+        {luts.length ? <ImagemComLut luts={luts} src={url(item.arquivo)} style={estilo} /> : <Img src={url(item.arquivo)} style={estilo} />}
       </Caixa>
     );
   }
   if (item.tipo === 'texto') {
     return (
-      <Caixa item={item} durFrames={durFrames}>
+      <Caixa item={item} durFrames={durFrames} ajustes={ajustes}>
         <div style={estiloTexto(item.estilo)}>{item.texto}</div>
       </Caixa>
     );
   }
   if (item.tipo === 'legenda') {
     return (
-      <Caixa item={item} durFrames={durFrames}>
+      <Caixa item={item} durFrames={durFrames} ajustes={ajustes}>
         <Legenda item={item} />
       </Caixa>
     );
@@ -381,7 +450,7 @@ function Item({ item, fps, url, volumeTrilha, proxies, atraso = 0 }: { item: any
     const Bloco = blocos[item.componente];
     if (!Bloco) return null;
     return (
-      <Caixa item={item} durFrames={durFrames}>
+      <Caixa item={item} durFrames={durFrames} ajustes={ajustes}>
         <Bloco {...(item.props ?? {})} duracaoFrames={durFrames} />
       </Caixa>
     );
@@ -389,7 +458,7 @@ function Item({ item, fps, url, volumeTrilha, proxies, atraso = 0 }: { item: any
   return null;
 }
 
-type PropsTrilha = { trilha: any; fps: number; url: (a: string) => string; proxies?: Record<string, string | null> };
+type PropsTrilha = { trilha: any; fps: number; url: (a: string) => string; proxies?: Record<string, string | null>; ajustes?: any[] };
 
 // Só na prévia: cada Sequence é refeita a cada quadro, mesmo fora da tela. Com janela, entram só os itens por perto.
 // A janela anda em blocos, para não refazer a lista a cada quadro; a folga cobre o tempo de preparar o próximo vídeo.
@@ -417,7 +486,7 @@ const Trilha: React.FC<PropsTrilha> = (props) => {
   return <ItensDaTrilha {...props} itens={itens} plano={plano} />;
 };
 
-const ItensDaTrilha = React.memo(({ trilha, fps, url, proxies, itens, plano }: PropsTrilha & { itens: any[]; plano: Map<string, any> }) => {
+const ItensDaTrilha = React.memo(({ trilha, fps, url, proxies, itens, plano, ajustes }: PropsTrilha & { itens: any[]; plano: Map<string, any> }) => {
   return (
     <>
       {itens.map((item: any) => {
@@ -434,7 +503,7 @@ const ItensDaTrilha = React.memo(({ trilha, fps, url, proxies, itens, plano }: P
             style={item.mesclagem ? { mixBlendMode: item.mesclagem } : undefined}
           >
             <Transicao plano={pl} inicio={inicio} fps={fps}>
-              <Item item={item} fps={fps} url={url} volumeTrilha={trilha.muda ? 0 : 1} proxies={proxies} atraso={adiantar} />
+              <Item item={item} fps={fps} url={url} volumeTrilha={trilha.muda ? 0 : 1} proxies={proxies} atraso={adiantar} ajustes={ajustes} />
             </Transicao>
           </Sequence>
         );
@@ -450,10 +519,15 @@ export const TimelineVideo: React.FC<{ timeline: any; baseAssets?: string; proxi
     () => (a: string) => (baseAssets ? baseAssets + encodeURIComponent(a) : staticFile(a)),
     [baseAssets],
   );
+  // Para cada faixa, as camadas de ajuste das faixas de vídeo acima dela (a mais próxima primeiro).
+  const ajustesAcima = useMemo(() => {
+    const visiveis = timeline.trilhas.map((tr: any) => (tr.tipo !== 'audio' && !tr.oculta ? tr.itens.filter((i: any) => i.tipo === 'ajuste' && i.efeitos) : []));
+    return timeline.trilhas.map((_: any, k: number) => visiveis.slice(k + 1).flat());
+  }, [timeline]);
   return (
     <AbsoluteFill style={{ backgroundColor: timeline.fundo ?? '#000' }}>
-      {timeline.trilhas.map((trilha: any) =>
-        trilha.oculta ? null : <Componente key={trilha.id} trilha={trilha} fps={fps} url={url} proxies={proxies} />,
+      {timeline.trilhas.map((trilha: any, k: number) =>
+        trilha.oculta ? null : <Componente key={trilha.id} trilha={trilha} fps={fps} url={url} proxies={proxies} ajustes={trilha.tipo === 'audio' ? undefined : ajustesAcima[k]} />,
       )}
     </AbsoluteFill>
   );
