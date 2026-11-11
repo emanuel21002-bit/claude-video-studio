@@ -367,7 +367,7 @@ async function gerarProxy(id, v) {
   const encoder = v.alpha ? null : ENCODERS_GPU[await encoderGpu()];
   if (encoder) {
     const gpu = (pre, filtro) => [
-      '-y', '-hide_banner', ...pre, '-i', entrada, '-map', '0:v:0', '-map', '0:a?', '-vf', filtro,
+      '-y', '-hide_banner', ...pre, '-i', entrada, '-map', '0:v:0', '-map', '0:a:0?', '-vf', filtro,
       ...encoder.args, '-g', '15', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', parcial,
     ];
     // HDR: tone mapping na GPU (libplacebo/Vulkan); se não rolar, tone mapping na CPU e só a codificação na GPU.

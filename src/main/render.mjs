@@ -90,8 +90,10 @@ async function copiaLeve(id, arquivo, t, itens, opts) {
   const par = (x) => Math.round((x * proporcao) / 2) * 2;
   const encoder = ENCODERS_GPU[await encoderGpu()];
   const parcial = destino + '.tmp.mp4';
+  // Só a primeira faixa de áudio: o iPhone grava junto o áudio espacial (apple_apac), que o ffmpeg não decodifica,
+  // e pedir todas as faixas (0:a?) fazia a cópia falhar com "Invalid argument" (código 4294967274).
   await etapa(opts.nome, carregar().ffmpegPath, [
-    '-y', '-hide_banner', '-i', origem, '-map', '0:v:0', '-map', '0:a?', '-vf', `scale=${par(info.largura)}:${par(info.altura)}${hdr ? ',' + TONEMAP : ''}`,
+    '-y', '-hide_banner', '-i', origem, '-map', '0:v:0', '-map', '0:a:0?', '-vf', `scale=${par(info.largura)}:${par(info.altura)}${hdr ? ',' + TONEMAP : ''}`,
     ...(encoder ? encoder.args : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '17']),
     // Quadro-chave a cada 0,5 s: buscar um quadro no meio do clipe fica bem mais rápido.
     '-g', '15', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '320k', parcial,

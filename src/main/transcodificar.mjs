@@ -197,7 +197,7 @@ export async function transcodificar(entrada, { formato = 'mp4', modo = 'gpu', s
   const placebo = modo === 'gpu' && info.hdr;
   if (placebo) args.push('-init_hw_device', 'vulkan');
   else if (modo === 'gpu') args.push('-hwaccel', hwaccel);
-  args.push('-i', entrada, '-map', '0:v:0', '-map', '0:a?');
+  args.push('-i', entrada, '-map', '0:v:0', '-map', '0:a:0?');
   args.push('-vf', (placebo ? TONEMAP_GPU : info.hdr ? TONEMAP : 'format=yuv420p') + filtroResolucao(resolucao, ajuste));
   if (escolhido) {
     args.push(...escolhido.args(qualidade ?? escolhido.q.padrao, velocidade).map(String));
