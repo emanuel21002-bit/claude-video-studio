@@ -927,3 +927,21 @@ body.movendo-itens, body.movendo-itens * { cursor: grabbing !important; }
 .tl-menu-sub { display: none; position: absolute; top: -5px; left: 100%; }
 .tl-menu-sub.para-esquerda { left: auto; right: 100%; }
 .tl-menu-item.com-sub:hover > .tl-menu-sub { display: block; }
+
+/* Atalhos de teclado */
+.cfg-atalhos { align-self: flex-start; margin-top: 4px; }
+.dlg-atalhos { width: min(640px, 92vw); max-height: 86vh; display: none; flex-direction: column; gap: 8px; }
+.dlg-atalhos[open] { display: flex; }
+.dlg-atalhos h2 { margin: 0; }
+.dlg-atalhos-dica { margin: 0; font-size: 12px; color: var(--fraco); }
+.dlg-atalhos-aviso { margin: 0; font-size: 12px; color: #f0c25a; }
+.dlg-atalhos input[type=search] { width: 100%; }
+.dlg-atalhos-lista { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
+.dlg-atalhos-lista h4 { margin: 12px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fraco); }
+.dlg-atalho { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; gap: 6px; padding: 3px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.05); font-size: 13px; }
+.dlg-atalho-teclas { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+.dlg-tecla { display: inline-flex; align-items: center; gap: 4px; padding: 1px 4px 1px 8px; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 4px; background: rgba(255, 255, 255, 0.06); font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+.dlg-tecla button { padding: 0 4px; border: none; background: none; font-size: 12px; line-height: 1; cursor: pointer; opacity: 0.7; }
+.dlg-tecla button:hover { opacity: 1; }
+.dlg-tecla.gravando { padding: 1px 8px; border-style: dashed; border-color: #f0c25a; color: #f0c25a; }
+.dlg-atalho > button { padding: 1px 8px; }

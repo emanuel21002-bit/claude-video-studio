@@ -20,6 +20,7 @@ export const PADRAO = {
   modeloClaude: 'claude-opus-5-5',
   esforcoClaude: 'high', // low | medium | high | xhigh
   apiKey: '',
+  atalhos: {}, // id da ação -> teclas, só o que o usuário mudou (ver ACOES_TECLADO em renderer/timeline.js)
   renderModo: 'gpu', // gpu | cpu
   loteModo: 'depois-da-primeira', // sequencial | depois-da-primeira | todos: como o Claude monta as timelines de um lote
   loteMaximo: 3, // quantas timelines o Claude monta ao mesmo tempo

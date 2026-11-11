@@ -1848,6 +1848,11 @@ async function oferecerFilaInterrompida() {
 }
 
 function ligar() {
+  // Atalhos de teclado: a janela é da timeline (lá estão as ações); daqui só abre.
+  $('#cfg-atalhos').onclick = () => {
+    $('#dlg-config').close();
+    TL.abrirAtalhos();
+  };
   renderEstilosUmaVez();
   ligarTranscode();
   ligarDecupar();

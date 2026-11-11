@@ -24,7 +24,6 @@ const TL = (() => {
   const EXT_ROTEIRO = /\.(pdf|docx|odt|txt|md|rtf)$/i;
   const FORMATOS = { '9:16': [1080, 1920], '16:9': [1920, 1080], '1:1': [1080, 1080], '4:5': [1080, 1350] };
   const ICONES = { video: '🎬', imagem: '🖼', audio: '🎵' };
-  const FERRAMENTAS = { v: 'selecao', b: 'ripple', n: 'roll', y: 'slip', u: 'slide', r: 'taxa', c: 'navalha' };
   const ANIMAVEIS = new Set(['x', 'y', 'escala', 'rotacao', 'opacidade', 'efeitos.cor.exposicao', 'efeitos.cor.contraste', 'efeitos.cor.saturacao', 'efeitos.cor.temperatura', 'efeitos.cor.matiz', 'efeitos.cor.destaques', 'efeitos.cor.sombras', 'efeitos.cor.brancos', 'efeitos.cor.pretos', 'efeitos.cor.vibracao', 'efeitos.desfoque.raio', 'efeitos.corte.esquerda', 'efeitos.corte.cima', 'efeitos.corte.direita', 'efeitos.corte.baixo', 'efeitos.vinheta.quantidade']);
 
   const s = {
@@ -2070,16 +2069,284 @@ const TL = (() => {
     box.querySelector('[data-a="inserir"]').disabled = s.bloqueada;
   }
 
-  // Atalhos da janela de origem com o mouse em cima dela: I e O marcam, K toca, setas andam um quadro, Esc fecha.
+  // ---------- atalhos de teclado (personalizáveis: Configurações ▸ Atalhos de teclado, ou Ctrl+Alt+K) ----------
+  // Cada ação tem teclas padrão; o que o usuário muda fica em config.atalhos[id] (só o que difere do padrão).
+  // Formato da tecla: modificadores na ordem Ctrl, Alt, Shift e a tecla (letra maiúscula, dígito, Space, ArrowLeft…).
+
+  const ACOES_TECLADO = [
+    ['desfazer', 'Editar', 'Desfazer', ['Ctrl+Z'], () => trocarEstado(s.desfazer, s.refazer)],
+    ['refazer', 'Editar', 'Refazer', ['Ctrl+Y', 'Ctrl+Shift+Z'], () => trocarEstado(s.refazer, s.desfazer)],
+    ['recortar', 'Editar', 'Recortar', ['Ctrl+X'], () => copiarSelecao() && !s.bloqueada && excluir(false)],
+    ['copiar', 'Editar', 'Copiar', ['Ctrl+C'], () => copiarSelecao()],
+    ['colar', 'Editar', 'Colar no cursor', ['Ctrl+V'], () => colarSelecao()],
+    ['selecionarTudo', 'Editar', 'Selecionar tudo', ['Ctrl+A'], () => selecionarVarios(todosItens().map((i) => i.id))],
+    ['excluir', 'Editar', 'Excluir', ['Delete', 'Backspace'], () => excluir(false)],
+    ['excluirFechar', 'Editar', 'Excluir e fechar o vão', ['Shift+Delete', 'Shift+Backspace'], () => excluir(true)],
+    ['dividir', 'Timeline', 'Dividir no cursor', ['S'], () => dividir()],
+    ['camadaAjuste', 'Timeline', 'Nova camada de ajuste no cursor', [], () => novaCamadaAjuste()],
+    ['texto', 'Timeline', 'Adicionar texto', [], () => adicionarTexto()],
+    ['ima', 'Timeline', 'Ligar ou desligar o ímã', [], () => qs('#tl-ima').click()],
+    ['ajustarNaTela', 'Timeline', 'Ajustar a timeline na tela', [], () => ajustarNaTela()],
+    ['tocar', 'Reprodução', 'Tocar / pausar', ['Space'], () => tocarOuPausar()],
+    ['quadroAntes', 'Reprodução', 'Um quadro para trás', ['ArrowLeft'], () => irPara(s.tempo - 1 / fps())],
+    ['quadroDepois', 'Reprodução', 'Um quadro para a frente', ['ArrowRight'], () => irPara(s.tempo + 1 / fps())],
+    ['segundoAntes', 'Reprodução', 'Um segundo para trás', ['Shift+ArrowLeft'], () => irPara(s.tempo - 1)],
+    ['segundoDepois', 'Reprodução', 'Um segundo para a frente', ['Shift+ArrowRight'], () => irPara(s.tempo + 1)],
+    ['inicio', 'Reprodução', 'Ir para o início', ['Home'], () => irPara(0)],
+    ['fim', 'Reprodução', 'Ir para o fim', ['End'], () => irPara(duracaoTotal())],
+    ['ferramenta.selecao', 'Ferramentas', 'Selecionar', ['V'], () => escolherFerramenta('selecao')],
+    ['ferramenta.ripple', 'Ferramentas', 'Ripple', ['B'], () => escolherFerramenta('ripple')],
+    ['ferramenta.roll', 'Ferramentas', 'Roll', ['N'], () => escolherFerramenta('roll')],
+    ['ferramenta.slip', 'Ferramentas', 'Slip', ['Y'], () => escolherFerramenta('slip')],
+    ['ferramenta.slide', 'Ferramentas', 'Slide', ['U'], () => escolherFerramenta('slide')],
+    ['ferramenta.taxa', 'Ferramentas', 'Velocidade pela duração', ['R'], () => escolherFerramenta('taxa')],
+    ['ferramenta.navalha', 'Ferramentas', 'Navalha', ['C'], () => escolherFerramenta('navalha')],
+    ['atalhos', 'App', 'Atalhos de teclado', ['Ctrl+Alt+K'], () => abrirAtalhos()],
+  ];
+  // Valem com o mouse sobre a janela de Origem (têm prioridade sobre os da timeline ali). Esc fecha, sempre.
+  const ACOES_FONTE = [
+    ['fonte.entrada', 'Origem', 'Marcar entrada', ['I'], () => acaoFonte('entrada')],
+    ['fonte.saida', 'Origem', 'Marcar saída', ['O'], () => acaoFonte('saida')],
+    ['fonte.tocar', 'Origem', 'Tocar / pausar a origem', ['K', 'Space'], () => acaoFonte('tocar')],
+    ['fonte.voltar', 'Origem', 'Um quadro para trás na origem', ['ArrowLeft'], () => acaoFonte('voltar')],
+    ['fonte.avancar', 'Origem', 'Um quadro para a frente na origem', ['ArrowRight'], () => acaoFonte('avancar')],
+    ['fonte.inserir', 'Origem', 'Inserir o trecho na timeline', [','], () => acaoFonte('inserir')],
+  ];
+  const TODAS_ACOES = [...ACOES_TECLADO, ...ACOES_FONTE];
+  const contextoDe = (id) => (id.startsWith('fonte.') ? ACOES_FONTE : ACOES_TECLADO);
+
+  function comboDe(e) {
+    if (['Control', 'Shift', 'Alt', 'Meta', 'AltGraph', 'CapsLock'].includes(e.key)) return null;
+    let nome;
+    if (/^Key[A-Z]$/.test(e.code)) nome = e.code.slice(3);
+    else if (/^Digit\d$/.test(e.code)) nome = e.code.slice(5);
+    else if (e.code === 'Space' || e.key === ' ') nome = 'Space';
+    else if (e.key.length === 1) nome = e.key.toUpperCase();
+    else nome = e.key;
+    return [(e.ctrlKey || e.metaKey) && 'Ctrl', e.altKey && 'Alt', e.shiftKey && 'Shift', nome].filter(Boolean).join('+');
+  }
+
+  const NOMES_TECLAS = { Space: 'Espaço', ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓', Delete: 'Del', Backspace: '⌫', Escape: 'Esc', Enter: 'Enter' };
+  const exibirTecla = (c) => (c ? c.split('+').map((p) => NOMES_TECLAS[p] ?? p).join('+') : '');
+  const padraoDe = (id) => TODAS_ACOES.find((a) => a[0] === id)?.[3] ?? [];
+  const teclasDe = (id) => estado.config?.atalhos?.[id] ?? padraoDe(id);
+  const teclaDe = (id) => exibirTecla(teclasDe(id)[0]);
+  const acaoDoCombo = (combo, lista) => lista.find(([id]) => teclasDe(id).includes(combo));
+
+  // Atalhos da janela de origem com o mouse em cima dela (I e O marcam, K toca, setas andam um quadro, Esc fecha).
   function teclaDaFonte(e) {
-    if (!fonte.m || !fonte.sobre || e.ctrlKey || e.metaKey || e.altKey) return false;
-    const k = e.key.toLowerCase();
-    const mapa = { i: 'entrada', o: 'saida', k: 'tocar', ' ': 'tocar', arrowleft: 'voltar', arrowright: 'avancar', ',': 'inserir' };
-    if (k === 'escape') fecharFonte();
-    else if (mapa[k]) acaoFonte(mapa[k]);
-    else return false;
+    if (!fonte.m || !fonte.sobre) return false;
+    if (e.key === 'Escape') fecharFonte();
+    else {
+      const acao = acaoDoCombo(comboDe(e), ACOES_FONTE);
+      if (!acao) return false;
+      acao[4]();
+    }
     e.preventDefault();
     return true;
+  }
+
+  // Dicas dos botões com a tecla atual.
+  const DICAS = [
+    ['#tl-ferramentas [data-f="selecao"]', 'ferramenta.selecao', 'Selecionar, mover e aparar'],
+    ['#tl-ferramentas [data-f="ripple"]', 'ferramenta.ripple', 'Ripple: apara e empurra o resto da trilha'],
+    ['#tl-ferramentas [data-f="roll"]', 'ferramenta.roll', 'Roll: move o corte entre dois clipes'],
+    ['#tl-ferramentas [data-f="slip"]', 'ferramenta.slip', 'Slip: troca o trecho do arquivo sem mover o clipe'],
+    ['#tl-ferramentas [data-f="slide"]', 'ferramenta.slide', 'Slide: desliza o clipe entre os vizinhos'],
+    ['#tl-ferramentas [data-f="taxa"]', 'ferramenta.taxa', 'Muda a velocidade esticando a ponta do clipe'],
+    ['#tl-ferramentas [data-f="navalha"]', 'ferramenta.navalha', 'Navalha: clique para cortar'],
+    ['#tl-dividir', 'dividir', 'Dividir no cursor'],
+    ['#tl-excluir', 'excluir', 'Excluir'],
+    ['#tl-copiar', 'copiar', 'Copiar os itens selecionados'],
+    ['#tl-colar', 'colar', 'Colar no cursor'],
+    ['#tl-desfazer', 'desfazer', 'Desfazer'],
+    ['#tl-refazer', 'refazer', 'Refazer'],
+    ['#tl-tocar', 'tocar', 'Tocar / pausar'],
+  ];
+  function atualizarDicas() {
+    for (const [sel, id, base] of DICAS) {
+      const el = qs(sel);
+      if (!el) continue;
+      const t = teclasDe(id).map(exibirTecla).join(' ou ');
+      el.title = t ? `${base} (${t})` : base;
+    }
+  }
+
+  function listaDeAtalhos() {
+    const dl = document.createElement('dl');
+    dl.className = 'tl-atalhos';
+    const linha = (dt, dd) => dl.append(Object.assign(document.createElement('dt'), { textContent: dt }), Object.assign(document.createElement('dd'), { textContent: dd }));
+    for (const [id, , nome] of ACOES_TECLADO) {
+      const t = teclasDe(id);
+      if (t.length) linha(t.map(exibirTecla).join(' / '), nome);
+    }
+    // Do mouse: não mudam.
+    linha('Ctrl+clique', 'vários itens (ou arraste um retângulo)');
+    linha('Ctrl ao soltar', 'inserir em vez de sobrescrever');
+    linha('Alt+arrastar', 'só o item, sem o vinculado');
+    linha('Ctrl+roda', 'zoom');
+    const b = document.createElement('button');
+    b.textContent = 'Personalizar atalhos…';
+    b.onclick = abrirAtalhos;
+    const box = document.createElement('div');
+    box.append(dl, b);
+    return box;
+  }
+
+  async function gravarAtalhos(novos) {
+    // Guarda só o que difere do padrão.
+    const limpo = {};
+    for (const [id, teclas] of Object.entries(novos)) if (JSON.stringify(teclas) !== JSON.stringify(padraoDe(id))) limpo[id] = teclas;
+    estado.config = await api.salvarConfig({ atalhos: limpo });
+    atualizarDicas();
+    desenharInspetor();
+  }
+
+  function abrirAtalhos() {
+    let dlg = qs('#dlg-atalhos');
+    if (!dlg) {
+      dlg = document.createElement('dialog');
+      dlg.id = 'dlg-atalhos';
+      dlg.className = 'dlg-atalhos';
+      document.body.append(dlg);
+      dlg.addEventListener('close', () => pararGravacao());
+    }
+    let gravando = null; // id da ação esperando a tecla
+    let busca = '';
+    let aviso = '';
+    const atuais = () => Object.fromEntries(TODAS_ACOES.map(([id]) => [id, [...teclasDe(id)]]));
+    function pararGravacao() {
+      gravando = null;
+      s.gravandoAtalho = false;
+      window.removeEventListener('keydown', aoGravar, true);
+    }
+    async function aoGravar(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === 'Escape') {
+        pararGravacao();
+        return desenhar();
+      }
+      const combo = comboDe(e);
+      if (!combo) return;
+      const id = gravando;
+      pararGravacao();
+      const novos = atuais();
+      const dono = contextoDe(id).find(([outro]) => outro !== id && novos[outro].includes(combo));
+      if (novos[id].includes(combo)) aviso = '';
+      else {
+        if (dono) {
+          novos[dono[0]] = novos[dono[0]].filter((c) => c !== combo);
+          aviso = `${exibirTecla(combo)} saiu de "${dono[2]}" e agora é de "${TODAS_ACOES.find((a) => a[0] === id)[2]}".`;
+        } else aviso = '';
+        novos[id].push(combo);
+        await gravarAtalhos(novos);
+      }
+      desenhar();
+    }
+    function desenhar() {
+      dlg.innerHTML = '';
+      const h = document.createElement('h2');
+      h.textContent = 'Atalhos de teclado';
+      const dica = document.createElement('p');
+      dica.className = 'dlg-atalhos-dica';
+      dica.textContent = 'Clique em + e pressione a tecla (com Ctrl, Alt ou Shift, se quiser). Esc cancela. Uma tecla já usada passa para a ação nova. Os de Origem valem com o mouse sobre a janela de Origem.';
+      const campo = document.createElement('input');
+      campo.type = 'search';
+      campo.placeholder = 'Procurar ação ou tecla';
+      campo.value = busca;
+      campo.oninput = () => {
+        busca = campo.value;
+        const pos = campo.selectionStart;
+        desenhar();
+        const novo = dlg.querySelector('input[type=search]');
+        novo.focus();
+        novo.setSelectionRange(pos, pos);
+      };
+      dlg.append(h, dica, campo);
+      if (aviso) dlg.append(Object.assign(document.createElement('p'), { className: 'dlg-atalhos-aviso', textContent: aviso }));
+      const lista = document.createElement('div');
+      lista.className = 'dlg-atalhos-lista';
+      const q = busca.trim().toLowerCase();
+      let grupo = null;
+      for (const [id, g, nome] of TODAS_ACOES) {
+        const teclas = teclasDe(id);
+        if (q && !nome.toLowerCase().includes(q) && !teclas.some((t) => exibirTecla(t).toLowerCase().includes(q) || t.toLowerCase().includes(q))) continue;
+        if (g !== grupo) {
+          grupo = g;
+          lista.append(Object.assign(document.createElement('h4'), { textContent: g }));
+        }
+        const linha = document.createElement('div');
+        linha.className = 'dlg-atalho';
+        const rotulo = Object.assign(document.createElement('span'), { className: 'dlg-atalho-nome', textContent: nome });
+        const teclasEl = document.createElement('span');
+        teclasEl.className = 'dlg-atalho-teclas';
+        for (const t of teclas) {
+          const chip = document.createElement('span');
+          chip.className = 'dlg-tecla';
+          chip.textContent = exibirTecla(t);
+          const x = document.createElement('button');
+          x.type = 'button';
+          x.textContent = '×';
+          x.title = 'Tirar esta tecla';
+          x.onclick = async () => {
+            const novos = atuais();
+            novos[id] = novos[id].filter((c) => c !== t);
+            aviso = '';
+            await gravarAtalhos(novos);
+            desenhar();
+          };
+          chip.append(x);
+          teclasEl.append(chip);
+        }
+        if (gravando === id) teclasEl.append(Object.assign(document.createElement('span'), { className: 'dlg-tecla gravando', textContent: 'Pressione a tecla…' }));
+        const mais = document.createElement('button');
+        mais.type = 'button';
+        mais.textContent = '+';
+        mais.title = 'Adicionar uma tecla';
+        mais.onclick = () => {
+          pararGravacao();
+          gravando = id;
+          s.gravandoAtalho = true;
+          window.addEventListener('keydown', aoGravar, true);
+          desenhar();
+        };
+        const padrao = document.createElement('button');
+        padrao.type = 'button';
+        padrao.textContent = '↺';
+        padrao.title = `Voltar ao padrão (${padraoDe(id).map(exibirTecla).join(' / ') || 'nenhuma'})`;
+        padrao.disabled = JSON.stringify(teclas) === JSON.stringify(padraoDe(id));
+        padrao.onclick = async () => {
+          const novos = atuais();
+          novos[id] = [...padraoDe(id)];
+          aviso = '';
+          await gravarAtalhos(novos);
+          desenhar();
+        };
+        linha.append(rotulo, teclasEl, mais, padrao);
+        lista.append(linha);
+      }
+      const rodape = document.createElement('div');
+      rodape.className = 'linha-botoes';
+      const todos = document.createElement('button');
+      todos.type = 'button';
+      todos.textContent = 'Restaurar todos os padrões';
+      todos.onclick = async () => {
+        if (!confirm('Voltar todos os atalhos ao padrão?')) return;
+        aviso = '';
+        await gravarAtalhos({});
+        desenhar();
+      };
+      const fechar = document.createElement('button');
+      fechar.type = 'button';
+      fechar.className = 'primario';
+      fechar.textContent = 'Fechar';
+      fechar.onclick = () => dlg.close();
+      rodape.append(todos, fechar);
+      dlg.append(lista, rodape);
+    }
+    desenhar();
+    if (!dlg.open) dlg.showModal();
   }
 
   // Põe o trecho marcado na timeline. Sem faixa pedida, vai na faixa de vídeo mais baixa (e na de áudio) que está
@@ -2635,16 +2902,8 @@ const TL = (() => {
     }
     const item = itemSel();
     if (!item) {
-      box.innerHTML = `<h4>Atalhos</h4><dl class="tl-atalhos">
-        <dt>Espaço</dt><dd>tocar / pausar</dd><dt>S</dt><dd>dividir no cursor</dd>
-        <dt>Del</dt><dd>excluir</dd><dt>Shift+Del</dt><dd>excluir e fechar o vão</dd>
-        <dt>Ctrl+clique</dt><dd>vários itens (ou arraste um retângulo)</dd><dt>Ctrl+C / X / V</dt><dd>copiar, recortar, colar</dd><dt>Ctrl+A</dt><dd>seleciona tudo</dd>
-        <dt>← →</dt><dd>um quadro</dd><dt>Ctrl+Z / Y</dt><dd>desfazer / refazer</dd>
-        <dt>Ctrl+roda</dt><dd>zoom</dd>
-        <dt>V</dt><dd>selecionar</dd><dt>B</dt><dd>ripple: apara e empurra o resto</dd>
-        <dt>N</dt><dd>roll: move o corte entre dois clipes</dd><dt>Y</dt><dd>slip: troca o trecho do arquivo</dd>
-        <dt>U</dt><dd>slide: desliza entre os vizinhos</dd><dt>R</dt><dd>velocidade pela duração</dd>
-        <dt>C</dt><dd>navalha</dd></dl>`;
+      box.innerHTML = '<h4>Atalhos</h4>';
+      box.append(listaDeAtalhos());
       return;
     }
     const titulo = document.createElement('h4');
@@ -3103,13 +3362,13 @@ const TL = (() => {
     }));
     const vel = comFonte.length === 1 ? comFonte[0].velocidade ?? 1 : null;
     abrirMenu(e.clientX, e.clientY, [
-      { rotulo: 'Recortar', atalho: 'Ctrl+X', acao: () => copiarSelecao() && excluir(false), desativado: travada },
-      { rotulo: 'Copiar', atalho: 'Ctrl+C', acao: copiarSelecao },
-      { rotulo: 'Colar no cursor', atalho: 'Ctrl+V', acao: colarSelecao, desativado: travada || !areaTransferencia },
-      { rotulo: 'Excluir', atalho: 'Del', acao: () => excluir(false), desativado: travada },
-      { rotulo: 'Excluir e fechar o vão', atalho: 'Shift+Del', acao: () => excluir(true), desativado: travada },
+      { rotulo: 'Recortar', atalho: teclaDe('recortar'), acao: () => copiarSelecao() && excluir(false), desativado: travada },
+      { rotulo: 'Copiar', atalho: teclaDe('copiar'), acao: copiarSelecao },
+      { rotulo: 'Colar no cursor', atalho: teclaDe('colar'), acao: colarSelecao, desativado: travada || !areaTransferencia },
+      { rotulo: 'Excluir', atalho: teclaDe('excluir'), acao: () => excluir(false), desativado: travada },
+      { rotulo: 'Excluir e fechar o vão', atalho: teclaDe('excluirFechar'), acao: () => excluir(true), desativado: travada },
       'sep',
-      { rotulo: 'Dividir no cursor', atalho: 'S', acao: dividir, desativado: travada || !noCursor },
+      { rotulo: 'Dividir no cursor', atalho: teclaDe('dividir'), acao: dividir, desativado: travada || !noCursor },
       alvos.length > 1 && !vinculados && { rotulo: 'Vincular', acao: () => vincular(ids), desativado: travada },
       vinculados && { rotulo: 'Desvincular', acao: () => desvincular(ids), desativado: travada },
       'sep',
@@ -3165,26 +3424,12 @@ const TL = (() => {
   function aoTeclar(e) {
     if (!ativa() || estado.vista !== 'editor') return;
     if (e.target.closest?.('input, textarea, select, dialog')) return;
+    if (s.gravandoAtalho) return;
     if (teclaDaFonte(e)) return;
-    const ctrl = e.ctrlKey || e.metaKey;
-    if (ctrl && e.key.toLowerCase() === 'z' && !e.shiftKey) trocarEstado(s.desfazer, s.refazer);
-    else if (ctrl && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) trocarEstado(s.refazer, s.desfazer);
-    else if (ctrl && e.key.toLowerCase() === 'c') copiarSelecao();
-    else if (ctrl && e.key.toLowerCase() === 'x') {
-      if (copiarSelecao() && !s.bloqueada) excluir(false);
-    } else if (ctrl && e.key.toLowerCase() === 'v') colarSelecao();
-    else if (ctrl && e.key.toLowerCase() === 'a') selecionarVarios(todosItens().map((i) => i.id));
-    else if (ctrl) return;
-    else if (e.code === 'Space') tocarOuPausar();
-    else if (e.key.toLowerCase() === 's') dividir();
-    else if (FERRAMENTAS[e.key.toLowerCase()]) escolherFerramenta(FERRAMENTAS[e.key.toLowerCase()]);
-    else if (e.key === 'Delete' || e.key === 'Backspace') excluir(e.shiftKey);
-    else if (e.key === 'ArrowLeft') irPara(s.tempo - (e.shiftKey ? 1 : 1 / fps()));
-    else if (e.key === 'ArrowRight') irPara(s.tempo + (e.shiftKey ? 1 : 1 / fps()));
-    else if (e.key === 'Home') irPara(0);
-    else if (e.key === 'End') irPara(duracaoTotal());
-    else return;
+    const acao = acaoDoCombo(comboDe(e), ACOES_TECLADO);
+    if (!acao) return;
     e.preventDefault();
+    acao[4]();
   }
 
   function escolherFerramenta(f) {
@@ -3250,6 +3495,7 @@ const TL = (() => {
     ligarSoltarMateriais();
     ligarSoltarEfeitos();
     desenharEfeitos();
+    atualizarDicas();
     document.querySelectorAll('.abas-lateral button').forEach((b) => {
       b.onclick = () => mostrarAba(b.dataset.aba);
     });
@@ -3487,5 +3733,5 @@ const TL = (() => {
 
   ligarControles();
 
-  return { abrir, fechar, bloquear, recarregar, contexto, capa, salvarAgora, verRender, ativa: () => !!s.t, estado: s, irPara, dividir, excluir, adicionarTexto, gerarLegendas };
+  return { abrirAtalhos, atualizarDicas, abrir, fechar, bloquear, recarregar, contexto, capa, salvarAgora, verRender, ativa: () => !!s.t, estado: s, irPara, dividir, excluir, adicionarTexto, gerarLegendas };
 })();
