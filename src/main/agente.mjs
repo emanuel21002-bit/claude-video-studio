@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { carregar } from './settings.mjs';
-import { dirs, lerProjeto, gravarProjeto, hyperframesBin, relTimeline, relAssets } from './workspace.mjs';
+import { dirs, lerProjeto, gravarProjeto, hyperframesBin, relTimeline, relAssets, sessaoChat, guardarSessaoChat, timelinesDoProjeto, projetoDe } from './workspace.mjs';
 import { renderizar } from './render.mjs';
 import { resumoPacks, textoDaLista, usarDoPack, permitido } from './packs.mjs';
 import { folhaDeQuadros, folhaDeMateriais, folhaDeReferencia, resumoTimeline, editarTimeline, resumirErro } from './ferramentas.mjs';
@@ -64,12 +64,16 @@ estilo: fonte (Montserrat|Inter|Poppins|Roboto|Anton|Bebas Neue|Oswald|Playfair 
 - Para validar sem renderizar: node ${bin} check ${rel}`;
 }
 
-function promptSistema(p) {
+function promptSistema(p, todas = null) {
   const rel = relTimeline(p.id);
   return `
 Você está dentro do MovAi, um app de edição automática de vídeo. Você é o editor: monta, ajusta e exporta o vídeo do usuário.
 
-TIMELINE ATUAL: ${rel}/  (trabalhe somente dentro desta pasta)
+${todas ? `CHAT ÚNICO DO PROJETO: esta conversa cuida de TODAS as timelines do projeto, numa sessão só. Timelines (pasta, engine):
+${todas.map((x) => `- "${x.rotulo}" (id ${x.timelineId}; ${relTimeline(x.id)}/; ${x.engine === 'remotion' ? 'Remotion' : 'HyperFrames'})${x.id === p.id ? ' ← ABERTA AGORA' : ''}`).join(String.fromCharCode(10))}
+Toda mensagem termina com [Aberta agora: …]. Sem outra indicação, "isso", "aqui", "o vídeo" e cada pedido valem para a timeline aberta: altere só ela. Se o usuário citar outra timeline pelo nome, ou pedir "em todas"/"nas outras", aja nela(s) passando o parâmetro "timeline" (rótulo ou id) em resumo_timeline, editar_timeline, gerar_legendas, ver_quadros, ver_referencia e renderizar. Nunca altere uma timeline que o usuário não citou. Em pedidos para várias, faça uma por vez e diga em uma linha o que mudou em cada uma. As regras de engine abaixo valem para a aberta; as pastas das outras seguem o mesmo formato.
+
+` : ''}TIMELINE ${todas ? 'ABERTA' : 'ATUAL'}: ${rel}/  (${todas ? 'padrão do que o usuário pedir; edite arquivos só da timeline que o pedido envolve' : 'trabalhe somente dentro desta pasta'})
 MATERIAIS DO PROJETO: ${relAssets(p.id)}/  (uma pasta só, compartilhada com as outras timelines do projeto. Pode acrescentar arquivos, sempre com nome novo; nunca apague nem sobrescreva os que já existem)
 ${p.migradoDe ? `Se o histórico desta conversa citar projetos/${p.migradoDe}/, o projeto foi reorganizado: o que estava lá agora está nas duas pastas acima.\n` : ''}- ${rel}/BRIEFING.md — materiais, narração transcrita com tempos e o estilo pedido. Leia primeiro.
 - ${rel}/transcricao.json — tempos por palavra, para legendas sincronizadas.
@@ -94,21 +98,34 @@ ${resumoPacks(p) ? resumoPacks(p) + '\n\n' : ''}ECONOMIA (cada imagem e cada arq
 - Depois da primeira montagem, use mcp__studio__resumo_timeline e mcp__studio__editar_timeline. Não leia nem reescreva timeline.json inteiro.
 - O briefing já traz a transcrição: não leia transcricao.json. Faça várias alterações de uma vez e leia um arquivo só uma vez.
 
+SKILLS (chame com Skill só quando o pedido pedir, uma vez por assunto; elas valem como guia de visual, e as regras acima e o formato desta engine mandam sobre elas):
+- Legenda animada palavra por palavra, estilo TikTok/Reels, destaque da palavra falada, área segura 9:16: skill "caption-animation". Aplique pelo estilo da legenda e por mcp__studio__gerar_legendas, sem rodar Whisper nem ffmpeg.
+- Gancho, retenção, ritmo de vertical curto, loop: "short-form-video". Mantém cenas de 1 a 2 s.
+- Nome/cargo em tela: "lower-thirds". Contagem regressiva ou timer: "countdown-video". Aplique em bloco.
+- Código Remotion para blocos.tsx (animação, efeitos, mapas): "remotion-best-practices" e as skills remotion-* que ela indicar. Só em ${rel}/src/blocos.tsx.
+- HyperFrames: "hyperframes", e "hyperframes-registry" para blocos prontos (transições, títulos, grão, glitch) antes de montar à mão.
+- NÃO use dentro do app: ffmpeg-skill, video-use, color-grade, claude-watch, watch-video, claude-video-vision, omnicaptions-*, elevenlabs (text-to-speech, music, dubbing etc.) e pexo-agent. Elas rodam ffmpeg, geram vídeo/áudio pago ou assistem ao vídeo (gasta crédito) e quebram as regras de economia. Cor: use "efeitos.cor" da timeline.
+
 COMO TRABALHAR:
 - Responda sempre em português do Brasil, curto e direto: o usuário vê suas mensagens num chat ao lado do player.
 - Na primeira montagem: leia o briefing, monte o vídeo completo (cenas de 1 a 2 s) e pare: não confira com ver_quadros nem renderize, o usuário faz isso.
-${p.timeline ? '- Em pedidos de alteração: altere só o que foi pedido na timeline e diga em uma ou duas frases o que mudou. A prévia ao vivo do app já mostra a mudança; só renderize quando o usuário pedir.\n- Mensagens podem trazer [Timeline: …] com a posição do cursor e o item selecionado: é a isso que o usuário se refere com "aqui" ou "esse".' : '- Em pedidos de alteração: altere só o que foi pedido, sem renderizar nem conferir (o usuário faz isso), e diga em uma ou duas frases o que mudou.'}
+${p.timeline ? '- Em pedidos de alteração: altere só o que foi pedido na timeline e diga em uma ou duas frases o que mudou. A prévia ao vivo do app já mostra a mudança; só renderize quando o usuário pedir.\n- Mensagens podem trazer [Aberta agora: … ; cursor …] com a timeline aberta, a posição do cursor e o item selecionado: é a isso que o usuário se refere com "aqui" ou "esse".' : '- Em pedidos de alteração: altere só o que foi pedido, sem renderizar nem conferir (o usuário faz isso), e diga em uma ou duas frases o que mudou.'}
 `.trim();
 }
 
-const emExecucao = new Map(); // id -> AbortController
+const emExecucao = new Map(); // id (ou "chat:<projeto>") -> AbortController
+
+const chaveChat = (id) => `chat:${projetoDe(id)}`;
+// O chat único está rodando em alguma timeline deste projeto.
+export const chatOcupado = (id) => emExecucao.has(chaveChat(id));
 
 export function cancelar(id) {
   emExecucao.get(id)?.abort();
+  emExecucao.get(chaveChat(id))?.abort();
 }
 
 export function ocupado(id) {
-  return emExecucao.has(id);
+  return emExecucao.has(id) || chatOcupado(id);
 }
 
 function resumoFerramenta(nome, input = {}) {
@@ -135,12 +152,25 @@ function resumoFerramenta(nome, input = {}) {
 
 // Roda um turno do Claude no projeto. onEvento recebe:
 // {tipo:'texto', texto} | {tipo:'acao', texto} | {tipo:'render', ...} | {tipo:'fim', custo} | {tipo:'erro', texto}
-export async function conversar(id, mensagem, onEvento) {
-  if (emExecucao.has(id)) throw new Error('O Claude ainda está trabalhando neste projeto.');
+// Com { chat: true} é o chat único do projeto: uma sessão só, que mexe em qualquer timeline dele. `id` é a timeline
+// aberta no momento (o foco); as ferramentas aceitam o parâmetro "timeline" para agir em outra.
+export async function conversar(id, mensagem, onEvento, { chat = false } = {}) {
+  if (emExecucao.has(id) || (chat && chatOcupado(id))) throw new Error('O Claude ainda está trabalhando neste projeto.');
   const s = carregar();
   const projeto = lerProjeto(id);
   const controle = new AbortController();
   emExecucao.set(id, controle);
+  if (chat) emExecucao.set(chaveChat(id), controle);
+
+  const tlParam = z.string().optional().describe('Rótulo ou id da timeline. Sem isto vale a timeline aberta agora no app.');
+  const resolver = (nome) => {
+    if (!nome) return id;
+    const todas = timelinesDoProjeto(id);
+    const q = String(nome).trim().toLowerCase();
+    const t = todas.find((x) => [x.timelineId, x.id, x.rotulo].some((v) => String(v).toLowerCase() === q)) ?? todas.find((x) => String(x.rotulo).toLowerCase().includes(q));
+    if (!t) throw new Error(`A timeline "${nome}" não existe neste projeto. Existem: ${todas.map((x) => x.rotulo).join(', ')}.`);
+    return t.id;
+  };
 
   const studio = createSdkMcpServer({
     name: 'studio',
@@ -154,11 +184,13 @@ export async function conversar(id, mensagem, onEvento) {
           formato: z.enum(['mp4', 'mov']).optional().describe('Só passe se o usuário pediu explicitamente MP4 ou MOV.'),
           resolucao: z.number().int().min(360).max(4320).optional().describe('Lado menor do quadro em pixels (720, 1080, 1440, 2160). Só passe se o usuário pediu; por padrão vale a escolha dele no app.'),
           qualidade: z.enum(['alta', 'media', 'baixa']).optional().describe('Só passe se o usuário pediu.'),
+          timeline: tlParam,
         },
-        async (args) => {
+        async ({ timeline, ...args }) => {
           try {
-            const r = await renderizar(id, args, (e) => onEvento({ tipo: 'render', ...e }), controle.signal);
-            onEvento({ tipo: 'render', concluido: r.preview ?? r.arquivo });
+            const tid = resolver(timeline);
+            const r = await renderizar(tid, args, (e) => onEvento({ tipo: 'render', id: tid, ...e }), controle.signal);
+            onEvento({ tipo: 'render', id: tid, concluido: r.preview ?? r.arquivo });
             const texto = r.reaproveitado ? `Nada mudou desde o último render; o arquivo continua valendo: ${r.arquivo}` : `Render concluído em ${r.segundos}s: ${r.arquivo}`;
             return { content: [{ type: 'text', text: texto }] };
           } catch (e) {
@@ -170,10 +202,10 @@ export async function conversar(id, mensagem, onEvento) {
       tool(
         'ver_quadros',
         'Devolve uma imagem com os momentos pedidos, em ordem de tempo. Em projetos com timeline não precisa de render. Até 2 momentos vêm maiores, para ver detalhes.',
-        { segundos: z.array(z.number().min(0)).min(1).max(8) },
-        async ({ segundos }) => {
+        { segundos: z.array(z.number().min(0)).min(1).max(8), timeline: tlParam },
+        async ({ segundos, timeline }) => {
           try {
-            return { content: [imagem(await folhaDeQuadros(id, segundos))] };
+            return { content: [imagem(await folhaDeQuadros(resolver(timeline), segundos))] };
           } catch (e) {
             return { content: [{ type: 'text', text: resumirErro(e.message) }], isError: true };
           }
@@ -217,10 +249,10 @@ export async function conversar(id, mensagem, onEvento) {
       tool(
         'ver_referencia',
         'Estuda o material de referência do projeto: devolve uma imagem com quadros rotulados com o segundo e os dados medidos (duração, resolução, quantos cortes e em que instantes). Sem argumentos, mostra a primeira referência com quadros espaçados; com momentos (em segundos), mostra esses instantes.',
-        { arquivo: z.string().optional(), momentos: z.array(z.number().min(0)).max(12).optional() },
-        async (args) => {
+        { arquivo: z.string().optional(), momentos: z.array(z.number().min(0)).max(12).optional(), timeline: tlParam },
+        async ({ timeline, ...args }) => {
           try {
-            const { saida, texto } = await folhaDeReferencia(id, args);
+            const { saida, texto } = await folhaDeReferencia(resolver(timeline), args);
             return { content: [imagem(saida), { type: 'text', text: texto }] };
           } catch (e) {
             return { content: [{ type: 'text', text: e.message }], isError: true };
@@ -230,10 +262,10 @@ export async function conversar(id, mensagem, onEvento) {
       tool(
         'resumo_timeline',
         'A timeline compacta, uma linha por item, sem as palavras das legendas. Com ids, devolve esses itens completos.',
-        { ids: z.array(z.string()).max(20).optional() },
-        async (args) => {
+        { ids: z.array(z.string()).max(20).optional(), timeline: tlParam },
+        async ({ timeline, ...args }) => {
           try {
-            return { content: [{ type: 'text', text: resumoTimeline(id, args) }] };
+            return { content: [{ type: 'text', text: resumoTimeline(resolver(timeline), args) }] };
           } catch (e) {
             return { content: [{ type: 'text', text: e.message }], isError: true };
           }
@@ -242,10 +274,10 @@ export async function conversar(id, mensagem, onEvento) {
       tool(
         'editar_timeline',
         'Grava alterações na timeline sem reescrever o arquivo. Operações: {op:"alterar",id,campos} (campo null apaga), {op:"adicionar",trilha,item}, {op:"remover",id}, {op:"transicoes",trilha,lista}.',
-        { operacoes: z.array(z.record(z.string(), z.any())).min(1) },
-        async ({ operacoes }) => {
+        { operacoes: z.array(z.record(z.string(), z.any())).min(1), timeline: tlParam },
+        async ({ operacoes, timeline }) => {
           try {
-            return { content: [{ type: 'text', text: editarTimeline(id, operacoes) }] };
+            return { content: [{ type: 'text', text: editarTimeline(resolver(timeline), operacoes) }] };
           } catch (e) {
             return { content: [{ type: 'text', text: e.message }], isError: true };
           }
@@ -260,10 +292,11 @@ export async function conversar(id, mensagem, onEvento) {
           estilo: z.record(z.string(), z.any()).optional().describe('O "estilo" da legenda (fonte, tamanho, cor, corDestaque…).'),
           x: z.number().optional(),
           y: z.number().optional().describe('Deslocamento vertical em px a partir do centro.'),
+          timeline: tlParam,
         },
-        async (args) => {
+        async ({ timeline, ...args }) => {
           try {
-            return { content: [{ type: 'text', text: resumoLegendas(gerarLegendas(id, args)) }] };
+            return { content: [{ type: 'text', text: resumoLegendas(gerarLegendas(resolver(timeline), args)) }] };
           } catch (e) {
             return { content: [{ type: 'text', text: e.message }], isError: true };
           }
@@ -323,12 +356,12 @@ export async function conversar(id, mensagem, onEvento) {
         cwd: dirs().ws,
         model: s.modeloClaude,
         effort: ['low', 'medium', 'high', 'xhigh'].includes(s.esforcoClaude) ? s.esforcoClaude : 'high',
-        resume: projeto.sessionId ?? undefined,
+        resume: (chat ? sessaoChat(projeto.projetoId) : projeto.sessionId) ?? undefined,
         abortController: controle,
         pathToClaudeCodeExecutable: claudeExe(),
         env,
         settingSources: ['user', 'project'],
-        systemPrompt: { type: 'preset', preset: 'claude_code', append: promptSistema(projeto) },
+        systemPrompt: { type: 'preset', preset: 'claude_code', append: promptSistema(projeto, chat ? timelinesDoProjeto(id) : null) },
         mcpServers: { studio },
         hooks: { PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [barrarRenderPorFora] }] },
         permissionMode: 'dontAsk',
@@ -342,14 +375,14 @@ export async function conversar(id, mensagem, onEvento) {
 
     for await (const msg of q) {
       if (msg.type === 'system' && msg.subtype === 'init') {
-        guardarSessao(id, msg.session_id);
+        guardarSessao(id, msg.session_id, chat);
       } else if (msg.type === 'assistant') {
         for (const bloco of msg.message.content) {
           if (bloco.type === 'text' && bloco.text.trim()) onEvento({ tipo: 'texto', texto: bloco.text });
           else if (bloco.type === 'tool_use') onEvento({ tipo: 'acao', texto: resumoFerramenta(bloco.name, bloco.input) });
         }
       } else if (msg.type === 'result') {
-        guardarSessao(id, msg.session_id);
+        guardarSessao(id, msg.session_id, chat);
         if (msg.subtype === 'success') onEvento({ tipo: 'fim', custo: msg.total_cost_usd });
         else onEvento({ tipo: 'erro', texto: `O Claude parou: ${msg.subtype}` });
       }
@@ -359,11 +392,13 @@ export async function conversar(id, mensagem, onEvento) {
     else onEvento({ tipo: 'erro', texto: e.message });
   } finally {
     emExecucao.delete(id);
+    if (chat) emExecucao.delete(chaveChat(id));
   }
 }
 
-function guardarSessao(id, sessionId) {
+function guardarSessao(id, sessionId, chat = false) {
   if (!sessionId) return;
+  if (chat) return guardarSessaoChat(projetoDe(id), sessionId);
   const p = lerProjeto(id);
   if (p.sessionId !== sessionId) {
     p.sessionId = sessionId;

@@ -936,11 +936,12 @@ async function criar() {
 
 // ---------- editor ----------
 
-function addMsg(de, texto) {
+// Um chat só por projeto: a mensagem de outra timeline (tl) ganha o nome dela na frente.
+function addMsg(de, texto, tl) {
   const box = $('#mensagens');
   const d = document.createElement('div');
   d.className = 'msg ' + de;
-  d.textContent = texto;
+  d.textContent = tl && estado.rotulo && tl !== estado.rotulo && ['usuario', 'claude', 'acao'].includes(de) ? `[${tl}] ${texto}` : texto;
   box.append(d);
   box.scrollTop = box.scrollHeight;
 }
@@ -974,7 +975,8 @@ async function abrirProjeto(id) {
   $('#ed-nome').textContent = p.nome;
   $('#ed-info').textContent = `${p.estiloNome} · ${p.engine === 'remotion' ? 'Remotion' : 'HyperFrames'} · ${p.largura}x${p.altura}`;
   $('#mensagens').innerHTML = '';
-  for (const m of p.chat) addMsg(m.de, m.texto);
+  estado.rotulo = p.rotulo;
+  for (const m of p.chat) addMsg(m.de, m.texto, m.tl);
   if (p.renders[0]) mostrarVideo(p.renders[0].preview ?? p.renders[0].arquivo);
   else {
     $('#player').removeAttribute('src');
@@ -1051,17 +1053,21 @@ function renderListaRenders(p) {
 }
 
 api.aoAgente(async (e) => {
-  if (e.tipo === 'fila') {
-    estado.trabalhando.add(e.id);
-    estado.naFila.add(e.id);
-  }
-  if (e.tipo === 'inicio') {
-    estado.trabalhando.add(e.id);
-    estado.naFila.delete(e.id);
-  }
-  if (e.tipo === 'parado') {
-    estado.trabalhando.delete(e.id);
-    estado.naFila.delete(e.id);
+  // No chat único o Claude trabalha no projeto todo: todas as timelines dele ficam ocupadas (e.ids).
+  const alvos = e.chat && e.ids ? e.ids : [e.id];
+  for (const alvo of alvos) {
+    if (e.tipo === 'fila') {
+      estado.trabalhando.add(alvo);
+      estado.naFila.add(alvo);
+    }
+    if (e.tipo === 'inicio') {
+      estado.trabalhando.add(alvo);
+      estado.naFila.delete(alvo);
+    }
+    if (e.tipo === 'parado') {
+      estado.trabalhando.delete(alvo);
+      estado.naFila.delete(alvo);
+    }
   }
   if (['fila', 'inicio', 'parado'].includes(e.tipo)) carregarProjetos();
   if (e.tipo === 'render') {
@@ -1076,7 +1082,9 @@ api.aoAgente(async (e) => {
     }
     return;
   }
-  if (e.id !== estado.projetoId) return;
+  // Render de outra timeline pedido pelo chat: só a barra de renders mostra; o player e a lista seguem na timeline aberta.
+  if (e.tipo === 'render' && e.id !== estado.projetoId) return;
+  if (e.id !== estado.projetoId && !(e.chat && e.ids?.includes(estado.projetoId))) return;
 
   switch (e.tipo) {
     case 'fila':
@@ -1091,10 +1099,10 @@ api.aoAgente(async (e) => {
       progresso(0, e.texto);
       break;
     case 'texto':
-      addMsg('claude', e.texto);
+      addMsg('claude', e.texto, e.tl);
       break;
     case 'acao':
-      addMsg('acao', e.texto);
+      addMsg('acao', e.texto, e.tl);
       break;
     case 'erro':
       addMsg('erro', e.texto);

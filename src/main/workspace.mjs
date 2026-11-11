@@ -264,7 +264,37 @@ export const relAssets = (id) => `projetos/${separar(id).projeto}/assets`;
 export const relTimeline = (id) => `projetos/${separar(id).projeto}/timelines/${separar(id).timeline}`;
 
 const arquivoDoProjeto = (projetoId) => path.join(dirs().projetos, projetoId, 'projeto.json');
-const lerDoDisco = (projetoId) => JSON.parse(fs.readFileSync(arquivoDoProjeto(projetoId), 'utf8'));
+const lerDoDisco = (projetoId) => migrarChat(JSON.parse(fs.readFileSync(arquivoDoProjeto(projetoId), 'utf8')));
+
+// O chat é um só por projeto (e uma sessão do Claude só). Projetos antigos guardavam um chat por timeline:
+// juntamos tudo em ordem de data, com o nome da timeline em cada mensagem. Vai para o disco na próxima gravação.
+function migrarChat(projeto) {
+  if (Array.isArray(projeto.chat) || !Array.isArray(projeto.timelines)) return projeto;
+  const todas = [];
+  for (const t of projeto.timelines) {
+    for (const m of t.chat ?? []) todas.push({ ...m, tl: m.tl ?? t.rotulo });
+    delete t.chat;
+  }
+  todas.sort((a, b) => String(a.em ?? '').localeCompare(String(b.em ?? '')));
+  projeto.chat = todas;
+  return projeto;
+}
+
+// Sessão do chat único (as timelines montadas em lote seguem com a sessão de cada uma).
+export const sessaoChat = (projetoId) => lerDoDisco(projetoId).sessaoChat ?? null;
+export function guardarSessaoChat(projetoId, sessionId) {
+  const projeto = lerDoDisco(projetoId);
+  if (projeto.sessaoChat === sessionId) return;
+  projeto.sessaoChat = sessionId;
+  gravarNoDisco(projeto);
+}
+
+// Todas as timelines de um projeto (ids no formato "<projeto>/<timeline>").
+export const timelinesDoProjeto = (id) => {
+  const projeto = lerDoDisco(separar(id).projeto);
+  return projeto.timelines.map((_, n) => vista(projeto, n));
+};
+export const projetoDe = (id) => separar(id).projeto;
 
 // Um arquivo só guarda todas as timelines do projeto: gravar pela metade não pode perder as outras.
 function gravarNoDisco(projeto) {
@@ -281,7 +311,7 @@ function gravarNoDisco(projeto) {
   }
 }
 
-const COMPARTILHADOS = ['materiais', 'referencias', 'audiosInstrucao', 'roteiros', 'packs'];
+const COMPARTILHADOS = ['materiais', 'referencias', 'audiosInstrucao', 'roteiros', 'packs', 'chat'];
 
 function vista(projeto, ordem) {
   const t = projeto.timelines[ordem];
@@ -604,7 +634,6 @@ export async function novaTimeline(projetoId, { rotulo, narracao, narradoPor, du
     lote: lote ?? null,
     sessionId: null,
     renders: [],
-    chat: [],
   });
   scaffold(view, { vazia });
   return view;
@@ -638,8 +667,8 @@ export function duplicarTimeline(id) {
     if (!deFora.has(nome)) fs.cpSync(path.join(origem, nome), path.join(destino, nome), { recursive: true });
   }
   if (atual.engine !== 'remotion') ligarAssets(destino, atual.projetoId);
-  const { id: _i, timelineId: _t, projetoId: _p, projetoCriadoEm: _c, ordem: _o, nome: _n, grupo: _g, narracoes: _nn, materiais: _m, referencias: _r, audiosInstrucao: _a, filmcraft: _f, migradoDe: _d, ...resto } = atual;
-  return registrarTimeline(projeto, { ...resto, id: timelineId, rotulo, criadoEm: new Date().toISOString(), lote: null, sessionId: null, renders: [], chat: [] });
+  const { id: _i, timelineId: _t, projetoId: _p, projetoCriadoEm: _c, ordem: _o, nome: _n, grupo: _g, narracoes: _nn, materiais: _m, referencias: _r, audiosInstrucao: _a, filmcraft: _f, migradoDe: _d, chat: _ch, ...resto } = atual;
+  return registrarTimeline(projeto, { ...resto, id: timelineId, rotulo, criadoEm: new Date().toISOString(), lote: null, sessionId: null, renders: [] });
 }
 
 export function renomearTimeline(id, rotulo) {

@@ -9,7 +9,7 @@ import { todosEstilos, excluirEstilo, FORMATOS } from './presets.mjs';
 import { listarMateriais,
   workspacePronto, prepararWorkspace, criarProjeto, novaTimeline, videosNarrados, timelineEmBranco, duplicarTimeline, renomearTimeline, renomearProjeto, excluirTimeline,
   listarProjetos, lerProjeto, gravarProjeto, escreverBriefing, caminhoProjeto, tipoDe, resolverNarracoes, atualizarDocumentacao, dirs,
-  adicionarRoteiros, removerRoteiro,
+  adicionarRoteiros, removerRoteiro, timelinesDoProjeto,
 } from './workspace.mjs';
 import { migrarProjetos, haProjetosAntigos, PASTA_ANTIGOS } from './migracao.mjs';
 import { decuparAudio } from './decupar.mjs';
@@ -18,7 +18,7 @@ import { lerRoteiro, EXTENSOES_ROTEIRO } from './roteiro.mjs';
 import { conferir, trechosSemAudio } from './conferir-nucleo.mjs';
 import { whisperDisponivel, transcrever, transcreverArquivo } from './transcricao.mjs';
 import { renderizar, estimarRender } from './render.mjs';
-import { conversar, cancelar, ocupado, primeiraMensagem, claudeExe } from './agente.mjs';
+import { conversar, cancelar, ocupado, chatOcupado, primeiraMensagem, claudeExe } from './agente.mjs';
 import { rodar } from './proc.mjs';
 import { abrirNoFilmcraft, trazerDoFilmcraft, filmcraftDisponivel } from './filmcraft.mjs';
 import { encoderGpu, infoVideo, transcodificar } from './transcodificar.mjs';
@@ -186,18 +186,21 @@ ipcMain.handle('projeto', (_e, id) => lerProjeto(id));
 
 function registrarChat(id, item) {
   const p = lerProjeto(id);
-  p.chat.push({ ...item, em: new Date().toISOString() });
+  p.chat.push({ ...item, tl: p.rotulo, em: new Date().toISOString() });
   gravarProjeto(p);
 }
 
-function turnoClaude(id, mensagem) {
-  enviar('agente', { id, tipo: 'inicio' });
+// Com { chat: true } é o chat único do projeto: os eventos levam as timelines do projeto (ids) e o nome da timeline
+// aberta (tl), para a tela travar todas enquanto o Claude trabalha e mostrar onde cada resposta se aplica.
+function turnoClaude(id, mensagem, { chat = false } = {}) {
+  const extra = chat ? { chat: true, ids: timelinesDoProjeto(id).map((t) => t.id), tl: lerProjeto(id).rotulo } : {};
+  enviar('agente', { id, tipo: 'inicio', ...extra });
   return conversar(id, mensagem, (e) => {
     if (e.tipo === 'texto') registrarChat(id, { de: 'claude', texto: e.texto });
     if (e.tipo === 'acao') registrarChat(id, { de: 'acao', texto: e.texto });
     if (e.tipo === 'erro') registrarChat(id, { de: 'erro', texto: e.texto });
-    enviar('agente', { id, ...e });
-  }).finally(() => enviar('agente', { id, tipo: 'parado' }));
+    enviar('agente', { id, ...extra, ...e });
+  }, { chat }).finally(() => enviar('agente', { id, tipo: 'parado', ...extra }));
 }
 
 // ---------- fila de montagem ----------
@@ -361,9 +364,16 @@ ipcMain.handle('fila:descartar', (_e, ids) => {
   }
 });
 
+// Um chat só por projeto: a mensagem vale para a timeline aberta (id), a menos que o pedido cite outra.
 ipcMain.handle('chat:enviar', (_e, { id, texto, contexto }) => {
+  if (chatOcupado(id) || ocupado(id)) {
+    enviar('agente', { id, tipo: 'erro', texto: 'O Claude ainda está trabalhando neste projeto. Espere terminar para enviar outro pedido.' });
+    return;
+  }
   registrarChat(id, { de: 'usuario', texto });
-  turnoClaude(id, contexto ? `${texto}\n\n[Timeline: ${contexto}]` : texto);
+  const aberta = lerProjeto(id);
+  const marca = `[Aberta agora: "${aberta.rotulo}" (id ${aberta.timelineId})${contexto ? `; ${contexto}` : ''}]`;
+  turnoClaude(id, `${texto}\n\n${marca}`, { chat: true }).catch((e) => enviar('agente', { id, tipo: 'erro', texto: e.message }));
 });
 
 ipcMain.handle('chat:cancelar', (_e, id) => {
