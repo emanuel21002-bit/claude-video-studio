@@ -67,7 +67,8 @@ async function decuparUm(entrada, opcoes, onProgresso, sinal, tmp, grupo) {
   o.ruidoMedido = analise.ruido;
   o.vozMedida = analise.voz;
   const segs = calcularSegmentos(analise.silencios, duracaoSom, o);
-  const esperado = Math.max(1, (segs.reduce((s, [a, b]) => s + (b - a), 0) - (segs.length - 1) * o.sobreposicao) / (o.velocidade || 1));
+  const sobreposto = segs.sobreposicoes?.reduce((s, x) => s + x, 0) ?? (segs.length - 1) * o.sobreposicao;
+  const esperado = Math.max(1, (segs.reduce((s, [a, b]) => s + (b - a), 0) - sobreposto) / (o.velocidade || 1));
   const script = path.join(tmp, 'filtro.txt');
   fs.writeFileSync(script, montarFiltro(segs, o));
   const saida = grupo ? nomeSaida(grupo.pasta, o.formato, o.pastaSaida, true) : nomeSaida(entrada, o.formato, o.pastaSaida);

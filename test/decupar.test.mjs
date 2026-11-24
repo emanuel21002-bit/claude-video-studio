@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { analisarVoz, calcularSegmentos, reducaoDeRuido, PADRAO, TAXA_ANALISE } from '../src/main/decupar-nucleo.mjs';
+import { analisarVoz, calcularSegmentos, montarFiltro, pausaCortavel, reducaoDeRuido, PADRAO, TAXA_ANALISE } from '../src/main/decupar-nucleo.mjs';
 
 const R = TAXA_ANALISE;
 let semente = 1;
@@ -94,4 +94,38 @@ test('redução de ruído acompanha o fundo medido', () => {
   assert.equal(reducaoDeRuido(undefined, undefined), 'afftdn=nr=12:nf=-40');
   assert.match(reducaoDeRuido(-36, -14), /nr=17:nf=-36:tn=1/);
   assert.match(reducaoDeRuido(-90, -14), /nf=-80/);
+});
+
+// Regras medidas nas emendas feitas à mão no CapCut: pausa a partir de ~0,15 s sai; menor, só no fim de frase.
+test('pausa curta é cortada e a emenda sobrepõe menos, para não comer fala', () => {
+  const o = { ...PADRAO };
+  const segs = calcularSegmentos([{ inicio: 2, fim: 2.18 }, { inicio: 5, fim: 6 }], 8, o);
+  assert.equal(segs.length, 3);
+  assert.equal(segs.sobreposicoes.length, 2);
+  // Pausa de 0,18 s: fica inteira (0,09 de cada lado) e a emenda sobrepõe 0,13, sobrando o respiro de 0,05.
+  assert.ok(Math.abs(segs[0][1] - 2.09) < 1e-9 && Math.abs(segs[1][0] - 2.09) < 1e-9);
+  assert.ok(Math.abs(segs.sobreposicoes[0] - 0.13) < 1e-9);
+  assert.equal(segs.sobreposicoes[1], o.sobreposicao);
+  const filtro = montarFiltro(segs, o);
+  assert.match(filtro, /acrossfade=d=0\.13:/);
+  assert.match(filtro, /acrossfade=d=0\.2:/);
+});
+
+test('pausa entre palavras fica; a mesma pausa no fim de frase sai', () => {
+  const o = { ...PADRAO };
+  assert.equal(pausaCortavel({ inicio: 1, fim: 1.08 }, o), false);
+  assert.equal(pausaCortavel({ inicio: 1, fim: 1.12, antes: -6 }, o), false, 'voz ainda forte: pausa entre palavras');
+  assert.equal(pausaCortavel({ inicio: 1, fim: 1.12, antes: -18 }, o), true, 'voz caindo: fim de frase');
+  assert.equal(pausaCortavel({ inicio: 1, fim: 1.16 }, o), true);
+  assert.equal(calcularSegmentos([{ inicio: 1, fim: 1.08 }], 3, o).length, 1);
+});
+
+test('cada silêncio leva o nível de antes dele, e fala que cai marca o fim de frase', () => {
+  // Fala forte, depois a mesma fala baixando (fim de frase), pausa de 0,5 s, fala.
+  const caindo = voz(0.4, 0.2).map((v, i, x) => v * (1 - i / x.length) ** 2);
+  const x = montar([voz(1), caindo, vazio(0.5), voz(1)]);
+  const r = analisarVoz(x, R, PADRAO);
+  const meio = r.silencios.find((s) => s.inicio > 0.5 && s.fim < 2.5);
+  assert.ok(meio, 'a pausa do meio não foi achada');
+  assert.ok(Number.isFinite(meio.antes) && meio.antes < -6, `nível antes da pausa: ${meio.antes}`);
 });

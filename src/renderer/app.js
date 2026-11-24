@@ -1469,7 +1469,7 @@ function ligarTranscode() {
 
 // ---------- decupagem de narrações ----------
 
-const dc = { itens: [], pausa: 0.05, sobreposicao: 0.2, automatico: true, limiar: -35, velocidade: 1.2, formato: 'wav', aprimorar: true, normalizar: true, ganho: 4, pasta: null, rodando: false };
+const dc = { itens: [], pausa: 0.05, pausaMinima: 0.15, sobreposicao: 0.2, automatico: true, limiar: -35, velocidade: 1.2, formato: 'wav', aprimorar: true, normalizar: true, ganho: 4, pasta: null, rodando: false };
 const EXT_AUDIOS = /\.(mp3|wav|m4a|aac|ogg|flac|opus|wma)$/i;
 
 const tempo = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
@@ -1713,6 +1713,7 @@ async function iniciarDecupar() {
     itens: fila.map((i) => ({ arquivo: i.arquivo, arquivos: i.arquivos, pasta: !!i.pasta })),
     opcoes: {
       pausa: dc.pausa,
+      pausaMinima: dc.pausaMinima,
       sobreposicao: dc.sobreposicao,
       automatico: dc.automatico,
       limiar: dc.limiar,
@@ -1743,6 +1744,7 @@ function ligarDecupar() {
     };
   };
   numero('#dc-pausa', 'pausa', 0, 1);
+  numero('#dc-pausa-minima', 'pausaMinima', 0.08, 1);
   numero('#dc-sobreposicao', 'sobreposicao', 0.05, 0.6);
   numero('#dc-limiar', 'limiar', -60, -15);
   numero('#dc-ganho', 'ganho', 0, 12);

@@ -116,6 +116,14 @@ A taxa de bits segue a resolução e o fps: o Recomendado em 1080x1920 a 30 fps 
 
 O Filmcraft não tem codificador de HEVC no Windows: ele monta o vídeo em H.264 com folga de qualidade, e o ffmpeg converte no fim, na placa de vídeo ou, se ela recusar, na CPU.
 
+## Decupar áudios
+
+A aba "Decupar áudios" tira as pausas de narrações (áudio ou vídeo) no estilo do corte à mão no CapCut. O núcleo está em `src/main/decupar-nucleo.mjs`, sem Electron e coberto por `test/decupar.test.mjs`.
+
+- **Voz** (`analisarVoz`): energia em quadros de 10 ms, limiares tirados do ruído e da voz medidos, e periodicidade (cordas vocais) para separar fala de ruído. Uma segunda passada mede ruído e voz só perto da fala: no bruto, as pausas longas baixam o "ruído" e o limiar, e as pausas curtas entre frases sumiam.
+- **O que corta** (`pausaCortavel`): pausa a partir de `pausaMinima` (0,15 s), ou a partir de `pausaMinimaFimFrase` (0,10 s) quando a voz cai mais de `quedaFimFrase` (14 dB) nos 150 ms antes dela (fim de frase). Os números vêm de 376 emendas feitas à mão no CapCut em 26 narrações de 11 clientes: cortam 77% delas, contra 34% da regra anterior (pausa de 0,25 s ou mais), com 73% das pausas cortadas coincidindo com cortes do editor. Na VPM 24.11 01, o resultado ficou com 51,4 s, igual ao corte à mão.
+- **Emendas** (`calcularSegmentos`, `montarFiltro`): sobrepõem `sobreposicao` (0,2 s) com acrossfade e deixam `pausa` (0,05 s) de respiro. Pausa curta fica inteira, dividida ao meio, e a emenda sobrepõe menos (`segs.sobreposicoes`), para não comer fala.
+
 ## Estrutura
 
 - `src/main/` — processo principal: `agente.mjs` (Claude + ferramentas `renderizar` e `ver_quadros`), `render.mjs`, `transcricao.mjs`, `workspace.mjs` (projetos, timelines, scaffold, briefing), `migracao.mjs` (formato antigo para o novo), `presets.mjs` (estilos).
