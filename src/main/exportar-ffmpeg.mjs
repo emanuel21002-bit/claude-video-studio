@@ -202,7 +202,8 @@ function ordemDesenho(tr) {
 // so: 'video' monta só a imagem (um trecho), 'audio' só o som (o vídeo inteiro); sem ele, os dois.
 // duracao: tamanho exato do que sai (um trecho termina onde o próximo começa, mesmo se houver vão no fim).
 // decodificacao: opções de entrada dos clipes de vídeo (decodificar na placa, threads).
-export function planoFfmpeg(t, { infos = {}, assets, camada = null, camadaFundo = null, camadasMescla = [], tonemap, escala = 1, fpsSaida = 0, duracao = null, so = null, decodificacao = [] }) {
+export function planoFfmpeg(t, { infos = {}, assets, camada = null, camadaFundo = null, camadasMescla = [], tonemap, escala = 1, fpsSaida = 0, duracao = null, so = null, decodificacao = [], naPlaca = false }) {
+  let usouPlaca = false;
   const W = t.largura;
   const H = t.altura;
   const fps = t.fps;
@@ -270,12 +271,19 @@ export function planoFfmpeg(t, { infos = {}, assets, camada = null, camadaFundo 
       // Geometria: o quadro F, centralizado na caixa W x H (a AbsoluteFill do item).
       const ajuste = i.ajuste ?? (i.tipo === 'video' ? 'cover' : 'contain');
       const capa = ajuste === 'cover' && !i.largura;
-      if (i.largura) f.push(`scale=${Math.round(i.largura / 2) * 2}:-2`);
-      else if (capa) f.push(`scale=${W}:${H}:force_original_aspect_ratio=increase`, `crop=${W}:${H}`);
-      else f.push(`scale=${W}:${H}:force_original_aspect_ratio=decrease`, 'pad=ceil(iw/2)*2:ceil(ih/2)*2');
-      // Tone mapping HDR depois de reduzir: em ponto flutuante na CPU, ele custa por pixel. No 4K do iPhone, fazer no
-      // tamanho do quadro deixou a montagem cerca de 40% mais rápida (medido: 34,4 s → 20,8 s para 10 s de vídeo).
-      if (info.hdr && tonemap) f.push(tonemap);
+      // Na placa (libplacebo, Vulkan): reduz, corta e faz o tone mapping de uma vez, sem a CPU tocar no 4K. Medido num
+      // trecho de 8 s do iPhone (HEVC 10 bits, HLG): 7,3 s → 5,0 s; o resto é a decodificação (3,5 s).
+      if (naPlaca && i.tipo === 'video' && capa) {
+        usouPlaca = true;
+        f.push(`libplacebo=w=${W}:h=${H}:pad_crop_ratio=1${info.hdr ? ':tonemapping=bt.2390' : ''}:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:format=yuv420p`);
+      } else {
+        if (i.largura) f.push(`scale=${Math.round(i.largura / 2) * 2}:-2`);
+        else if (capa) f.push(`scale=${W}:${H}:force_original_aspect_ratio=increase`, `crop=${W}:${H}`);
+        else f.push(`scale=${W}:${H}:force_original_aspect_ratio=decrease`, 'pad=ceil(iw/2)*2:ceil(ih/2)*2');
+        // Tone mapping HDR depois de reduzir: em ponto flutuante na CPU, ele custa por pixel. No 4K do iPhone, fazer no
+        // tamanho do quadro deixou a montagem cerca de 40% mais rápida (medido: 34,4 s → 20,8 s para 10 s de vídeo).
+        if (info.hdr && tonemap) f.push(tonemap);
+      }
       // Efeitos, em RGB.
       const e = i.efeitos ?? {};
       let lut = null;
@@ -439,7 +447,9 @@ export function planoFfmpeg(t, { infos = {}, assets, camada = null, camadaFundo 
     temAudio = true;
   }
 
-  return { entradas, grafo: grafo.join(';\n'), auxiliares, duracao: D, temAudio };
+  // Opções que vão antes das entradas: o aparelho Vulkan do libplacebo.
+  const globais = usouPlaca ? ['-init_hw_device', 'vulkan=vk', '-filter_hw_device', 'vk'] : [];
+  return { entradas, globais, grafo: grafo.join(';\n'), auxiliares, duracao: D, temAudio };
 }
 
 // ---------- exportar em trechos ----------

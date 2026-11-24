@@ -26,14 +26,14 @@ const pasta = (id) => path.join(caminhoTimeline(id), 'filmcraft');
 const projetoFc = (id) => path.join(pasta(id), 'projeto.fcproj');
 
 
-const CAMADAS_GUARDADAS = 6; // frente e fundo de algumas versões
+const CAMADAS_GUARDADAS = 16; // frente e fundo de algumas versões, e os pedaços renderizados por intervalo
 // Só texto e gráficos: mais quadros ao mesmo tempo aceleram bem (medido: 2 → 10 deixou a camada cerca de duas vezes mais rápida).
 // Cada aba do Chrome desenhando 1080x1920 gasta uns 600 MB: o paralelo também respeita a memória livre (deixa 2 GB).
 const paraleloCamada = () => Math.max(2, Math.min(10, os.cpus().length - 2, Math.floor((os.freemem() - 2 * 1024 ** 3) / (600 * 1024 ** 2))));
 
 // Tudo o que muda o desenho da camada: os itens gráficos, o código do modelo e dos blocos e os arquivos que os blocos citam
 // (logo, selo, música de fundo). Mexer só nos cortes dos vídeos não muda nada disso.
-function hashDaCamada(id, soGraficos) {
+export function hashDaCamada(id, soGraficos) {
   const src = path.join(caminhoTimeline(id), 'src');
   const h = crypto.createHash('sha1').update(JSON.stringify(soGraficos));
   let codigo = '';
@@ -57,14 +57,16 @@ function hashDaCamada(id, soGraficos) {
 
 // As camadas do Remotion: { frente, fundo } ({ arquivo, duracao } ou null) e mescla, a lista das camadas em
 // multiplicar/tela ({ arquivo, duracao, modo }), da de baixo para a de cima.
-export async function renderizarCamadas(id, t, onLinha) {
-  const fundo = await renderizarCamada(id, t, onLinha, { parte: 'fundo' });
+// intervalo [de, ate]: só esse pedaço da timeline (o pré-render refaz só os trechos que mudaram). A camada começa em
+// `de`: quem usa desconta `inicio` do tempo.
+export async function renderizarCamadas(id, t, onLinha, { intervalo = null } = {}) {
+  const fundo = await renderizarCamada(id, t, onLinha, { parte: 'fundo', intervalo });
   const mescla = [];
   for (const [parte, { modo }] of Object.entries(CAMADAS_MESCLA)) {
-    const c = await renderizarCamada(id, t, onLinha, { parte });
+    const c = await renderizarCamada(id, t, onLinha, { parte, intervalo });
     if (c) mescla.push({ ...c, modo });
   }
-  const frente = await renderizarCamada(id, t, onLinha, { parte: 'frente' });
+  const frente = await renderizarCamada(id, t, onLinha, { parte: 'frente', intervalo });
   return { frente, fundo, mescla };
 }
 
@@ -72,18 +74,21 @@ const NOME_PARTE = { fundo: 'o fundo (gráficos por baixo dos vídeos)', multipl
 
 // Texto, legendas e blocos são desenhados pelo Remotion: vão como um vídeo transparente, só para referência.
 // parte: 'frente' (por cima dos vídeos, o padrão) ou 'fundo' (por baixo deles; ver graficosDaParte).
-export async function renderizarCamada(id, t, onLinha, { parte = 'frente' } = {}) {
+export async function renderizarCamada(id, t, onLinha, { parte = 'frente', intervalo = null } = {}) {
   const soGraficos = graficosDaParte(t, parte);
-  const itens = soGraficos.trilhas.flatMap((tr) => tr.itens);
+  const [de, ate] = intervalo ?? [0, Infinity];
+  const itens = soGraficos.trilhas.flatMap((tr) => tr.itens).filter((i) => i.inicio < ate - 0.0005 && i.inicio + i.duracao > de + 0.0005);
   if (!itens.length) return null;
-  const hash = hashDaCamada(id, soGraficos);
+  const hash = crypto.createHash('sha1').update(hashDaCamada(id, soGraficos)).update(JSON.stringify(intervalo)).digest('hex');
   const saida = path.join(pasta(id), `camada-${hash.slice(0, 12)}.mov`);
-  const duracao = Math.max(...itens.map((i) => i.inicio + i.duracao));
+  const fimDosGraficos = Math.max(...itens.map((i) => i.inicio + i.duracao));
+  const fim = Math.min(ate, fimDosGraficos);
+  const duracao = fim - de;
   if (fs.existsSync(saida)) {
     // Mesmo texto, legenda e efeito de antes: nada a renderizar. Marca o uso para o arquivo não ser descartado.
     fs.utimesSync(saida, new Date(), new Date());
     onLinha?.(NOME_PARTE[parte] ? `Camada com ${NOME_PARTE[parte]} igual à da última vez: reaproveitando a camada pronta.` : 'Textos, legendas e efeitos iguais aos da última vez: reaproveitando a camada pronta.');
-    return { arquivo: saida, duracao };
+    return { arquivo: saida, duracao, inicio: de };
   }
   // Guarda as últimas camadas: voltar a uma versão anterior (desfazer uma troca de cor, por exemplo) não renderiza de novo.
   const antigas = fs.readdirSync(pasta(id)).filter((n) => /^camada-.*\.mov$/.test(n))
@@ -107,14 +112,14 @@ export async function renderizarCamada(id, t, onLinha, { parte = 'frente' } = {}
       ent.entrada, 'Main', parcial,
       ...ent.publicDir, `--props=${props}`, `--concurrency=${paraleloCamada()}`, '--timeout=120000',
       '--codec=prores', '--prores-profile=4444', '--pixel-format=yuva444p10le', '--image-format=png', '--gl=angle',
-      `--frames=0-${Math.ceil(duracao * t.fps) - 1}`,
+      `--frames=${Math.round(de * t.fps)}-${Math.max(Math.round(de * t.fps), Math.ceil(fim * t.fps) - 1)}`,
     ], { cwd: ws, env: { TEMP: tmp, TMP: tmp } });
     fs.renameSync(parcial, saida);
   } finally {
     soltar();
     fs.rmSync(tmp, { recursive: true, force: true });
   }
-  return { arquivo: saida, duracao };
+  return { arquivo: saida, duracao, inicio: de };
 }
 
 const estado = (p) => p.filmcraft ?? {};

@@ -292,8 +292,37 @@ const LIMITE_FILMCRAFT = 60 * 60 * 1000;
 
 // Motor rápido: um ffmpeg monta o vídeo todo (ver exportar-ffmpeg.mjs), com a camada de textos do Remotion por cima,
 // e já sai no codec final. Na placa de vídeo; se ela recusar, na CPU.
+// Muda quando o jeito de montar um trecho muda: as prévias antigas deixam de valer.
+const VERSAO_PREVIAS = 'previas-1';
+const PREVIAS_GUARDADAS = 80;
+const formatarSeg = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
+
+// Mantém só as prévias usadas por último.
+function limparPrevias(pasta) {
+  try {
+    const lista = fs.readdirSync(pasta).map((n) => ({ n, t: fs.statSync(path.join(pasta, n)).mtimeMs })).sort((x, y) => y.t - x.t);
+    for (const { n } of lista.slice(PREVIAS_GUARDADAS)) fs.rmSync(path.join(pasta, n), { force: true });
+  } catch {}
+}
+
 async function exportarPeloFfmpeg(id, saida, { modo, codec, escala, semAudio, fps, kbps, tmp, encoderId }, opts) {
-  const { renderizarCamadas } = await import('./filmcraft.mjs');
+  const { renderizarCamadas, hashDaCamada } = await import('./filmcraft.mjs');
+  // Chave de um trecho: tudo o que aparece nele (clipes, efeitos, textos que o cruzam, inteiros), o código da
+  // composição, os arquivos usados (tamanho e data) e as escolhas de exportação.
+  const chaveDoTrecho = (id, t, a, b, assets, escolhas) => {
+    const cruza = (i) => i.inicio < b - 0.0005 && i.inicio + i.duracao > a + 0.0005;
+    const visto = { ...t, trilhas: t.trilhas.filter((tr) => tr.tipo !== 'audio').map((tr) => ({ ...tr, itens: tr.itens.filter(cruza) })) };
+    const usados = new Set(JSON.stringify(visto.trilhas).match(/[^"\/:*?<>|]+\.(?:mov|mp4|m4v|mkv|webm|png|jpe?g|webp|gif|cube)(?=")/gi) ?? []);
+    const arquivos = [...usados].sort().map((f) => {
+      try {
+        const st = fs.statSync(path.join(assets, f));
+        return [f, st.size, Math.round(st.mtimeMs)];
+      } catch {
+        return [f, 0, 0];
+      }
+    });
+    return crypto.createHash('sha1').update(VERSAO_PREVIAS).update(hashDaCamada(id, visto)).update(JSON.stringify([a, b, recortarTimeline(t, a, b), arquivos, escolhas])).digest('hex').slice(0, 20);
+  };
   const s = carregar();
   const t = lerTimeline(id);
   const assets = caminhoAssets(id);
@@ -301,23 +330,44 @@ async function exportarPeloFfmpeg(id, saida, { modo, codec, escala, semAudio, fp
   for (const a of new Set(t.trilhas.flatMap((tr) => tr.itens).map((i) => i.arquivo).filter(Boolean))) {
     if (['video', 'imagem'].includes(tipoDe(a)) || t.trilhas.some((tr) => tr.itens.some((i) => i.arquivo === a && i.tipo === 'video'))) infos[a] = await infoVideo(path.join(assets, a));
   }
-  opts.onEvento?.({ etapa: 'Preparando textos e legendas', progresso: 0.02 });
-  const inicioCamada = Date.now();
-  const { frente: camada, fundo: camadaFundo, mescla: camadasMescla } = await renderizarCamadas(id, t, (l) => {
-    opts.onEvento?.({ log: l });
-    if (/reaproveitando|Renderizando /.test(l)) opts.onEvento?.({ etapa: l.replace(/ para o Filmcraft/, '').replace(/…$/, ''), progresso: 0.05 });
+  const naGpu = modo === 'gpu' && codec !== 'prores' && ENCODERS_GPU[encoderId];
+  const trechos = trechosDeExportacao(t, { maxClipes: 6 });
+  const ext = path.extname(saida);
+  // Pré-render, como as prévias do Premiere: cada trecho pronto fica guardado em .previas/ da timeline, com uma chave
+  // do que aparece nele e das escolhas de exportação. Exportar de novo só monta os trechos que mudaram, e a camada de
+  // textos do Remotion só é renderizada no intervalo deles.
+  const pastaPrevias = path.join(caminhoTimeline(id), '.previas');
+  const escolhas = { codec, kbps, escala, fps, ext, encoder: naGpu ? encoderId : null };
+  const chaves = trechos.length > 1 ? trechos.map(([a, b]) => chaveDoTrecho(id, t, a, b, assets, escolhas)) : [];
+  const prontas = chaves.map((k) => {
+    const p = path.join(pastaPrevias, `${k}${ext}`);
+    return fs.existsSync(p) ? p : null;
   });
-  if (camada || camadaFundo || camadasMescla.length) temposAtual.push(['Textos e legendas (Remotion)', Math.round((Date.now() - inicioCamada) / 1000)]);
+  const faltam = trechos.length > 1 ? trechos.map((_, k) => k).filter((k) => !prontas[k]) : [0];
+  let camada = null;
+  let camadaFundo = null;
+  let camadasMescla = [];
+  if (faltam.length) {
+    opts.onEvento?.({ etapa: 'Preparando textos e legendas', progresso: 0.02 });
+    const inicioCamada = Date.now();
+    const intervalo = trechos.length > 1 && faltam.length < trechos.length ? [trechos[faltam[0]][0], trechos[faltam.at(-1)][1]] : null;
+    ({ frente: camada, fundo: camadaFundo, mescla: camadasMescla } = await renderizarCamadas(id, t, (l) => {
+      opts.onEvento?.({ log: l });
+      if (/reaproveitando|Renderizando /.test(l)) opts.onEvento?.({ etapa: l.replace(/ para o Filmcraft/, '').replace(/…$/, ''), progresso: 0.05 });
+    }, { intervalo }));
+    if (camada || camadaFundo || camadasMescla.length) temposAtual.push([intervalo ? `Textos e legendas (Remotion, só ${formatarSeg(intervalo[0])}–${formatarSeg(intervalo[1])})` : 'Textos e legendas (Remotion)', Math.round((Date.now() - inicioCamada) / 1000)]);
+  } else opts.onEvento?.({ log: 'Todos os trechos já estavam pré-renderizados: só falta juntar e pôr o som.' });
   if (opts.sinal?.aborted) throw new Error('Render cancelado.');
   const trab = path.join(tmp, 'ffmpeg');
   fs.mkdirSync(trab, { recursive: true });
   const auxiliares = (lista, pasta) => prepararAuxiliares(lista, pasta, (args) => rodar(s.ffmpegPath, args, { cwd: pasta }).then((r) => {
     if (r.codigo !== 0) throw new Error(r.cauda);
   }));
-  const naGpu = modo === 'gpu' && codec !== 'prores' && ENCODERS_GPU[encoderId];
-  // Tentativas, da mais rápida para a mais segura: decodifica e codifica na placa; decodifica na CPU (2 threads por
-  // clipe: medido, gasta menos memória e é mais rápido que o padrão) e codifica na placa; tudo na CPU.
+  // Tentativas, da mais rápida para a mais segura: decodifica na placa e reduz, corta e faz o tone mapping nela
+  // também (libplacebo); só decodifica na placa; decodifica na CPU (2 threads por clipe: medido, gasta menos memória e
+  // é mais rápido que o padrão) e codifica na placa; tudo na CPU.
   const tentativas = [
+    ...(naGpu ? [{ dec: ['-hwaccel', 'd3d11va'], naPlaca: true, enc: encoderId, nome: `GPU: decodifica, reduz e codifica (${ENCODERS_GPU[encoderId].nome})` }] : []),
     ...(naGpu ? [{ dec: ['-hwaccel', 'd3d11va'], enc: encoderId, nome: `GPU: decodifica e codifica (${ENCODERS_GPU[encoderId].nome})` }] : []),
     ...(naGpu ? [{ dec: ['-threads', '2'], enc: encoderId, nome: `ffmpeg + ${ENCODERS_GPU[encoderId].nome}` }] : []),
     { dec: ['-threads', '2'], enc: null, nome: 'ffmpeg, CPU' },
@@ -327,11 +377,11 @@ async function exportarPeloFfmpeg(id, saida, { modo, codec, escala, semAudio, fp
   const rodarPlano = async (montar, pasta, destino, extras, nome, peso) => {
     for (;;) {
       const tent = tentativas[escolhida];
-      const plano = montar(tent.dec);
+      const plano = montar(tent);
       await auxiliares(plano.auxiliares, pasta);
       fs.writeFileSync(path.join(pasta, 'grafo.txt'), plano.grafo);
       const args = [
-        '-y', '-hide_banner', '-stats', ...plano.entradas.flat(), '-filter_complex_threads', '6', '-/filter_complex', 'grafo.txt',
+        '-y', '-hide_banner', '-stats', ...plano.globais, ...plano.entradas.flat(), '-filter_complex_threads', '6', '-/filter_complex', 'grafo.txt',
         ...extras(plano), ...argsVideo({ codec, encoderId: tent.enc, kbps }), destino,
       ];
       try {
@@ -345,12 +395,12 @@ async function exportarPeloFfmpeg(id, saida, { modo, codec, escala, semAudio, fp
       }
     }
   };
+  const camadaDe = (c, a) => c && { ...c, desde: a - (c.inicio ?? 0) };
 
-  const trechos = trechosDeExportacao(t, { maxClipes: 6 });
   const somDoVideo = (plano) => (plano.temAudio && !semAudio ? ['-map', '[vout]', '-map', '[aout]', '-c:a', 'aac', '-b:a', '320k'] : ['-map', '[vout]', '-an']);
   if (trechos.length === 1) {
     await rodarPlano(
-      (dec) => planoFfmpeg(t, { infos, assets, camada, camadaFundo, camadasMescla, tonemap: TONEMAP, escala, fpsSaida: fps, decodificacao: dec }),
+      (tent) => planoFfmpeg(t, { infos, assets, camada, camadaFundo, camadasMescla, tonemap: TONEMAP, escala, fpsSaida: fps, decodificacao: tent.dec, naPlaca: tent.naPlaca }),
       trab, saida, (plano) => [...somDoVideo(plano), '-movflags', '+faststart'], 'Montando o vídeo', [0.3, 1],
     );
     return;
@@ -358,21 +408,35 @@ async function exportarPeloFfmpeg(id, saida, { modo, codec, escala, semAudio, fp
 
   // Em trechos: cada um com poucos clipes abertos, depois emendados sem recodificar e com o som montado à parte.
   const total = trechos.at(-1)[1];
-  const ext = path.extname(saida);
   const partes = [];
+  fs.mkdirSync(pastaPrevias, { recursive: true });
   for (const [k, [a, b]] of trechos.entries()) {
     if (opts.sinal?.aborted) throw new Error('Render cancelado.');
+    const peso = [0.3 + (0.6 * a) / total, 0.3 + (0.6 * b) / total];
+    if (prontas[k]) {
+      // Marca o uso: as prévias mais antigas são as primeiras a sair.
+      fs.utimesSync(prontas[k], new Date(), new Date());
+      opts.onEvento?.({ etapa: `Trecho ${k + 1} de ${trechos.length}: pré-renderizado`, progresso: peso[1] });
+      temposAtual.push([`Trecho ${k + 1} de ${trechos.length}: pré-renderizado`, 0]);
+      partes.push(prontas[k]);
+      continue;
+    }
     const pasta = path.join(trab, `trecho-${k}`);
     fs.mkdirSync(pasta, { recursive: true });
     const destino = path.join(pasta, `parte${ext}`);
     const tk = recortarTimeline(t, a, b);
-    const peso = [0.3 + (0.6 * a) / total, 0.3 + (0.6 * b) / total];
     await rodarPlano(
-      (dec) => planoFfmpeg(tk, { infos, assets, camada: camada && { ...camada, desde: a }, camadaFundo: camadaFundo && { ...camadaFundo, desde: a }, camadasMescla: camadasMescla.map((c) => ({ ...c, desde: a })), tonemap: TONEMAP, escala, fpsSaida: fps, duracao: b - a, so: 'video', decodificacao: dec }),
+      (tent) => planoFfmpeg(tk, { infos, assets, camada: camadaDe(camada, a), camadaFundo: camadaDe(camadaFundo, a), camadasMescla: camadasMescla.map((c) => camadaDe(c, a)), tonemap: TONEMAP, escala, fpsSaida: fps, duracao: b - a, so: 'video', decodificacao: tent.dec, naPlaca: tent.naPlaca }),
       pasta, destino, () => ['-map', '[vout]', '-an'], `Montando o trecho ${k + 1} de ${trechos.length}`, peso,
     );
+    // Guarda como prévia (cópia: o trabalho temporário é apagado no fim).
+    const previa = path.join(pastaPrevias, `${chaves[k]}${ext}`);
+    try {
+      fs.copyFileSync(destino, previa);
+    } catch {}
     partes.push(destino);
   }
+  limparPrevias(pastaPrevias);
   let som = null;
   if (!semAudio) {
     const planoSom = planoFfmpeg(t, { infos, assets, so: 'audio' });
