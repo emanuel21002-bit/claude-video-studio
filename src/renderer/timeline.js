@@ -15,7 +15,7 @@ const TL = (() => {
   const ALTURA_MIN = 22;
   const ALTURA_MAX = 200;
   const alturaDe = (tr) => Math.max(ALTURA_MIN, Math.min(ALTURA_MAX, tr.altura ?? alturaPadrao(tr)));
-  const FONTES = ['Montserrat', 'Inter', 'Poppins', 'Roboto', 'Anton', 'Bebas Neue', 'Oswald', 'Playfair Display', 'Red Hat Display', 'Red Hat Text'];
+  const FONTES = ['Montserrat', 'Inter', 'Poppins', 'Roboto', 'Anton', 'Bebas Neue', 'Cal Sans', 'Oswald', 'Playfair Display', 'Red Hat Display', 'Red Hat Text'];
   const ANIMACOES = ['', 'fade', 'slide-cima', 'slide-baixo', 'slide-esq', 'slide-dir', 'zoom', 'pop'];
   const MESCLAGENS = ['', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'];
   const CURVAS = [['linear', 'Linear'], ['bezier', 'Suave'], ['easeOut', 'Sair suave'], ['easeIn', 'Chegar suave'], ['hold', 'Segurar']];
@@ -41,7 +41,8 @@ const TL = (() => {
     materiais: [],
     roteiros: [],
     midiaPedida: new Set(),
-    pastasFechadas: new Set(),
+    pastasAbertas: new Set(), // pastas dos materiais começam fechadas
+    area: 'timeline', // painel que recebe os atalhos (o último clicado), como no Filmcraft
     aba: 'materiais',
     desfazer: [],
     refazer: [],
@@ -512,7 +513,7 @@ const TL = (() => {
 
   function desenharItem(item, trilha) {
     const el = document.createElement('div');
-    el.className = `tl-item item-${item.tipo}` + (s.selecao.has(item.id) ? ' selecionado' : '');
+    el.className = `tl-item item-${item.tipo}` + (s.selecao.has(item.id) ? ' selecionado' : '') + (item.desativado ? ' desativado' : '');
     el.dataset.id = item.id;
     posicionar(el, item);
     desenharMidia(el, item, alturaDe(trilha));
@@ -1516,6 +1517,20 @@ const TL = (() => {
     });
   }
 
+  // V: desativa os clipes selecionados (somem da prévia e do render, mas ficam na timeline, mais escuros).
+  // Se algum ainda está ativo, desativa todos; se todos já estão desativados, ativa de volta.
+  function alternarDesativados() {
+    const alvos = todosItens().filter((i) => s.selecao.has(i.id));
+    if (!alvos.length) return;
+    const desativar = alvos.some((i) => !i.desativado);
+    alterar(() => {
+      for (const i of alvos) {
+        if (desativar) i.desativado = true;
+        else delete i.desativado;
+      }
+    });
+  }
+
   function adicionarTexto() {
     const livres = s.t.trilhas.filter((tr) => !ehAudio(tr) && !tr.itens.some((i) => ['video', 'imagem', 'legenda'].includes(i.tipo)));
     const item = {
@@ -1630,6 +1645,9 @@ const TL = (() => {
     const narracoes = (p.narracoes ?? []).filter((n) => n.arquivo !== p.narracao?.arquivo).map((n) => ({ ...n, tipo: 'audio', pasta: 'Narrações' }));
     s.materiais = [...p.materiais, ...(p.narracao ? [{ ...p.narracao, tipo: 'audio' }] : []), ...narracoes];
     s.roteiros = p.roteiros ?? [];
+    s.transcricoes = await api.transcricoesVideo(id).catch(() => ({}));
+    if (!s.fontes) await carregarFontes();
+    if (s.id !== id) return;
     desenharMateriais();
     desenharInspetor();
     // As LUTs (.cube) também ficam em assets/: a lista vai para o Lumetri do inspetor.
@@ -1673,11 +1691,200 @@ const TL = (() => {
     for (const kfs of Object.values(item.keyframes ?? {})) for (const k of kfs) k.t = Math.min(k.t, item.duracao);
   }
 
-  function substituirItem(item, m) {
+  async function substituirItem(item, m) {
     if (!mesmoGrupo(item.tipo, m.tipo)) return avisar('Áudio só troca por áudio, e vídeo ou imagem por vídeo ou imagem.');
+    // Vídeo novo no lugar de um clipe: como no CapCut, uma janela mostra qual trecho dele entra e deixa escolher.
+    if (m.tipo === 'video' && item.tipo !== 'audio') {
+      const escolha = await escolherTrechoSubstituto(item, m);
+      if (!escolha) return;
+      const vel = item.tipo === 'video' ? item.velocidade ?? 1 : 1;
+      alterar(() => {
+        trocarArquivoDoItem(item, m);
+        item.corteInicio = arredondar(escolha.corte);
+        item.duracao = arredondar(Math.max(umQuadro(), Math.min(escolha.duracaoItem, (escolha.durNovo - escolha.corte) / vel)));
+        for (const kfs of Object.values(item.keyframes ?? {})) for (const k of kfs) k.t = Math.min(k.t, item.duracao);
+      });
+      carregarMidia();
+      return avisar(escolha.curto ? `Trocado por ${m.arquivo}. O clipe ficou com ${segundos(item.duracao)} (o vídeo novo é mais curto).` : `Trocado por ${m.arquivo}.`);
+    }
     alterar(() => trocarArquivoDoItem(item, m));
     carregarMidia();
     avisar(`Trocado por ${m.arquivo}.`);
+  }
+
+  const segundos = (x) => `${(Math.round(x * 100) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 2 })} s`;
+  const relogio = (x) => {
+    const t = Math.max(0, x);
+    return `${String(Math.floor(t / 60)).padStart(2, '0')}:${(t % 60).toFixed(2).padStart(5, '0')}`;
+  };
+
+  // Janela de substituição: o vídeo novo inteiro numa barra, com a seleção do tamanho do clipe que sai. Arrastar a
+  // seleção escolhe o momento; a prévia toca o trecho em loop. Se o vídeo novo é mais curto que o clipe, avisa a
+  // duração mínima. Resolve com { corte, durNovo, duracaoItem, curto } ou null se cancelar.
+  function escolherTrechoSubstituto(item, m) {
+    return new Promise((resolver) => {
+      const vel = item.tipo === 'video' ? item.velocidade ?? 1 : 1;
+      const precisa = item.duracao * vel;
+      const dlg = document.createElement('dialog');
+      dlg.className = 'dlg-substituir';
+      dlg.innerHTML = `
+        <h2>Substituir clipe</h2>
+        <p class="sub-nomes"><b class="sub-novo"></b> entra no lugar de <span class="sub-velho"></span></p>
+        <div class="sub-tela"><video class="sub-video" muted playsinline preload="auto"></video><span class="sub-carregando">Carregando…</span></div>
+        <div class="sub-aviso" hidden></div>
+        <div class="sub-barra" title="Arraste a seleção para escolher o momento do vídeo novo">
+          <div class="sub-tira"></div>
+          <div class="sub-sel"><span class="sub-sel-dur"></span></div>
+          <div class="sub-cursor"></div>
+        </div>
+        <div class="sub-info">
+          <button type="button" class="sub-tocar" title="Tocar ou pausar o trecho (Espaço)">❚❚</button>
+          <span class="sub-trecho"></span>
+          <span class="sub-total"></span>
+        </div>
+        <div class="exp-rodape">
+          <span class="sub-dica">Arraste a seleção para escolher o momento. Enter confirma, Esc cancela.</span>
+          <span class="exp-botoes">
+            <button type="button" class="sub-cancelar">Cancelar</button>
+            <button type="button" class="primario sub-ok">Substituir</button>
+          </span>
+        </div>`;
+      document.body.append(dlg);
+      const $ = (c) => dlg.querySelector(c);
+      const video = $('.sub-video');
+      const barra = $('.sub-barra');
+      const sel = $('.sub-sel');
+      const cursor = $('.sub-cursor');
+      $('.sub-novo').textContent = m.arquivo;
+      $('.sub-velho').textContent = item.arquivo ?? 'o clipe';
+      let durNovo = m.duracao || 0;
+      let inicio = 0;
+      let anim = 0;
+      let fechado = false;
+      const largura = () => Math.min(precisa, durNovo);
+      const curto = () => durNovo > 0 && durNovo < precisa - umQuadro() / 2;
+      const prender = (x) => Math.max(0, Math.min(Math.max(0, durNovo - largura()), x));
+
+      const desenhar = () => {
+        if (!(durNovo > 0)) return;
+        sel.style.left = (inicio / durNovo) * 100 + '%';
+        sel.style.width = (largura() / durNovo) * 100 + '%';
+        $('.sub-sel-dur').textContent = segundos(largura());
+        $('.sub-trecho').textContent = `Trecho: ${relogio(inicio)} – ${relogio(inicio + largura())}`;
+        $('.sub-total').textContent = `Vídeo novo: ${segundos(durNovo)} · clipe: ${segundos(precisa)}`;
+        cursor.style.left = (Math.min(video.currentTime || 0, durNovo) / durNovo) * 100 + '%';
+        const aviso = $('.sub-aviso');
+        aviso.hidden = !curto();
+        sel.classList.toggle('curta', curto());
+        $('.sub-ok').textContent = curto() ? 'Substituir mesmo assim' : 'Substituir';
+        if (curto()) {
+          aviso.innerHTML = `<b>Duração baixa.</b> Este clipe precisa de no mínimo <b>${segundos(precisa)}</b> de vídeo, e o vídeo novo tem ${segundos(durNovo)}. ` +
+            `Se substituir, o clipe fica com ${segundos(durNovo / vel)} e sobra um vão de ${segundos((precisa - durNovo) / vel)} na timeline.`;
+        }
+      };
+
+      // A prévia toca só o trecho escolhido, em loop.
+      const laco = () => {
+        if (fechado) return;
+        if (!video.paused && video.currentTime >= inicio + largura() - 0.02) video.currentTime = inicio;
+        desenhar();
+        anim = requestAnimationFrame(laco);
+      };
+      const ir = (t) => {
+        inicio = prender(t);
+        if (video.readyState >= 1) video.currentTime = inicio;
+        desenhar();
+      };
+      const tocar = (sim = video.paused) => {
+        if (sim) video.play().catch(() => {});
+        else video.pause();
+        $('.sub-tocar').textContent = sim ? '❚❚' : '▶';
+      };
+
+      video.addEventListener('loadedmetadata', () => {
+        // Sem a duração no material (arquivo recém-importado), vale a do próprio vídeo.
+        const semDuracao = !(durNovo > 0);
+        if (semDuracao && Number.isFinite(video.duration)) durNovo = video.duration;
+        ir(semDuracao ? (item.tipo === 'video' ? item.corteInicio ?? 0 : 0) : inicio);
+        $('.sub-carregando').hidden = true;
+        tocar(true);
+      });
+      video.addEventListener('error', () => {
+        $('.sub-carregando').textContent = 'A prévia deste vídeo ainda não está pronta. Dá para escolher o trecho pela barra.';
+      });
+      video.src = urlDaMidia(m.arquivo);
+
+      // Arrastar a seleção (ou clicar na barra para centralizar nela).
+      barra.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0 || !(durNovo > 0)) return;
+        e.preventDefault();
+        const r = barra.getBoundingClientRect();
+        const t = (x) => ((x - r.left) / r.width) * durNovo;
+        const dentro = e.target === sel || sel.contains(e.target);
+        const deslocar = dentro ? t(e.clientX) - inicio : largura() / 2;
+        const tocava = !video.paused;
+        video.pause();
+        ir(t(e.clientX) - deslocar);
+        barra.classList.add('arrastando');
+        const mover = (ev) => ir(t(ev.clientX) - deslocar);
+        const soltar = () => {
+          barra.classList.remove('arrastando');
+          window.removeEventListener('pointermove', mover);
+          window.removeEventListener('pointerup', soltar);
+          if (tocava) tocar(true);
+        };
+        window.addEventListener('pointermove', mover);
+        window.addEventListener('pointerup', soltar);
+      });
+
+      // Miniaturas do vídeo novo na barra, se já existem.
+      const md = s.midia[m.arquivo];
+      if (md?.tira && md.quadros) {
+        const tira = $('.sub-tira');
+        tira.style.backgroundImage = `url("${urlArquivo(md.tira)}")`;
+        tira.style.backgroundSize = '100% 100%';
+      }
+
+      const fechar = (valor) => {
+        if (fechado) return;
+        fechado = true;
+        cancelAnimationFrame(anim);
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+        dlg.close();
+        dlg.remove();
+        resolver(valor);
+      };
+      $('.sub-tocar').onclick = () => tocar();
+      $('.sub-cancelar').onclick = () => fechar(null);
+      $('.sub-ok').onclick = () => {
+        if (!(durNovo > 0)) return;
+        fechar({ corte: inicio, durNovo, duracaoItem: item.duracao, curto: curto() });
+      };
+      dlg.addEventListener('cancel', (e) => {
+        e.preventDefault();
+        fechar(null);
+      });
+      dlg.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === ' ') {
+          e.preventDefault();
+          tocar();
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          $('.sub-ok').click();
+        } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+          e.preventDefault();
+          ir(inicio + (e.key === 'ArrowRight' ? 1 : -1) * umQuadro() * (e.shiftKey ? 10 : 1));
+        }
+      });
+      dlg.showModal();
+      // Começa onde o clipe antigo começava no arquivo dele, se couber (vale mesmo antes de o vídeo carregar).
+      if (durNovo > 0) inicio = prender(item.tipo === 'video' ? item.corteInicio ?? 0 : 0);
+      desenhar();
+      anim = requestAnimationFrame(laco);
+    });
   }
 
   async function importarUm() {
@@ -1730,15 +1937,15 @@ const TL = (() => {
   function desenharPastas(no, cartao) {
     const box = document.createElement('div');
     for (const filha of no.filhas.values()) {
-      const fechada = s.pastasFechadas.has(filha.caminho);
+      const fechada = !s.pastasAbertas.has(filha.caminho);
       const titulo = document.createElement('button');
       titulo.className = 'material-pasta';
       titulo.dataset.pasta = filha.caminho;
       titulo.title = filha.caminho;
       titulo.textContent = `${fechada ? '▸' : '▾'} 📁 ${filha.nome} (${totalNaPasta(filha)})`;
       titulo.onclick = () => {
-        if (fechada) s.pastasFechadas.delete(filha.caminho);
-        else s.pastasFechadas.add(filha.caminho);
+        if (fechada) s.pastasAbertas.add(filha.caminho);
+        else s.pastasAbertas.delete(filha.caminho);
         desenharMateriais();
       };
       box.append(titulo);
@@ -2094,7 +2301,8 @@ const TL = (() => {
     ['segundoDepois', 'Reprodução', 'Um segundo para a frente', ['Shift+ArrowRight'], () => irPara(s.tempo + 1)],
     ['inicio', 'Reprodução', 'Ir para o início', ['Home'], () => irPara(0)],
     ['fim', 'Reprodução', 'Ir para o fim', ['End'], () => irPara(duracaoTotal())],
-    ['ferramenta.selecao', 'Ferramentas', 'Selecionar', ['V'], () => escolherFerramenta('selecao')],
+    ['desativar', 'Timeline', 'Desativar / ativar os clipes selecionados', ['V'], () => alternarDesativados()],
+    ['ferramenta.selecao', 'Ferramentas', 'Selecionar', ['A'], () => escolherFerramenta('selecao')],
     ['ferramenta.ripple', 'Ferramentas', 'Ripple', ['B'], () => escolherFerramenta('ripple')],
     ['ferramenta.roll', 'Ferramentas', 'Roll', ['N'], () => escolherFerramenta('roll')],
     ['ferramenta.slip', 'Ferramentas', 'Slip', ['Y'], () => escolherFerramenta('slip')],
@@ -2414,6 +2622,97 @@ const TL = (() => {
     return box;
   }
 
+  // Transcrição do áudio dos vídeos do projeto (Whisper local), para saber quais têm narração.
+  const ROTULO_FALA = { narracao: 'Narração', 'fala-curta': 'Fala curta', 'sem-fala': 'Sem fala' };
+  const rotuloFala = (arquivo) => ROTULO_FALA[s.transcricoes?.[arquivo]?.veredito] ?? '';
+
+  async function transcreverVideos(arquivos) {
+    if (s.transcrevendo?.size || !arquivos.length) return;
+    const id = s.id;
+    s.transcrevendo = new Map(arquivos.map((a) => [a, 'Na fila…']));
+    desenharMateriais();
+    try {
+      s.transcricoes = await api.transcreverVideos({ id, arquivos });
+    } catch (e) {
+      avisar(String(e.message ?? e).split(String.fromCharCode(10))[0].replace(/^Error invoking remote method '[^']+': (Error: )?/, ''));
+    }
+    s.transcrevendo = new Map();
+    if (s.id === id) desenharMateriais();
+  }
+
+  function blocoTranscricao() {
+    const box = document.createElement('div');
+    box.className = 'materiais-roteiro';
+    box.innerHTML = '<h5>Narração nos vídeos</h5><small>Transcreve o áudio dos vídeos no seu computador (Whisper) e mostra quais têm narração. O Claude também lê o resultado.</small>';
+    const videos = s.materiais.filter((m) => m.tipo === 'video' && m.temAudio);
+    if (!videos.length) {
+      const vazio = document.createElement('small');
+      vazio.textContent = 'Nenhum vídeo com áudio neste projeto.';
+      box.append(vazio);
+      return box;
+    }
+    s.transcricoes ??= {};
+    const rodando = !!s.transcrevendo?.size;
+    const pendentes = videos.filter((v) => !s.transcricoes[v.arquivo] || s.transcricoes[v.arquivo].desatualizada);
+    const botao = document.createElement('button');
+    botao.textContent = rodando ? 'Cancelar transcrição' : pendentes.length ? `Transcrever áudio dos vídeos (${pendentes.length})` : 'Transcrever de novo (todos)';
+    botao.onclick = () => {
+      if (rodando) return api.cancelarTranscricaoVideo();
+      if (s.bloqueada) return avisar('Espere o Claude terminar.');
+      transcreverVideos((pendentes.length ? pendentes : videos).map((v) => v.arquivo));
+    };
+    box.append(botao);
+    const lista = document.createElement('div');
+    lista.className = 'transc-lista';
+    for (const v of videos) {
+      const r = s.transcricoes[v.arquivo];
+      const andamento = s.transcrevendo?.get(v.arquivo);
+      if (!r && andamento === undefined) continue;
+      const linha = document.createElement('div');
+      linha.className = 'transc-linha';
+      linha.dataset.arquivo = v.arquivo;
+      const topo = document.createElement('div');
+      topo.className = 'transc-topo';
+      const nome = document.createElement('span');
+      nome.className = 'transc-nome';
+      nome.textContent = v.arquivo;
+      nome.title = v.arquivo;
+      const selo = document.createElement('span');
+      selo.className = 'transc-selo ' + (andamento !== undefined ? 'andando' : r.veredito);
+      selo.textContent = andamento !== undefined ? '…' : ROTULO_FALA[r.veredito];
+      topo.append(nome, selo);
+      const info = document.createElement('div');
+      info.className = 'transc-info';
+      info.textContent = andamento !== undefined ? andamento : `${Math.round(r.cobertura * 100)}% do vídeo com fala · ${r.palavras} palavras${r.desatualizada ? ' · o arquivo mudou, transcreva de novo' : ''}`;
+      linha.append(topo, info);
+      if (r?.texto && andamento === undefined) {
+        const texto = document.createElement('div');
+        texto.className = 'transc-texto';
+        texto.hidden = true;
+        texto.textContent = r.texto + (r.texto.length >= 600 ? '…' : '');
+        linha.append(texto);
+        linha.title = 'Clique para ver o começo do que é falado';
+        linha.onclick = () => (texto.hidden = !texto.hidden);
+      }
+      lista.append(linha);
+    }
+    box.append(lista);
+    return box;
+  }
+
+  api.aoTranscreverVideo((e) => {
+    if (e.id !== s.id) return;
+    if (e.status === 'transcrevendo') {
+      s.transcrevendo?.set(e.arquivo, e.texto);
+      for (const l of document.querySelectorAll('.transc-linha')) if (l.dataset.arquivo === e.arquivo) l.querySelector('.transc-info').textContent = e.texto;
+      return;
+    }
+    s.transcrevendo?.delete(e.arquivo);
+    if (e.status === 'pronto') (s.transcricoes ??= {})[e.arquivo] = e.resumo;
+    if (e.status === 'erro') avisar(`Não consegui transcrever ${e.arquivo}: ${e.erro}`);
+    desenharMateriais();
+  });
+
   function desenharMateriais() {
     const box = qs('#materiais');
     box.innerHTML = '';
@@ -2434,7 +2733,7 @@ const TL = (() => {
         carregarMidia();
       });
     };
-    box.append(importar, pasta, packs, blocoRoteiro());
+    box.append(importar, pasta, packs, blocoRoteiro(), blocoTranscricao());
     const cartao = (m) => {
       const card = document.createElement('div');
       card.className = 'material';
@@ -2453,7 +2752,7 @@ const TL = (() => {
       nome.textContent = m.arquivo;
       const info = document.createElement('div');
       info.className = 'material-info';
-      info.textContent = m.tipo === 'imagem' ? 'Imagem' : `${(m.duracao ?? 0).toFixed(1)} s`;
+      info.textContent = m.tipo === 'imagem' ? 'Imagem' : `${(m.duracao ?? 0).toFixed(1)} s${rotuloFala(m.arquivo) ? ' · ' + rotuloFala(m.arquivo) : ''}`;
       const trocar = document.createElement('button');
       trocar.className = 'material-trocar';
       trocar.textContent = '⇄';
@@ -2591,6 +2890,102 @@ const TL = (() => {
     info.textContent = info.textContent.replace(/\d+x\d+/, `${s.t.largura}x${s.t.altura}`);
   }
 
+  // Transcrição de tudo o que toca na timeline (clipes com som e áudios), com os tempos dela.
+  let transcrevendoTimeline = false;
+
+  function desenharTranscricaoTimeline(r) {
+    const lista = qs('#tt-lista');
+    lista.replaceChildren();
+    const aviso = qs('#tt-aviso');
+    aviso.textContent = r.desatualizada ? 'A timeline mudou depois desta transcrição: transcreva de novo (os arquivos já transcritos não são refeitos).' : '';
+    if (!r.segmentos.length) {
+      const vazio = document.createElement('div');
+      vazio.className = 'tt-vazio';
+      vazio.textContent = 'Nenhuma fala encontrada no áudio da timeline.';
+      lista.append(vazio);
+    }
+    for (const seg of r.segmentos) {
+      const linha = document.createElement('div');
+      linha.className = 'tt-linha';
+      linha.title = `${seg.arquivo} — clique para ir a este ponto`;
+      const tempo = document.createElement('span');
+      tempo.className = 'tt-tempo';
+      tempo.textContent = formatarTempo(seg.inicio);
+      const texto = document.createElement('span');
+      texto.textContent = seg.texto;
+      linha.append(tempo, texto);
+      linha.onclick = () => irPara(seg.inicio);
+      lista.append(linha);
+    }
+    qs('#tt-legendas').disabled = !r.palavras.length;
+    qs('#tt-copiar').disabled = !r.segmentos.length;
+    qs('#tt-resumo').textContent = `${r.segmentos.length} trechos · ${r.palavras.length} palavras · ${r.arquivos.length} arquivo${r.arquivos.length === 1 ? '' : 's'} com som`;
+    s.transcricaoTimeline = r;
+    qs('#tt-corpo').dataset.estado = 'pronto';
+  }
+
+  async function abrirTranscricaoTimeline(refazer) {
+    const dlg = qs('#dlg-transcricao');
+    if (!dlg.open) dlg.showModal();
+    const id = s.id;
+    const salva = refazer ? null : await api.lerTranscricaoTimeline(id);
+    if (salva && !salva.desatualizada) return desenharTranscricaoTimeline(salva);
+    if (transcrevendoTimeline) return;
+    transcrevendoTimeline = true;
+    qs('#tt-estado').textContent = 'Preparando…';
+    qs('#tt-corpo').dataset.estado = 'rodando';
+    try {
+      desenharTranscricaoTimeline(await api.transcreverTimeline({ id }));
+      qs('#tt-corpo').dataset.estado = 'pronto';
+    } catch (e) {
+      const msg = String(e.message ?? e).split(String.fromCharCode(10))[0].replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+      if (salva) desenharTranscricaoTimeline(salva);
+      qs('#tt-corpo').dataset.estado = salva ? 'pronto' : 'erro';
+      qs('#tt-erro').textContent = msg;
+    }
+    transcrevendoTimeline = false;
+  }
+
+  api.aoTranscreverTimeline((e) => {
+    if (e.id === s.id) qs('#tt-estado').textContent = e.texto;
+  });
+
+  function ligarTranscricaoTimeline() {
+    qs('#tl-transcrever').onclick = async () => {
+      if (s.bloqueada) return;
+      await salvarAgora();
+      qs('#tt-lista').replaceChildren();
+      qs('#tt-resumo').textContent = '';
+      qs('#tt-aviso').textContent = '';
+      qs('#tt-erro').textContent = '';
+      abrirTranscricaoTimeline(false);
+    };
+    qs('#tt-refazer').onclick = () => abrirTranscricaoTimeline(true);
+    qs('#tt-cancelar').onclick = () => api.cancelarTranscricaoVideo();
+    qs('#tt-fechar').onclick = () => qs('#dlg-transcricao').close();
+    qs('#tt-copiar').onclick = async () => {
+      await navigator.clipboard.writeText(s.transcricaoTimeline.segmentos.map((g) => `[${formatarTempo(g.inicio)}] ${g.texto}`).join(String.fromCharCode(10)));
+      avisar('Transcrição copiada.');
+    };
+    qs('#tt-legendas').onclick = async () => {
+      qs('#dlg-transcricao').close();
+      if (s.bloqueada) return;
+      await salvarAgora();
+      guardarEstado();
+      try {
+        const resumo = await api.legendasTimeline({ id: s.id, opcoes: { daTimeline: true } });
+        s.t = await api.lerTimeline(s.id);
+        s.sel = null;
+        atualizarPrevia();
+        desenhar();
+        avisar(resumo);
+      } catch (e) {
+        s.desfazer.pop();
+        avisar(e.message.split(String.fromCharCode(10)).at(-1).replace(/^Error: /, ''));
+      }
+    };
+  }
+
   async function gerarLegendas() {
     if (s.bloqueada) return;
     await salvarAgora();
@@ -2633,7 +3028,7 @@ const TL = (() => {
     ['saida.tipo', 'Saída', ANIMACOES], ['saida.duracao', 'Duração da saída', 'num', 0.05, 0.3],
   ];
   const ESTILO = [
-    ['estilo.fonte', 'Fonte', FONTES], ['estilo.tamanho', 'Tamanho', 'num'], ['estilo.peso', 'Peso', ['400', '600', '800']],
+    ['estilo.fonte', 'Fonte', 'fonte'], ['estilo.tamanho', 'Tamanho', 'num'], ['estilo.peso', 'Peso', ['400', '600', '800']],
     ['estilo.cor', 'Cor', 'cor'], ['estilo.contorno', 'Contorno', 'cor'], ['estilo.contornoLargura', 'Largura do contorno', 'num'],
     ['estilo.maiusculas', 'Maiúsculas', 'marca'],
   ];
@@ -2812,12 +3207,77 @@ const TL = (() => {
     if (rotulo) rotulo.textContent = rotuloItem(item);
   }
 
+  // ---------- fontes ----------
+  // Do app (Google Fonts), as que o usuário adicionou e todas as instaladas no computador.
+  const FONTE_ADICIONAR = '__adicionar__';
+  const FONTE_ATUALIZAR = '__atualizar__';
+
+  async function carregarFontes(atualizar = false) {
+    s.fontes = await api.listarFontes(atualizar).catch(() => ({ sistema: [], minhas: [] }));
+  }
+
+  function preencherFontes(select, atual) {
+    select.replaceChildren();
+    const grupo = (rotulo, nomes, estilizar) => {
+      if (!nomes.length) return;
+      const g = document.createElement('optgroup');
+      g.label = rotulo;
+      for (const nome of nomes) {
+        const op = new Option(nome, nome);
+        if (estilizar) op.style.fontFamily = `"${nome}"`;
+        g.append(op);
+      }
+      select.append(g);
+    };
+    const f = s.fontes ?? { sistema: [], minhas: [] };
+    const minhas = f.minhas.map((m) => m.familia);
+    const conhecidas = new Set([...FONTES, ...minhas, ...f.sistema]);
+    if (atual && !conhecidas.has(atual)) select.append(new Option(`${atual} (não encontrada)`, atual));
+    grupo('Do app', FONTES, false);
+    grupo('Minhas fontes', minhas, false);
+    grupo('Instaladas no computador', f.sistema.filter((n) => !FONTES.includes(n) && !minhas.includes(n)), true);
+    const acoes = document.createElement('optgroup');
+    acoes.label = 'Mais';
+    acoes.append(new Option('＋ Adicionar fonte do computador…', FONTE_ADICIONAR), new Option('↻ Atualizar a lista de fontes', FONTE_ATUALIZAR));
+    select.append(acoes);
+    select.value = atual ?? 'Montserrat';
+  }
+
+  // Aplica a fonte escolhida. Fonte adicionada pelo usuário vai para os assets do projeto e entra em "fontes" da timeline.
+  async function escolherFonte(item, caminho, select) {
+    const anterior = lerCampo(item, caminho);
+    let valor = select.value;
+    if (valor === FONTE_ATUALIZAR) {
+      await carregarFontes(true);
+      preencherFontes(select, anterior);
+      return;
+    }
+    if (valor === FONTE_ADICIONAR) {
+      const r = await api.adicionarFontes();
+      await carregarFontes();
+      if (!r?.novas.length) {
+        if (r?.ignoradas.length) avisar(`Não consegui ler: ${r.ignoradas.join(', ')}`);
+        preencherFontes(select, anterior);
+        return;
+      }
+      valor = r.novas[0];
+      preencherFontes(select, valor);
+      avisar(r.novas.length > 1 ? `${r.novas.length} fontes adicionadas; usando ${valor}.` : `Fonte ${valor} adicionada.`);
+    }
+    if (s.fontes?.minhas.some((m) => m.familia === valor)) {
+      const arquivo = await api.prepararFonte({ id: s.id, familia: valor });
+      if (arquivo) s.t.fontes = { ...s.t.fontes, [valor]: arquivo };
+    }
+    aoEditarCampo(item, caminho, valor);
+  }
+
   function criarCampo(item, [caminho, titulo, tipo, passo, padrao]) {
     const rotulo = document.createElement('label');
     rotulo.textContent = titulo;
     const atual = lerCampo(item, caminho);
     let entrada;
     const emitir = () => {
+      if (tipo === 'fonte') return escolherFonte(item, caminho, entrada);
       const bruto = entrada.type === 'checkbox' ? entrada.checked : entrada.value;
       if (tipo === 'json') {
         try {
@@ -2838,7 +3298,10 @@ const TL = (() => {
       const numerico = tipo === 'num' || caminho === 'estilo.peso';
       aoEditarCampo(item, caminho, numerico && bruto !== '' ? Number(bruto) : bruto === false ? '' : bruto);
     };
-    if (Array.isArray(tipo)) {
+    if (tipo === 'fonte') {
+      entrada = document.createElement('select');
+      preencherFontes(entrada, atual);
+    } else if (Array.isArray(tipo)) {
       entrada = document.createElement('select');
       for (const o of tipo) {
         const op = document.createElement('option');
@@ -2875,7 +3338,7 @@ const TL = (() => {
         entrada.checked = !!atual;
       }
     }
-    entrada.addEventListener('input', emitir);
+    if (tipo !== 'fonte') entrada.addEventListener('input', emitir);
     entrada.addEventListener('change', () => {
       emitir();
       s.alterandoCampo = false;
@@ -3421,13 +3884,31 @@ const TL = (() => {
 
   // ---------- teclado e mouse ----------
 
+  // Como no Filmcraft: o painel clicado por último fica marcado e recebe os atalhos. A timeline recebe todos; o
+  // player, só os de reprodução; nos outros painéis (materiais, propriedades, efeitos, Claude) só valem desfazer,
+  // refazer e a lista de atalhos, para Delete, Ctrl+C, setas e letras não mexerem na timeline sem querer.
+  const AREAS = [['#tl', 'timeline'], ['#painel-previa', 'player'], ['#painel-materiais', 'materiais'], ['#painel-propriedades', 'propriedades'], ['#painel-efeitos', 'efeitos'], ['#painel-origem', 'origem'], ['#painel-claude', 'claude']];
+  const GLOBAIS = new Set(['desfazer', 'refazer', 'atalhos']);
+  const valeNaArea = (acao) => GLOBAIS.has(acao[0]) || s.area === 'timeline' || (s.area === 'player' && acao[1] === 'Reprodução');
+
+  function marcarArea(area) {
+    s.area = area;
+    for (const [sel, nome] of AREAS) qs(sel)?.classList.toggle('area-ativa', nome === area);
+  }
+
+  function aoClicarArea(e) {
+    if (!ativa() || estado.vista !== 'editor') return;
+    const achada = AREAS.find(([sel]) => e.target.closest?.(sel));
+    if (achada) marcarArea(achada[1]);
+  }
+
   function aoTeclar(e) {
     if (!ativa() || estado.vista !== 'editor') return;
     if (e.target.closest?.('input, textarea, select, dialog')) return;
     if (s.gravandoAtalho) return;
     if (teclaDaFonte(e)) return;
     const acao = acaoDoCombo(comboDe(e), ACOES_TECLADO);
-    if (!acao) return;
+    if (!acao || !valeNaArea(acao)) return;
     e.preventDefault();
     acao[4]();
   }
@@ -3492,6 +3973,7 @@ const TL = (() => {
     qs('#tl-add-texto').onclick = adicionarTexto;
     qs('#tl-add-midia').onclick = async () => adicionarArquivos(await api.escolher({ tipo: 'materiais', multiplos: true }));
     qs('#tl-legendas').onclick = gerarLegendas;
+    ligarTranscricaoTimeline();
     ligarSoltarMateriais();
     ligarSoltarEfeitos();
     desenharEfeitos();
@@ -3534,6 +4016,8 @@ const TL = (() => {
       { passive: false },
     );
     window.addEventListener('keydown', aoTeclar);
+    window.addEventListener('pointerdown', aoClicarArea, true);
+    marcarArea('timeline');
     areaDeSoltar(qs('#tl'), adicionarArquivos);
     areaDeSoltar(qs('#materiais'), adicionarAoProjeto);
     qs('#seg-player').querySelectorAll('button').forEach((b) => {
@@ -3639,7 +4123,7 @@ const TL = (() => {
     s.selecao = new Set();
     s.midia = {};
     s.midiaPedida = new Set();
-    s.pastasFechadas = new Set();
+    s.pastasAbertas = new Set();
     s.sel = null;
     s.desfazer = [];
     s.refazer = [];

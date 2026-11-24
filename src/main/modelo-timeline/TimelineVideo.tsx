@@ -1,9 +1,10 @@
-import React, { useMemo } from 'react';
+import React, { useLayoutEffect, useMemo } from 'react';
 import {
-  AbsoluteFill, Audio, Img, OffthreadVideo, Sequence, staticFile, interpolate, spring, useCurrentFrame, useVideoConfig,
+  AbsoluteFill, Audio, Img, OffthreadVideo, Sequence, staticFile, interpolate, spring, useCurrentFrame, useVideoConfig, delayRender, continueRender,
 } from 'remotion';
 import { loadFont as anton } from '@remotion/google-fonts/Anton';
 import { loadFont as bebas } from '@remotion/google-fonts/BebasNeue';
+import { loadFont as calSans } from '@remotion/google-fonts/CalSans';
 import { loadFont as inter } from '@remotion/google-fonts/Inter';
 import { loadFont as montserrat } from '@remotion/google-fonts/Montserrat';
 import { loadFont as oswald } from '@remotion/google-fonts/Oswald';
@@ -21,6 +22,8 @@ import { ImagemComLut, VideoComLut, type PedidoLut } from './lut';
 const FONTES: Record<string, () => { fontFamily: string }> = {
   Anton: () => anton('normal', { subsets: ['latin', 'latin-ext'] }),
   'Bebas Neue': () => bebas('normal', { subsets: ['latin', 'latin-ext'] }),
+  // Só existe num peso: o desenho é o SemiBold do Cal Sans.
+  'Cal Sans': () => calSans('normal', { subsets: ['latin', 'latin-ext'] }),
   Inter: () => inter('normal', { subsets: ['latin', 'latin-ext'], weights: ['400', '600', '800'] }),
   Montserrat: () => montserrat('normal', { subsets: ['latin', 'latin-ext'], weights: ['400', '600', '800'] }),
   Oswald: () => oswald('normal', { subsets: ['latin', 'latin-ext'], weights: ['400', '600', '700'] }),
@@ -31,12 +34,20 @@ const FONTES: Record<string, () => { fontFamily: string }> = {
   Roboto: () => roboto('normal', { subsets: ['latin', 'latin-ext'], weights: ['400', '500', '700'] }),
 };
 
+// Fontes de um peso só: o peso do estilo é ignorado, senão o navegador engrossa a letra por conta própria.
+const PESO_UNICO: Record<string, number> = { 'Cal Sans': 400 };
+
 const carregadas = new Map<string, string>();
 function familia(nome = 'Montserrat'): string {
   if (!FONTES[nome]) return nome;
   if (!carregadas.has(nome)) carregadas.set(nome, FONTES[nome]().fontFamily);
   return carregadas.get(nome)!;
 }
+
+export const semDesativados = (t: any) =>
+  t?.trilhas?.some((tr: any) => tr.itens?.some((i: any) => i.desativado))
+    ? { ...t, trilhas: t.trilhas.map((tr: any) => ({ ...tr, itens: tr.itens.filter((i: any) => !i.desativado) })) }
+    : t;
 
 export const duracaoTimeline = (t: any): number =>
   Math.max(1, ...t.trilhas.flatMap((tr: any) => tr.itens.map((i: any) => i.inicio + i.duracao)));
@@ -335,7 +346,7 @@ function estiloTexto(e: any = {}): React.CSSProperties {
   return {
     fontFamily: familia(e.fonte),
     fontSize: e.tamanho ?? 64,
-    fontWeight: e.peso ?? 800,
+    fontWeight: PESO_UNICO[e.fonte] ?? e.peso ?? 800,
     color: e.cor ?? '#ffffff',
     textAlign: e.alinhamento ?? 'center',
     textTransform: e.maiusculas ? 'uppercase' : 'none',
@@ -493,11 +504,15 @@ const ItensDaTrilha = React.memo(({ trilha, fps, url, proxies, itens, plano, aju
         const pl = plano.get(item.id);
         const adiantar = pl?.adiantar ?? 0;
         const inicio = item.inicio - adiantar;
+        // Fim pelo quadro onde o item termina, não pela duração arredondada à parte: com início e duração fora da grade
+        // de quadros, os dois arredondamentos somados deixavam 1 quadro preto entre um clipe e o seguinte.
+        const de = Math.round(inicio * fps);
+        const ate = Math.round((item.inicio + item.duracao + (pl?.estender ?? 0)) * fps);
         return (
           <Sequence
             key={item.id}
-            from={Math.round(inicio * fps)}
-            durationInFrames={Math.max(1, Math.round((item.duracao + adiantar + (pl?.estender ?? 0)) * fps))}
+            from={de}
+            durationInFrames={Math.max(1, ate - de)}
             premountFor={item.tipo === 'video' ? fps : undefined}
             name={item.texto ?? item.arquivo ?? item.componente ?? item.tipo}
             style={item.mesclagem ? { mixBlendMode: item.mesclagem } : undefined}
@@ -512,13 +527,37 @@ const ItensDaTrilha = React.memo(({ trilha, fps, url, proxies, itens, plano, aju
   );
 });
 
-export const TimelineVideo: React.FC<{ timeline: any; baseAssets?: string; proxies?: Record<string, string | null>; janela?: boolean }> = ({ timeline, baseAssets, proxies, janela }) => {
+// Fontes que o usuário adicionou no app: "fontes" na timeline mapeia a família para o arquivo em assets/. O render espera o carregamento.
+const fontesRegistradas = new Set<string>();
+function useFontesDoUsuario(fontes: Record<string, string> | undefined, url: (a: string) => string) {
+  const chave = JSON.stringify(fontes ?? {});
+  useLayoutEffect(() => {
+    const pendentes = Object.entries(fontes ?? {}).filter(([nome, arq]) => !fontesRegistradas.has(nome + '|' + arq));
+    if (!pendentes.length) return;
+    const espera = delayRender('fontes do usuário');
+    Promise.all(
+      pendentes.map(async ([nome, arq]) => {
+        const f = new FontFace(nome, `url("${url(arq)}")`, { weight: '100 900' });
+        await f.load();
+        document.fonts.add(f);
+        fontesRegistradas.add(nome + '|' + arq);
+      }),
+    )
+      .catch(() => {})
+      .finally(() => continueRender(espera));
+  }, [chave, url]);
+}
+
+export const TimelineVideo: React.FC<{ timeline: any; baseAssets?: string; proxies?: Record<string, string | null>; janela?: boolean }> = ({ timeline: bruta, baseAssets, proxies, janela }) => {
+  // Clipe desativado (V na timeline) continua no arquivo, mas não aparece nem toca.
+  const timeline = useMemo(() => semDesativados(bruta), [bruta]);
   const { fps } = useVideoConfig();
   const Componente = janela ? TrilhaNaJanela : Trilha;
   const url = useMemo(
     () => (a: string) => (baseAssets ? baseAssets + encodeURIComponent(a) : staticFile(a)),
     [baseAssets],
   );
+  useFontesDoUsuario(timeline.fontes, url);
   // Para cada faixa, as camadas de ajuste das faixas de vídeo acima dela (a mais próxima primeiro).
   const ajustesAcima = useMemo(() => {
     const visiveis = timeline.trilhas.map((tr: any) => (tr.tipo !== 'audio' && !tr.oculta ? tr.itens.filter((i: any) => i.tipo === 'ajuste' && i.efeitos) : []));

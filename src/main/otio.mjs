@@ -8,6 +8,8 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 
 export const TICKS = 254016000000;
 const NOME_CAMADA = 'Camada Remotion';
+const NOME_CAMADA_FUNDO = 'Camada Remotion · fundo';
+const ehCamada = (nome) => typeof nome === 'string' && nome.startsWith(NOME_CAMADA);
 const NOME_AUDIO_VIDEOS = 'Áudio dos vídeos';
 // Valores padrão, lidos do próprio Filmcraft. Parâmetro ausente não assume o padrão lá: a imagem sai clara demais.
 const LUMETRI_PADRAO = JSON.parse(fs.readFileSync(fileURLToPath(new URL('./lumetri-padrao.json', import.meta.url)), 'utf8'));
@@ -295,7 +297,7 @@ function filhosDaFaixa(faixa, transicoes, t, materiais, assets, avisos) {
     const ini = temFonte(i) ? i.corteInicio ?? 0 : 0;
     const efeitos = i.tipo === 'audio' ? i.filmcraft?.efeitos ?? [] : efeitosDoClipe(i, t, materiais);
     const nome = `${path.basename(i.arquivo)} ⟦${i.id}⟧`;
-    filhos.push(clipe(nome, ini, i.duracao, i.arquivo, assets, fps, metaClipe(efeitos, i.tipo === 'audio' ? ganhoDb(i.volume ?? 1) : 0), vel));
+    filhos.push({ ...clipe(nome, ini, i.duracao, i.arquivo, assets, fps, metaClipe(efeitos, i.tipo === 'audio' ? ganhoDb(i.volume ?? 1) : 0), vel), enabled: !i.desativado });
     pos = i.inicio + i.duracao;
     const prox = faixa[faixa.indexOf(i) + 1];
     const encosta = prox && Math.abs(prox.inicio - pos) <= 0.0005;
@@ -317,8 +319,10 @@ function configuracao(t, hdr) {
   };
 }
 
-// camada: vídeo transparente com texto, legendas e blocos, já renderizado pelo Remotion.
-export function paraOtio(t, projeto, { assets, camada, hdr = false } = {}) {
+// camada: vídeo transparente com texto, legendas e blocos, já renderizado pelo Remotion, por cima de tudo.
+// camadaFundo: os gráficos das trilhas abaixo de todos os vídeos (papel, cor de fundo), por baixo de tudo.
+// camadasMescla: [{ arquivo, duracao, modo }] gráficos em multiplicar/tela sobre fundo neutro, logo abaixo da camada.
+export function paraOtio(t, projeto, { assets, camada, camadaFundo, camadasMescla = [], hdr = false } = {}) {
   const fps = t.fps;
   assetsAtual = assets ?? null;
   const materiais = [...(projeto.materiais ?? []), ...(projeto.narracao ? [{ ...projeto.narracao, tipo: 'audio' }] : [])];
@@ -352,12 +356,17 @@ export function paraOtio(t, projeto, { assets, camada, hdr = false } = {}) {
       audios.push(trilhaOtio(NOME_AUDIO_VIDEOS + (n ? ` · ${n + 1}` : ''), 'Audio', filhos));
     });
   }
-  if (camada) {
-    const c = clipe(`${NOME_CAMADA} ⟦camada⟧`, 0, camada.duracao, camada.arquivo, assets, fps, metaClipe([fx('motion', {
+  const clipeCamada = (cam, nome, blend = 0) =>
+    clipe(`${nome} ⟦camada⟧`, 0, cam.duracao, cam.arquivo, assets, fps, metaClipe([fx('motion', {
       position: { value: { Vec2: { x: t.largura / 2, y: t.altura / 2 } } }, scale: { value: { Float: 100 } },
-    }), fx('opacity', { opacity: { value: { Float: 100 } }, blend: { value: { Choice: 0 } } })], 0));
-    videos.push(trilhaOtio(NOME_CAMADA, 'Video', [c], { travada: true }));
+    }), fx('opacity', { opacity: { value: { Float: 100 } }, blend: { value: { Choice: blend } } })], 0));
+  for (const cam of camadasMescla) {
+    const nome = `${NOME_CAMADA} · ${cam.modo === 'multiply' ? 'multiplicar' : 'tela'}`;
+    videos.push(trilhaOtio(nome, 'Video', [clipeCamada(cam, nome, BLEND[cam.modo] ?? 0)], { travada: true }));
   }
+  // A primeira trilha do OTIO é a de baixo.
+  if (camadaFundo) videos.unshift(trilhaOtio(NOME_CAMADA_FUNDO, 'Video', [clipeCamada(camadaFundo, NOME_CAMADA_FUNDO)], { travada: true }));
+  if (camada) videos.push(trilhaOtio(NOME_CAMADA, 'Video', [clipeCamada(camada, NOME_CAMADA)], { travada: true }));
   return {
     otio: {
       OTIO_SCHEMA: 'Timeline.1',
@@ -530,7 +539,7 @@ function arquivoDoClipe(c, base, mapaArquivos) {
 export function arquivosDeFora(otio, assets, base) {
   const fora = new Set();
   for (const tr of otio.tracks.children) {
-    if (tr.name === NOME_CAMADA) continue;
+    if (ehCamada(tr.name)) continue;
     for (const c of tr.children) {
       if (!c.OTIO_SCHEMA.startsWith('Clip')) continue;
       const a = arquivoDoClipe(c, base);
@@ -565,7 +574,7 @@ export function deOtio(otio, original, projeto, { novoId, mapaArquivos, base: pa
 
   for (const tro of otio.tracks.children) {
     if (tro.OTIO_SCHEMA?.startsWith('Track') !== true) continue;
-    if (tro.name === NOME_CAMADA) continue;
+    if (ehCamada(tro.name)) continue;
     const audio = tro.kind === 'Audio';
     const ehAudioDosVideos = tro.name.replace(/ · \d+$/, '') === NOME_AUDIO_VIDEOS;
     const fps = t.fps;
@@ -630,6 +639,8 @@ export function deOtio(otio, original, projeto, { novoId, mapaArquivos, base: pa
       item.duracao = redondo(dur);
       item.arquivo = dadosArquivo.arquivo;
       if (temFonte(item)) item.corteInicio = redondo(inicioFonte);
+      if (c.enabled === false) item.desativado = true;
+      else delete item.desativado;
       if (velEfeito) item.velocidade = Math.abs(velEfeito);
       else delete item.velocidade;
       if (velEfeito < 0) avisos.push(`${item.arquivo}: velocidade invertida não existe no app e toca para a frente.`);

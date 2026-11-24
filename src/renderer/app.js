@@ -1469,7 +1469,7 @@ function ligarTranscode() {
 
 // ---------- decupagem de narrações ----------
 
-const dc = { itens: [], pausa: 0.15, sobreposicao: 0.2, limiar: -35, velocidade: 1.2, formato: 'wav', aprimorar: true, normalizar: true, ganho: 4, pasta: null, rodando: false };
+const dc = { itens: [], pausa: 0.05, sobreposicao: 0.2, automatico: true, limiar: -35, velocidade: 1.2, formato: 'wav', aprimorar: true, normalizar: true, ganho: 4, pasta: null, rodando: false };
 const EXT_AUDIOS = /\.(mp3|wav|m4a|aac|ogg|flac|opus|wma)$/i;
 
 const tempo = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
@@ -1484,13 +1484,15 @@ function abrirDecupar() {
 
 async function adicionarDecupar(caminhos) {
   // Arquivos soltos entram um a um; cada pasta vira um item só, com os áudios dela como partes da mesma narração.
-  const infos = await api.infoAudios(caminhos);
-  let achou = false;
+  if (!caminhos?.length) return;
+  const { itens: infos, semAudio } = await api.infoAudios(caminhos);
   for (const info of infos) {
-    achou = true;
     if (info.duracao > 0 && !dc.itens.some((i) => i.arquivo === info.arquivo)) dc.itens.push({ ...info, status: 'aguardando', progresso: 0 });
   }
-  $('#dc-aviso').textContent = !achou && caminhos.length ? 'Não achei áudios nessa seleção.' : '';
+  const avisos = [];
+  if (semAudio.length) avisos.push(`Sem som, ficou de fora: ${semAudio.slice(0, 3).join(', ')}${semAudio.length > 3 ? ` e mais ${semAudio.length - 3}` : ''}.`);
+  else if (!infos.length) avisos.push('Não achei áudios nem vídeos com som nessa seleção.');
+  $('#dc-aviso').textContent = avisos.join(' ');
   renderDecupar();
 }
 
@@ -1561,27 +1563,73 @@ function blocoConferencia(it) {
   return div;
 }
 
+// Distância entre a voz e o fundo, em palavras.
+function qualRuido(ruido, voz) {
+  const d = voz - ruido;
+  return d >= 40 ? 'quase nenhum' : d >= 28 ? 'baixo' : d >= 18 ? 'médio' : 'alto';
+}
+
 function renderDecupar() {
   const ul = $('#lista-decupar');
   ul.innerHTML = '';
-  dc.itens.forEach((it) => {
+  dc.itens.forEach((it, n) => {
     const li = document.createElement('li');
-    li.innerHTML = `<div class="tc-nome"><span></span><small></small></div><span class="selo"></span><span class="tc-status"></span><div class="barra"></div>`;
+    li.className = 'dc-item ' + it.status;
+    li.innerHTML = `<span class="selo"></span><div class="tc-nome"><span></span><div class="dc-chips"></div></div><span class="tc-status"></span><button class="dc-remover" title="Tirar da lista">×</button><div class="barra"></div>`;
     li.querySelector('.tc-nome span').textContent = it.pasta ? it.nome : nomeArquivo(it.arquivo);
-    const partes = it.pasta ? `${it.arquivos.length} áudio${it.arquivos.length === 1 ? '' : 's'} juntados · ` : '';
-    li.querySelector('small').textContent = partes + (it.status === 'pronto' ? `${it.cortes} cortes · ${tempo(it.antes)} → ${tempo(it.depois)}` : tempo(it.duracao));
     li.querySelector('.selo').textContent = it.pasta ? 'PASTA' : nomeArquivo(it.arquivo).split('.').pop().toUpperCase();
     if (it.pasta) li.querySelector('.tc-nome').title = it.arquivos.map(nomeArquivo).join('\n');
+    const chips = li.querySelector('.dc-chips');
+    const chip = (txt, classe = '') => {
+      const c = document.createElement('span');
+      c.className = 'dc-chip ' + classe;
+      c.textContent = txt;
+      chips.append(c);
+    };
+    if (it.pasta) chip(`${it.arquivos.length} arquivo${it.arquivos.length === 1 ? '' : 's'} juntados`);
+    if (it.video) chip('som do vídeo');
+    if (it.status === 'pronto') {
+      chip(`${tempo(it.antes)} → ${tempo(it.depois)}`, 'forte');
+      chip(`${it.cortes} corte${it.cortes === 1 ? '' : 's'}`);
+      if (Number.isFinite(it.ruido)) chip(`ruído ${qualRuido(it.ruido, it.voz)} · ${Math.round(it.ruido)} dB`, 'ruido-' + qualRuido(it.ruido, it.voz).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(' ', '-'));
+      if (it.ruidos) chip(`${it.ruidos} barulho${it.ruidos === 1 ? '' : 's'} removido${it.ruidos === 1 ? '' : 's'}`);
+    } else chip(tempo(it.duracao));
     const st = li.querySelector('.tc-status');
     st.className = 'tc-status ' + (it.status === 'decupando' ? '' : it.status);
-    st.textContent = { aguardando: 'Na fila', decupando: `${Math.round(it.progresso * 100)}%`, pronto: `Pronto (${it.segundos}s) — abrir`, erro: 'Erro: ' + (it.erro ?? '') }[it.status];
-    st.title = it.erro ?? '';
+    st.textContent = { aguardando: 'Na fila', decupando: `Decupando ${Math.round(it.progresso * 100)}%`, pronto: 'Pronto · abrir', erro: 'Erro' }[it.status];
+    st.title = it.erro ?? (it.status === 'pronto' ? `Feito em ${it.segundos}s. Clique para abrir a pasta.` : '');
     if (it.status === 'pronto') st.onclick = () => api.mostrarNaPasta(it.saida);
-    li.querySelector('.barra').style.width = `${Math.round(it.progresso * 100)}%`;
+    const rem = li.querySelector('.dc-remover');
+    rem.hidden = dc.rodando || dc.conferindo;
+    rem.onclick = () => {
+      dc.itens.splice(n, 1);
+      renderDecupar();
+    };
+    li.querySelector('.barra').style.width = it.status === 'decupando' ? `${Math.round(it.progresso * 100)}%` : '0';
+    if (it.status === 'erro' && it.erro) {
+      const e = document.createElement('div');
+      e.className = 'conf conf-ruim';
+      e.textContent = it.erro.split('\n')[0];
+      li.append(e);
+    }
     const conf = blocoConferencia(it);
     if (conf) li.append(conf);
     ul.append(li);
   });
+  const qtd = dc.itens.length;
+  $('#dc-contagem').textContent = qtd ? String(qtd) : '';
+  $('#dc-vazio').hidden = qtd > 0;
+  $('#btn-dc-limpar').hidden = !qtd;
+  $('#drop-decupar').classList.toggle('pequeno', qtd > 0);
+  const conta = (st) => dc.itens.filter((i) => i.status === st).length;
+  const partes = [];
+  if (conta('decupando')) partes.push('decupando…');
+  if (conta('aguardando')) partes.push(`${conta('aguardando')} na fila`);
+  if (conta('pronto')) partes.push(`${conta('pronto')} pronta${conta('pronto') === 1 ? '' : 's'}`);
+  if (conta('erro')) partes.push(`${conta('erro')} com erro`);
+  const total = dc.itens.reduce((s, i) => s + (i.duracao || 0), 0);
+  $('#dc-resumo-fila').textContent = qtd ? `${qtd} narraç${qtd === 1 ? 'ão' : 'ões'} · ${tempo(total)} no total${partes.length ? ' · ' + partes.join(' · ') : ''}` : 'Adicione narrações para começar.';
+  if ($('#dc-roteiro').value.trim()) $('#dc-bloco-roteiro').open = true;
   const resumo = $('#dc-resumo-roteiro');
   resumo.hidden = !dc.semAudio;
   if (dc.semAudio) {
@@ -1607,6 +1655,7 @@ function renderDecupar() {
   $('#btn-dc-cancelar').hidden = !dc.rodando;
   $('#btn-dc-limpar').disabled = dc.rodando;
   $('#dc-pasta').textContent = dc.pasta ?? 'Mesma pasta do original';
+  $('#dc-pasta').title = dc.pasta ?? '';
   $('#btn-dc-pasta-limpar').hidden = !dc.pasta;
 }
 
@@ -1665,6 +1714,7 @@ async function iniciarDecupar() {
     opcoes: {
       pausa: dc.pausa,
       sobreposicao: dc.sobreposicao,
+      automatico: dc.automatico,
       limiar: dc.limiar,
       velocidade: dc.velocidade,
       formato: dc.formato,
@@ -1681,7 +1731,7 @@ async function iniciarDecupar() {
 
 function ligarDecupar() {
   $('#btn-decupar').onclick = abrirDecupar;
-  $('#btn-sel-decupar').onclick = async () => adicionarDecupar(await api.escolher({ tipo: 'narracao', multiplos: true }));
+  $('#btn-sel-decupar').onclick = async () => adicionarDecupar(await api.escolher({ tipo: 'decupar', multiplos: true }));
   $('#btn-sel-decupar-pastas').onclick = async () => adicionarDecupar(await api.escolherPastas());
   const numero = (id, chave, min, max) => {
     const el = $(id);
@@ -1696,8 +1746,14 @@ function ligarDecupar() {
   numero('#dc-sobreposicao', 'sobreposicao', 0.05, 0.6);
   numero('#dc-limiar', 'limiar', -60, -15);
   numero('#dc-ganho', 'ganho', 0, 12);
-  $('#dc-velocidade').value = String(dc.velocidade);
-  $('#dc-velocidade').onchange = (e) => (dc.velocidade = Number(e.target.value));
+  segmentado($('#dc-velocidade'), String(dc.velocidade), (v) => (dc.velocidade = Number(v)));
+  const campoLimiar = () => ($('#dc-campo-limiar').hidden = dc.automatico);
+  $('#dc-automatico').checked = dc.automatico;
+  $('#dc-automatico').onchange = (e) => {
+    dc.automatico = e.target.checked;
+    campoLimiar();
+  };
+  campoLimiar();
   $('#dc-aprimorar').checked = dc.aprimorar;
   $('#dc-aprimorar').onchange = (e) => (dc.aprimorar = e.target.checked);
   $('#dc-normalizar').checked = dc.normalizar;
@@ -1773,7 +1829,7 @@ const ESFORCOS = [
 
 function preencherEsforcos() {
   const atual = estado.config?.esforcoClaude ?? 'high';
-  for (const sel of [$('#chat-esforco'), $('#cfg-esforco')]) {
+  for (const sel of [$('#chat-esforco'), $('#cfg-esforco'), $('#estilo-esforco')]) {
     sel.replaceChildren(...ESFORCOS.map(([v, t]) => new Option(sel.id === 'chat-esforco' ? `Esforço: ${t}` : t, v)));
     sel.value = atual;
   }
@@ -1858,10 +1914,12 @@ function ligar() {
   ligarDecupar();
   ligarInicio();
   ligarPacks();
-  $('#chat-esforco').onchange = async (e) => {
-    estado.config = await api.salvarConfig({ esforcoClaude: e.target.value });
-    preencherEsforcos();
-  };
+  for (const id of ['#chat-esforco', '#estilo-esforco']) {
+    $(id).onchange = async (e) => {
+      estado.config = await api.salvarConfig({ esforcoClaude: e.target.value });
+      preencherEsforcos();
+    };
+  }
   for (const id of ['#chat-modelo', '#estilo-modelo']) {
     $(id).onchange = async (e) => {
       estado.config = await api.salvarConfig({ modeloClaude: e.target.value });

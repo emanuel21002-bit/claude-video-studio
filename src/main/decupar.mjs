@@ -5,7 +5,7 @@ import { carregar } from './settings.mjs';
 import { rodar } from './proc.mjs';
 import { infoVideo } from './transcodificar.mjs';
 import { unirAudios } from './workspace.mjs';
-import { PADRAO, lerSilencios, calcularSegmentos, montarFiltro } from './decupar-nucleo.mjs';
+import { PADRAO, TAXA_ANALISE, analisarVoz, calcularSegmentos, montarFiltro } from './decupar-nucleo.mjs';
 
 export const FORMATOS_DECUPAGEM = {
   wav: ['-c:a', 'pcm_s16le'],
@@ -46,19 +46,27 @@ async function decuparUm(entrada, opcoes, onProgresso, sinal, tmp, grupo) {
   if (!codec) throw new Error(`Formato desconhecido: ${o.formato}`);
   const ffmpeg = carregar().ffmpegPath;
   const inicio = Date.now();
-  const antes = (await infoVideo(entrada)).duracao;
-  if (!(antes > 0)) throw new Error('Não consegui ler a duração do áudio.');
 
-  const linhas = [];
-  const minimoSilencio = Math.max(0.2, 2 * ((o.pausa + o.sobreposicao) / 2));
-  await rodar(ffmpeg, ['-hide_banner', '-nostats', '-i', entrada, '-vn', '-af', `silencedetect=noise=${o.limiar}dB:d=${minimoSilencio.toFixed(3)}`, '-f', 'null', '-'], {
-    sinal,
-    onLinha: (l) => linhas.push(l),
-  });
+  // Áudio mono a 8 kHz só na faixa da voz, em float cru, para a detecção de voz (ver analisarVoz).
+  const bruto = path.join(tmp, 'analise.f32');
+  const ra = await rodar(ffmpeg, ['-y', '-hide_banner', '-nostats', '-loglevel', 'error', '-i', entrada, '-map', '0:a:0', '-vn', '-af', `highpass=f=100,lowpass=f=3800,aresample=${TAXA_ANALISE}`, '-ac', '1', '-f', 'f32le', bruto], { sinal });
   if (sinal?.aborted) throw new Error('Decupagem cancelada.');
+  if (ra.codigo !== 0) {
+    if (/matches no streams/i.test(ra.cauda)) throw new Error('Este arquivo não tem faixa de áudio.');
+    throw new Error(`O ffmpeg não conseguiu ler o som deste arquivo (código ${ra.codigo}):\n${ra.cauda}`);
+  }
+  const buf = fs.readFileSync(bruto);
+  const amostras = new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.length / 4));
+  if (amostras.length < TAXA_ANALISE / 10) throw new Error('Não achei som neste arquivo.');
+  // A duração vem do som decodificado: num vídeo, a do arquivo é a da imagem, e o áudio pode ser mais longo.
+  const duracaoSom = amostras.length / TAXA_ANALISE;
+  const analise = analisarVoz(amostras, TAXA_ANALISE, o);
+  fs.rmSync(bruto, { force: true });
   onProgresso?.(0.1);
 
-  const segs = calcularSegmentos(lerSilencios(linhas, antes), antes, o);
+  o.ruidoMedido = analise.ruido;
+  o.vozMedida = analise.voz;
+  const segs = calcularSegmentos(analise.silencios, duracaoSom, o);
   const esperado = Math.max(1, (segs.reduce((s, [a, b]) => s + (b - a), 0) - (segs.length - 1) * o.sobreposicao) / (o.velocidade || 1));
   const script = path.join(tmp, 'filtro.txt');
   fs.writeFileSync(script, montarFiltro(segs, o));
@@ -68,7 +76,7 @@ async function decuparUm(entrada, opcoes, onProgresso, sinal, tmp, grupo) {
     // ffmpeg 7 e anteriores usam -filter_complex_script; o 8 em diante, -/filter_complex.
     let r;
     for (const opcao of ['-/filter_complex', '-filter_complex_script']) {
-      r = await rodar(ffmpeg, ['-y', '-hide_banner', '-nostats', '-progress', 'pipe:1', '-i', entrada, opcao, script, '-map', '[saida]', ...codec, saida], {
+      r = await rodar(ffmpeg, ['-y', '-hide_banner', '-nostats', '-progress', 'pipe:1', '-i', entrada, opcao, script, '-map', '[saida]', '-vn', ...codec, saida], {
         sinal,
         onLinha: (l) => {
           const m = l.match(/^out_time_us=(\d+)/);
@@ -84,5 +92,5 @@ async function decuparUm(entrada, opcoes, onProgresso, sinal, tmp, grupo) {
     throw e;
   }
   const depois = (await infoVideo(saida)).duracao;
-  return { saida, cortes: segs.length - 1, antes, depois, segundos: Math.round((Date.now() - inicio) / 1000) };
+  return { saida, cortes: segs.length - 1, antes: duracaoSom, depois, segundos: Math.round((Date.now() - inicio) / 1000), ruido: analise.ruido, voz: analise.voz, limiar: analise.limiar, ruidos: analise.ruidos };
 }

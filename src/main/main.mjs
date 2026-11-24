@@ -8,7 +8,7 @@ import { carregar, salvar } from './settings.mjs';
 import { todosEstilos, excluirEstilo, FORMATOS } from './presets.mjs';
 import { listarMateriais,
   workspacePronto, prepararWorkspace, criarProjeto, novaTimeline, videosNarrados, timelineEmBranco, duplicarTimeline, renomearTimeline, renomearProjeto, excluirTimeline,
-  listarProjetos, lerProjeto, gravarProjeto, escreverBriefing, caminhoProjeto, tipoDe, resolverNarracoes, atualizarDocumentacao, dirs,
+  listarProjetos, lerProjeto, gravarProjeto, escreverBriefing, caminhoProjeto, tipoDe, resolverNarracoes, EXT_DECUPAR, EXT_DECUPAR_AUDIO, ehVideoDoDecupar, atualizarDocumentacao, dirs,
   adicionarRoteiros, removerRoteiro, timelinesDoProjeto, caminhoAssets,
 } from './workspace.mjs';
 import { migrarProjetos, haProjetosAntigos, PASTA_ANTIGOS } from './migracao.mjs';
@@ -17,6 +17,9 @@ import { listarPacks, criarPack, atualizarPack, excluirPack, adicionarAoPack, re
 import { lerRoteiro, EXTENSOES_ROTEIRO } from './roteiro.mjs';
 import { conferir, trechosSemAudio } from './conferir-nucleo.mjs';
 import { whisperDisponivel, transcrever, transcreverArquivo } from './transcricao.mjs';
+import { listarTranscricoes, transcreverVideo } from './transcricao-video.mjs';
+import { transcreverTimeline, lerTranscricaoDaTimeline } from './transcricao-timeline.mjs';
+import { fontesDoSistema, minhasFontes, adicionarFontes, removerFonte, prepararFonte } from './fontes.mjs';
 import { renderizar, estimarRender } from './render.mjs';
 import { conversar, cancelar, ocupado, chatOcupado, primeiraMensagem, claudeExe } from './agente.mjs';
 import { rodar } from './proc.mjs';
@@ -148,6 +151,11 @@ ipcMain.handle('escolher', async (_e, { tipo, multiplos }) => {
   const filtros = {
     materiais: [{ name: 'Vídeos, imagens e áudios', extensions: ['mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'mp3', 'wav', 'm4a'] }],
     narracao: [{ name: 'Áudio', extensions: ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac'] }],
+    decupar: [
+      { name: 'Áudios e vídeos', extensions: EXT_DECUPAR },
+      { name: 'Só áudios', extensions: EXT_DECUPAR_AUDIO },
+      { name: 'Todos os arquivos', extensions: ['*'] },
+    ],
     videos: [{ name: 'Vídeos', extensions: ['mp4', 'mov', 'mkv', 'm4v', 'hevc', 'webm', 'avi'] }],
     audioInstrucao: [{ name: 'Áudio', extensions: ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac', 'opus'] }],
     roteiro: [{ name: 'Roteiro (PDF, DOCX, TXT…)', extensions: EXTENSOES_ROTEIRO }],
@@ -543,13 +551,15 @@ let decupagemAtual = null;
 
 // Cada arquivo de áudio é um item; cada pasta com áudios é um item só (os áudios dela são partes de uma mesma narração).
 ipcMain.handle('decupar:info', async (_e, caminhos) => {
-  const itens = await resolverNarracoes(caminhos);
-  return itens.map((n) => {
+  const itens = await resolverNarracoes(caminhos, { decupar: true });
+  const lista = itens.map((n) => {
     const solto = n.arquivos.length === 1 && caminhos.includes(n.arquivos[0]);
+    const video = n.arquivos.every(ehVideoDoDecupar);
     return solto
-      ? { arquivo: n.arquivos[0], arquivos: n.arquivos, duracao: n.duracao }
+      ? { arquivo: n.arquivos[0], arquivos: n.arquivos, duracao: n.duracao, video }
       : { arquivo: path.dirname(n.arquivos[0]), arquivos: n.arquivos, pasta: true, nome: n.nome, duracao: n.duracao };
   });
+  return { itens: lista, semAudio: itens.semAudio.map((a) => path.basename(a)) };
 });
 
 // itens: [{ arquivo, arquivos, pasta }]. Pasta = partes de uma narração, juntadas antes de decupar.
@@ -575,6 +585,54 @@ ipcMain.handle('decupar:iniciar', async (_e, { itens: arquivos, opcoes }) => {
 ipcMain.handle('decupar:cancelar', () => {
   decupagemAtual?.abort();
   conferenciaAtual?.abort();
+});
+
+// Transcrição do áudio dos vídeos do projeto, para detectar quais têm narração. Entra na mesma fila do Whisper.
+let transcricaoVideoAtual = null;
+ipcMain.handle('transcricao-video:listar', (_e, id) => listarTranscricoes(id));
+ipcMain.handle('transcricao-video:iniciar', async (_e, { id, arquivos }) => {
+  if (!whisperDisponivel()) throw new Error('O Whisper não está configurado: sem ele não dá para transcrever (veja Configurações).');
+  transcricaoVideoAtual = new AbortController();
+  const sinal = transcricaoVideoAtual.signal;
+  const materiais = lerProjeto(id).materiais.filter((m) => m.tipo === 'video' && m.temAudio && arquivos.includes(m.arquivo));
+  for (const m of materiais) {
+    if (sinal.aborted) break;
+    enviar('transcricao-video', { id, arquivo: m.arquivo, status: 'transcrevendo', texto: 'Na fila do Whisper…' });
+    try {
+      const resumo = await comWhisper(() => transcreverVideo(id, m, (l) => enviar('transcricao-video', { id, arquivo: m.arquivo, status: 'transcrevendo', texto: l }), sinal));
+      enviar('transcricao-video', { id, arquivo: m.arquivo, status: 'pronto', resumo });
+    } catch (e) {
+      enviar('transcricao-video', sinal.aborted ? { id, arquivo: m.arquivo, status: 'cancelado' } : { id, arquivo: m.arquivo, status: 'erro', erro: e.message.split(String.fromCharCode(10))[0] });
+    }
+  }
+  transcricaoVideoAtual = null;
+  return listarTranscricoes(id);
+});
+ipcMain.handle('transcricao-video:cancelar', () => transcricaoVideoAtual?.abort());
+
+// Fontes: as instaladas no computador (lidas dos arquivos de fonte) e as que o usuário adicionou ao app.
+ipcMain.handle('fontes:listar', (_e, atualizar) => ({ sistema: fontesDoSistema(!!atualizar), minhas: minhasFontes() }));
+ipcMain.handle('fontes:adicionar', async () => {
+  const r = await dialog.showOpenDialog(janela, {
+    title: 'Adicionar fontes',
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Fontes (TTF, OTF)', extensions: ['ttf', 'otf', 'ttc', 'otc'] }],
+  });
+  return r.canceled ? null : adicionarFontes(r.filePaths);
+});
+ipcMain.handle('fontes:remover', (_e, familia) => removerFonte(familia));
+ipcMain.handle('fontes:preparar', (_e, { id, familia }) => prepararFonte(id, familia));
+
+// O que toca na timeline (clipes com som e áudios), com os tempos dela. Cada arquivo é transcrito uma vez e fica no projeto.
+ipcMain.handle('transcricao-timeline:ler', (_e, id) => lerTranscricaoDaTimeline(id));
+ipcMain.handle('transcricao-timeline:iniciar', async (_e, { id }) => {
+  if (!whisperDisponivel()) throw new Error('O Whisper não está configurado: sem ele não dá para transcrever (veja Configurações).');
+  transcricaoVideoAtual = new AbortController();
+  try {
+    return await transcreverTimeline(id, (texto) => enviar('transcricao-timeline', { id, texto }), transcricaoVideoAtual.signal, comWhisper);
+  } finally {
+    transcricaoVideoAtual = null;
+  }
 });
 
 // Roteiro de referência: qualquer formato vira texto, e a transcrição de cada áudio é comparada com ele.

@@ -4,6 +4,7 @@ import { carregar, arquivoDoApp } from './settings.mjs';
 import { rodar } from './proc.mjs';
 import { tamanhoVisivel } from './otio.mjs';
 import { CODIFICADORES, AUDIO, cpuDoCodec } from './codificadores.mjs';
+import { duracaoDaImagem } from './limites-fonte.mjs';
 
 function ffprobePath() {
   const ff = carregar().ffmpegPath;
@@ -84,12 +85,24 @@ function soltarVaga() {
   else ativas--;
 }
 
+// v2: a duração passou a ser a da imagem (antes era a do contêiner); leituras antigas são refeitas.
+const chaveDe = (arquivo, st) => `v2|${path.resolve(arquivo)}|${st.size}|${Math.round(st.mtimeMs)}`;
+
+// Duração da imagem já lida, sem abrir processo (null se o arquivo ainda não foi lido).
+export function duracaoGuardada(arquivo) {
+  try {
+    return lerGuardadas().get(chaveDe(arquivo, fs.statSync(arquivo)))?.duracao || null;
+  } catch {
+    return null;
+  }
+}
+
 // Codec, duração, tamanho na tela e se é HDR (HLG/PQ de celular), para decidir o tone mapping.
 export function infoVideo(arquivo) {
   let chave;
   try {
     const st = fs.statSync(arquivo);
-    chave = `${path.resolve(arquivo)}|${st.size}|${Math.round(st.mtimeMs)}`;
+    chave = chaveDe(arquivo, st);
   } catch {
     return sondarVideo(arquivo);
   }
@@ -127,7 +140,8 @@ async function sondarVideo(arquivo) {
     return {
       codec: v?.codec_name ?? null,
       ...tamanhoVisivel(v),
-      duracao: Number(j.format?.duration ?? v?.duration ?? 0),
+      // A da imagem: no iPhone o contêiner pode durar mais que o vídeo, e cortar até lá dá quadro preto no fim do take.
+      duracao: duracaoDaImagem(j),
       pixFmt: v?.pix_fmt ?? null,
       hdr: ['arib-std-b67', 'smpte2084'].includes(v?.color_transfer),
       temAudio: !!j.streams?.find((s) => s.codec_type === 'audio'),

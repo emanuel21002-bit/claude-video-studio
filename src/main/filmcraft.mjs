@@ -7,10 +7,12 @@ import { carregar } from './settings.mjs';
 import { recurso, temRecurso } from './recursos.mjs';
 import { rodar, rodarOuFalhar } from './proc.mjs';
 import { dirs, caminhoTimeline, caminhoAssets, relTimeline, lerProjeto, gravarProjeto } from './workspace.mjs';
-import { lerTimeline, gravarTimeline, escreverModelo, importarParaProjeto, novoId } from './timeline.mjs';
+import { lerTimeline, gravarTimeline, escreverModelo, importarParaProjeto, novoId, semDesativados } from './timeline.mjs';
 import { paraOtio, deOtio, arquivosDeFora } from './otio.mjs';
 import { pastaPublica } from './render.mjs';
 import { infoVideo } from './transcodificar.mjs';
+import { entradaDoRender } from './pacote-remotion.mjs';
+import { graficosDaParte, CAMADAS_MESCLA } from './exportar-ffmpeg.mjs';
 
 // Ponte com o Filmcraft (editor nativo, à parte). O app gera um projeto a partir de timeline.json,
 // o usuário edita e salva lá, e "Trazer de volta" lê o que foi salvo.
@@ -23,12 +25,11 @@ export const filmcraftDisponivel = () => temRecurso('filmcraft', 'filmcraft.exe'
 const pasta = (id) => path.join(caminhoTimeline(id), 'filmcraft');
 const projetoFc = (id) => path.join(pasta(id), 'projeto.fcproj');
 
-// A camada de ajuste não entra: ela não desenha nada sozinha (no Filmcraft o render cai no Remotion, ver render.mjs).
-const temCamada = (i) => !i.arquivo && i.tipo !== 'ajuste';
 
-const CAMADAS_GUARDADAS = 4;
+const CAMADAS_GUARDADAS = 6; // frente e fundo de algumas versões
 // Só texto e gráficos: mais quadros ao mesmo tempo aceleram bem (medido: 2 → 10 deixou a camada cerca de duas vezes mais rápida).
-const PARALELO_CAMADA = Math.max(2, Math.min(10, os.cpus().length - 2));
+// Cada aba do Chrome desenhando 1080x1920 gasta uns 600 MB: o paralelo também respeita a memória livre (deixa 2 GB).
+const paraleloCamada = () => Math.max(2, Math.min(10, os.cpus().length - 2, Math.floor((os.freemem() - 2 * 1024 ** 3) / (600 * 1024 ** 2))));
 
 // Tudo o que muda o desenho da camada: os itens gráficos, o código do modelo e dos blocos e os arquivos que os blocos citam
 // (logo, selo, música de fundo). Mexer só nos cortes dos vídeos não muda nada disso.
@@ -54,13 +55,25 @@ function hashDaCamada(id, soGraficos) {
   return h.digest('hex');
 }
 
+// As camadas do Remotion: { frente, fundo } ({ arquivo, duracao } ou null) e mescla, a lista das camadas em
+// multiplicar/tela ({ arquivo, duracao, modo }), da de baixo para a de cima.
+export async function renderizarCamadas(id, t, onLinha) {
+  const fundo = await renderizarCamada(id, t, onLinha, { parte: 'fundo' });
+  const mescla = [];
+  for (const [parte, { modo }] of Object.entries(CAMADAS_MESCLA)) {
+    const c = await renderizarCamada(id, t, onLinha, { parte });
+    if (c) mescla.push({ ...c, modo });
+  }
+  const frente = await renderizarCamada(id, t, onLinha, { parte: 'frente' });
+  return { frente, fundo, mescla };
+}
+
+const NOME_PARTE = { fundo: 'o fundo (gráficos por baixo dos vídeos)', multiplicar: 'os gráficos em multiplicar', tela: 'os gráficos em tela' };
+
 // Texto, legendas e blocos são desenhados pelo Remotion: vão como um vídeo transparente, só para referência.
-export async function renderizarCamada(id, t, onLinha) {
-  const soGraficos = {
-    ...t,
-    fundo: 'transparent',
-    trilhas: t.trilhas.map((tr) => ({ ...tr, transicoes: undefined, itens: tr.itens.filter(temCamada) })),
-  };
+// parte: 'frente' (por cima dos vídeos, o padrão) ou 'fundo' (por baixo deles; ver graficosDaParte).
+export async function renderizarCamada(id, t, onLinha, { parte = 'frente' } = {}) {
+  const soGraficos = graficosDaParte(t, parte);
   const itens = soGraficos.trilhas.flatMap((tr) => tr.itens);
   if (!itens.length) return null;
   const hash = hashDaCamada(id, soGraficos);
@@ -69,7 +82,7 @@ export async function renderizarCamada(id, t, onLinha) {
   if (fs.existsSync(saida)) {
     // Mesmo texto, legenda e efeito de antes: nada a renderizar. Marca o uso para o arquivo não ser descartado.
     fs.utimesSync(saida, new Date(), new Date());
-    onLinha?.('Textos, legendas e efeitos iguais aos da última vez: reaproveitando a camada pronta.');
+    onLinha?.(NOME_PARTE[parte] ? `Camada com ${NOME_PARTE[parte]} igual à da última vez: reaproveitando a camada pronta.` : 'Textos, legendas e efeitos iguais aos da última vez: reaproveitando a camada pronta.');
     return { arquivo: saida, duracao };
   }
   // Guarda as últimas camadas: voltar a uma versão anterior (desfazer uma troca de cor, por exemplo) não renderiza de novo.
@@ -78,23 +91,27 @@ export async function renderizarCamada(id, t, onLinha) {
   for (const { n } of antigas.slice(CAMADAS_GUARDADAS - 1)) fs.rmSync(path.join(pasta(id), n), { force: true });
   const props = path.join(pasta(id), 'camada-props.json');
   fs.writeFileSync(props, JSON.stringify({ timeline: soGraficos }));
-  onLinha?.('Renderizando textos, legendas e efeitos para o Filmcraft…');
+  onLinha?.(NOME_PARTE[parte] ? `Renderizando ${NOME_PARTE[parte]} para o Filmcraft…` : 'Renderizando textos, legendas e efeitos para o Filmcraft…');
   const s = carregar();
   const { ws } = dirs();
-  const projeto = relTimeline(id);
   const parcial = saida + '.tmp.mov';
   const tmp = path.join(pasta(id), 'tmp');
+  let soltar = () => {};
   try {
     const publica = await pastaPublica(id, soGraficos, path.join(tmp, 'publico'));
+    // Pacote pronto da composição: sem empacotar com o webpack a cada render (ver pacote-remotion.mjs).
+    const ent = await entradaDoRender(id, publica, onLinha);
+    soltar = ent.soltar;
     await rodarOuFalhar(s.nodePath, [
       path.join(ws, 'node_modules', '@remotion', 'cli', 'remotion-cli.js'), 'render',
-      path.join(projeto, 'src', 'index.ts'), 'Main', parcial,
-      '--public-dir', publica, `--props=${props}`, `--concurrency=${PARALELO_CAMADA}`, '--timeout=120000',
+      ent.entrada, 'Main', parcial,
+      ...ent.publicDir, `--props=${props}`, `--concurrency=${paraleloCamada()}`, '--timeout=120000',
       '--codec=prores', '--prores-profile=4444', '--pixel-format=yuva444p10le', '--image-format=png', '--gl=angle',
       `--frames=0-${Math.ceil(duracao * t.fps) - 1}`,
     ], { cwd: ws, env: { TEMP: tmp, TMP: tmp } });
     fs.renameSync(parcial, saida);
   } finally {
+    soltar();
     fs.rmSync(tmp, { recursive: true, force: true });
   }
   return { arquivo: saida, duracao };
@@ -142,11 +159,11 @@ function marcarSincronizado(id) {
 export async function prepararProjetoFilmcraft(id, destino, onLinha) {
   const projeto = lerProjeto(id);
   escreverModelo(projeto);
-  const t = lerTimeline(id);
+  const t = semDesativados(lerTimeline(id));
   fs.mkdirSync(pasta(id), { recursive: true });
-  const camada = await renderizarCamada(id, t, onLinha);
+  const { frente: camada, fundo: camadaFundo, mescla: camadasMescla } = await renderizarCamadas(id, t, onLinha);
   const comTam = await comTamanhos(projeto, t);
-  const { otio, avisos } = paraOtio(t, comTam, { assets: caminhoAssets(id), camada, hdr: comTam.hdr });
+  const { otio, avisos } = paraOtio(t, comTam, { assets: caminhoAssets(id), camada, camadaFundo, camadasMescla, hdr: comTam.hdr });
   const arqOtio = path.join(pasta(id), 'ida.otio');
   fs.writeFileSync(arqOtio, JSON.stringify(otio, null, 1));
   fs.rmSync(destino, { force: true });
@@ -161,9 +178,9 @@ export async function abrirNoFilmcraft(id, { descartar = false } = {}, onLinha) 
   escreverModelo(projeto);
   const t = lerTimeline(id);
   fs.mkdirSync(pasta(id), { recursive: true });
-  const camada = await renderizarCamada(id, t, onLinha);
+  const { frente: camada, fundo: camadaFundo, mescla: camadasMescla } = await renderizarCamadas(id, t, onLinha);
   const comTam = await comTamanhos(projeto, t);
-  const { otio, avisos } = paraOtio(t, comTam, { assets: caminhoAssets(id), camada, hdr: comTam.hdr });
+  const { otio, avisos } = paraOtio(t, comTam, { assets: caminhoAssets(id), camada, camadaFundo, camadasMescla, hdr: comTam.hdr });
   const arqOtio = path.join(pasta(id), 'ida.otio');
   fs.writeFileSync(arqOtio, JSON.stringify(otio, null, 1));
   onLinha?.('Preparando o projeto do Filmcraft…');

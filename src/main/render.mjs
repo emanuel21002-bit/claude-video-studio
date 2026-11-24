@@ -5,9 +5,10 @@ import { carregar } from './settings.mjs';
 import { rodar, trabalhoPesado } from './proc.mjs';
 import { dirs, caminhoTimeline, caminhoAssets, caminhoCache, relTimeline, hyperframesBin, lerProjeto, gravarProjeto, carimbo, tipoDe } from './workspace.mjs';
 import { ENCODERS_GPU, encoderGpu, infoVideo, transcodificar, TONEMAP } from './transcodificar.mjs';
-import { escreverModelo, lerTimeline, validarTimeline } from './timeline.mjs';
+import { escreverModelo, lerTimelineDoRender as lerTimeline, lerTimelineConferida, validarTimeline } from './timeline.mjs';
 import { normalizarSaida, kbpsDe, argsVideo, limparNome } from './exportacao.mjs';
-import { motivosSemFfmpeg, planoFfmpeg, prepararAuxiliares } from './exportar-ffmpeg.mjs';
+import { motivosSemFfmpeg, planoFfmpeg, prepararAuxiliares, trechosDeExportacao, recortarTimeline } from './exportar-ffmpeg.mjs';
+import { entradaDoRender } from './pacote-remotion.mjs';
 
 // Progresso vem como "123/900" (frames) ou "45%" nas linhas dos CLIs.
 function lerProgresso(linha) {
@@ -222,7 +223,8 @@ function impressao(id, projeto, modo, formato, ext) {
 }
 
 // Nome de arquivo do vídeo exportado para uma pasta escolhida: o nome do projeto, sem caracteres que o Windows recusa.
-const nomeDoVideo = (p) => limparNome(p.nome) || 'video';
+// Só o nome da timeline (ex.: "DED 17.11 01"), sem o do projeto na frente: é assim que o "Exportar todos" nomeia cada vídeo.
+const nomeDoVideo = (p) => limparNome(p.rotulo) || limparNome(p.nome) || 'video';
 
 function caminhoLivre(pasta, base, formato) {
   let c = path.join(pasta, `${base}.${formato}`);
@@ -291,7 +293,7 @@ const LIMITE_FILMCRAFT = 60 * 60 * 1000;
 // Motor rápido: um ffmpeg monta o vídeo todo (ver exportar-ffmpeg.mjs), com a camada de textos do Remotion por cima,
 // e já sai no codec final. Na placa de vídeo; se ela recusar, na CPU.
 async function exportarPeloFfmpeg(id, saida, { modo, codec, escala, semAudio, fps, kbps, tmp, encoderId }, opts) {
-  const { renderizarCamada } = await import('./filmcraft.mjs');
+  const { renderizarCamadas } = await import('./filmcraft.mjs');
   const s = carregar();
   const t = lerTimeline(id);
   const assets = caminhoAssets(id);
@@ -301,36 +303,93 @@ async function exportarPeloFfmpeg(id, saida, { modo, codec, escala, semAudio, fp
   }
   opts.onEvento?.({ etapa: 'Preparando textos e legendas', progresso: 0.02 });
   const inicioCamada = Date.now();
-  const camada = await renderizarCamada(id, t, (l) => {
+  const { frente: camada, fundo: camadaFundo, mescla: camadasMescla } = await renderizarCamadas(id, t, (l) => {
     opts.onEvento?.({ log: l });
-    if (/reaproveitando|Renderizando textos/.test(l)) opts.onEvento?.({ etapa: l.replace(/ para o Filmcraft/, '').replace(/…$/, ''), progresso: 0.05 });
+    if (/reaproveitando|Renderizando /.test(l)) opts.onEvento?.({ etapa: l.replace(/ para o Filmcraft/, '').replace(/…$/, ''), progresso: 0.05 });
   });
-  if (camada) temposAtual.push(['Textos e legendas (Remotion)', Math.round((Date.now() - inicioCamada) / 1000)]);
+  if (camada || camadaFundo || camadasMescla.length) temposAtual.push(['Textos e legendas (Remotion)', Math.round((Date.now() - inicioCamada) / 1000)]);
   if (opts.sinal?.aborted) throw new Error('Render cancelado.');
   const trab = path.join(tmp, 'ffmpeg');
   fs.mkdirSync(trab, { recursive: true });
-  const plano = planoFfmpeg(t, { infos, assets, camada, tonemap: TONEMAP, escala, fpsSaida: fps });
-  await prepararAuxiliares(plano.auxiliares, trab, (args) => rodar(s.ffmpegPath, args, { cwd: trab }).then((r) => {
+  const auxiliares = (lista, pasta) => prepararAuxiliares(lista, pasta, (args) => rodar(s.ffmpegPath, args, { cwd: pasta }).then((r) => {
     if (r.codigo !== 0) throw new Error(r.cauda);
   }));
-  fs.writeFileSync(path.join(trab, 'grafo.txt'), plano.grafo);
-  const args = (enc) => [
-    '-y', '-hide_banner', '-stats', ...plano.entradas.flat(), '-filter_complex_threads', '12', '-/filter_complex', 'grafo.txt',
-    '-map', '[vout]', ...(plano.temAudio && !semAudio ? ['-map', '[aout]', '-c:a', 'aac', '-b:a', '320k'] : ['-an']),
-    ...argsVideo({ codec, encoderId: enc, kbps }), '-movflags', '+faststart', saida,
-  ];
-  const o = { ...opts, cwd: trab, peso: [0.3, 1], duracao: plano.duracao };
   const naGpu = modo === 'gpu' && codec !== 'prores' && ENCODERS_GPU[encoderId];
-  if (naGpu) {
-    try {
-      await etapa(`Montando o vídeo (ffmpeg + ${ENCODERS_GPU[encoderId].nome})`, s.ffmpegPath, args(encoderId), o);
-      return;
-    } catch (e) {
-      if (opts.sinal?.aborted) throw e;
-      opts.onEvento?.({ log: `${ENCODERS_GPU[encoderId].nome} falhou, montando na CPU: ${semCores(e.message).slice(0, 200)}` });
+  // Tentativas, da mais rápida para a mais segura: decodifica e codifica na placa; decodifica na CPU (2 threads por
+  // clipe: medido, gasta menos memória e é mais rápido que o padrão) e codifica na placa; tudo na CPU.
+  const tentativas = [
+    ...(naGpu ? [{ dec: ['-hwaccel', 'd3d11va'], enc: encoderId, nome: `GPU: decodifica e codifica (${ENCODERS_GPU[encoderId].nome})` }] : []),
+    ...(naGpu ? [{ dec: ['-threads', '2'], enc: encoderId, nome: `ffmpeg + ${ENCODERS_GPU[encoderId].nome}` }] : []),
+    { dec: ['-threads', '2'], enc: null, nome: 'ffmpeg, CPU' },
+  ];
+  let escolhida = 0;
+  // Roda um plano com a tentativa escolhida; se falhar, passa para a próxima e fica nela nos trechos seguintes.
+  const rodarPlano = async (montar, pasta, destino, extras, nome, peso) => {
+    for (;;) {
+      const tent = tentativas[escolhida];
+      const plano = montar(tent.dec);
+      await auxiliares(plano.auxiliares, pasta);
+      fs.writeFileSync(path.join(pasta, 'grafo.txt'), plano.grafo);
+      const args = [
+        '-y', '-hide_banner', '-stats', ...plano.entradas.flat(), '-filter_complex_threads', '6', '-/filter_complex', 'grafo.txt',
+        ...extras(plano), ...argsVideo({ codec, encoderId: tent.enc, kbps }), destino,
+      ];
+      try {
+        await etapa(`${nome} (${tent.nome})`, s.ffmpegPath, args, { ...opts, cwd: pasta, peso, duracao: plano.duracao });
+        return plano;
+      } catch (e) {
+        fs.rmSync(destino, { force: true });
+        if (opts.sinal?.aborted || escolhida === tentativas.length - 1) throw e;
+        opts.onEvento?.({ log: `${tent.nome} falhou, tentando de outro jeito: ${semCores(e.message).slice(0, 200)}` });
+        escolhida++;
+      }
+    }
+  };
+
+  const trechos = trechosDeExportacao(t, { maxClipes: 6 });
+  const somDoVideo = (plano) => (plano.temAudio && !semAudio ? ['-map', '[vout]', '-map', '[aout]', '-c:a', 'aac', '-b:a', '320k'] : ['-map', '[vout]', '-an']);
+  if (trechos.length === 1) {
+    await rodarPlano(
+      (dec) => planoFfmpeg(t, { infos, assets, camada, camadaFundo, camadasMescla, tonemap: TONEMAP, escala, fpsSaida: fps, decodificacao: dec }),
+      trab, saida, (plano) => [...somDoVideo(plano), '-movflags', '+faststart'], 'Montando o vídeo', [0.3, 1],
+    );
+    return;
+  }
+
+  // Em trechos: cada um com poucos clipes abertos, depois emendados sem recodificar e com o som montado à parte.
+  const total = trechos.at(-1)[1];
+  const ext = path.extname(saida);
+  const partes = [];
+  for (const [k, [a, b]] of trechos.entries()) {
+    if (opts.sinal?.aborted) throw new Error('Render cancelado.');
+    const pasta = path.join(trab, `trecho-${k}`);
+    fs.mkdirSync(pasta, { recursive: true });
+    const destino = path.join(pasta, `parte${ext}`);
+    const tk = recortarTimeline(t, a, b);
+    const peso = [0.3 + (0.6 * a) / total, 0.3 + (0.6 * b) / total];
+    await rodarPlano(
+      (dec) => planoFfmpeg(tk, { infos, assets, camada: camada && { ...camada, desde: a }, camadaFundo: camadaFundo && { ...camadaFundo, desde: a }, camadasMescla: camadasMescla.map((c) => ({ ...c, desde: a })), tonemap: TONEMAP, escala, fpsSaida: fps, duracao: b - a, so: 'video', decodificacao: dec }),
+      pasta, destino, () => ['-map', '[vout]', '-an'], `Montando o trecho ${k + 1} de ${trechos.length}`, peso,
+    );
+    partes.push(destino);
+  }
+  let som = null;
+  if (!semAudio) {
+    const planoSom = planoFfmpeg(t, { infos, assets, so: 'audio' });
+    if (planoSom.temAudio) {
+      som = path.join(trab, 'som.m4a');
+      fs.writeFileSync(path.join(trab, 'grafo-som.txt'), planoSom.grafo);
+      await etapa('Montando o som', s.ffmpegPath, [
+        '-y', '-hide_banner', '-stats', ...planoSom.entradas.flat(), '-/filter_complex', 'grafo-som.txt', '-map', '[aout]', '-c:a', 'aac', '-b:a', '320k', som,
+      ], { ...opts, cwd: trab, peso: [0.9, 0.97], duracao: planoSom.duracao });
     }
   }
-  await etapa('Montando o vídeo (ffmpeg, CPU)', s.ffmpegPath, args(null), o);
+  const lista = path.join(trab, 'partes.txt');
+  fs.writeFileSync(lista, partes.map((p) => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`).join('\n'));
+  await etapa('Juntando os trechos', s.ffmpegPath, [
+    '-y', '-hide_banner', '-f', 'concat', '-safe', '0', '-i', lista, ...(som ? ['-i', som, '-map', '0:v', '-map', '1:a'] : ['-map', '0:v']),
+    '-c', 'copy', ...(ext === '.mp4' ? ['-movflags', '+faststart'] : []), saida,
+  ], { ...opts, cwd: trab, peso: [0.97, 1] });
 }
 
 // Composição e decodificação na GPU, em um passo só; textos, legendas e blocos vêm do Remotion como camada.
@@ -350,7 +409,7 @@ async function exportarPeloFilmcraft(id, saida, { modo, codec, formato, escala, 
     await prepararProjetoFilmcraft(id, projetoFc, (l) => {
       opts.onEvento?.({ log: l });
       // O app mostra se a camada de textos foi reaproveitada ou está sendo renderizada.
-      if (/reaproveitando|Renderizando textos/.test(l)) opts.onEvento?.({ etapa: l.replace(/ para o Filmcraft/, '').replace(/…$/, ''), progresso: 0.05 });
+      if (/reaproveitando|Renderizando /.test(l)) opts.onEvento?.({ etapa: l.replace(/ para o Filmcraft/, '').replace(/…$/, ''), progresso: 0.05 });
     });
     temposAtual.push(['Textos e legendas (Remotion, CPU)', Math.round((Date.now() - inicioCamada) / 1000)]);
     if (opts.sinal?.aborted) throw new Error('Render cancelado.');
@@ -379,7 +438,8 @@ async function executarRender(id, { modo, formato, codec, motor: motorPedido, fp
   const fpsNovo = fps && fps !== projeto.fps ? fps : 0;
   const kbps = kbpsDe({ codec, qualidade, largura: projeto.largura * escala, altura: projeto.altura * escala, fps: fps || projeto.fps });
   if (projeto.timeline) {
-    const erros = validarTimeline(id, lerTimeline(id));
+    // Lê os vídeos ainda não lidos e traz para dentro do arquivo os cortes que passam do fim (faixa preta no take).
+    const erros = validarTimeline(id, await lerTimelineConferida(id));
     if (erros.length) throw new Error('A timeline tem problemas:\n' + erros.join('\n'));
     escreverModelo(projeto);
   }
@@ -435,11 +495,12 @@ async function executarRender(id, { modo, formato, codec, motor: motorPedido, fp
         await exportarPeloFfmpeg(id, saida, { modo, codec, escala, semAudio, fps: fpsNovo, kbps, tmp, encoderId }, opts);
         motor = 'rapido';
       } catch (e) {
+        // O ffmpeg escreve direto no arquivo final: parado no meio, ele fica sem índice e não abre.
+        fs.rmSync(saida, { force: true });
         if (sinal?.aborted) {
           fs.rmSync(tmp, { recursive: true, force: true });
           throw e;
         }
-        fs.rmSync(saida, { force: true });
         onEvento?.({ log: `O modo rápido falhou, exportando pelo Filmcraft: ${semCores(e.message).slice(0, 300)}` });
         onEvento?.({ etapa: 'Modo rápido falhou: usando o Filmcraft', progresso: 0 });
       }
@@ -465,6 +526,8 @@ async function executarRender(id, { modo, formato, codec, motor: motorPedido, fp
     }
   }
 
+  // Desliga a pasta pública do pacote pronto do Remotion no fim (ver pacote-remotion.mjs).
+  let soltarPublica = () => {};
   try {
     // Os clipes entram como estão (H.265, ProRes…). Só o OffthreadVideo da timeline Remotion lê esses codecs;
     // HyperFrames e código Remotion escrito à mão usam o <video> do Chrome, que não lê H.265.
@@ -481,12 +544,24 @@ async function executarRender(id, { modo, formato, codec, motor: motorPedido, fp
       // Já exportado acima.
     } else if (projeto.engine === 'remotion') {
       const cli = path.join(dirs().ws, 'node_modules', '@remotion', 'cli', 'remotion-cli.js');
-      const entrada = path.join(relTimeline(id), 'src', 'index.ts');
+      let entrada = path.join(relTimeline(id), 'src', 'index.ts');
       const publica = projeto.timeline
         ? await pastaPublica(id, lerTimeline(id), path.join(tmp, 'publico'), opts)
         : caminhoAssets(id);
+      let publicDir = ['--public-dir', publica];
+      let props = [];
+      if (projeto.timeline) {
+        // Timeline: pacote pronto da composição (sem webpack a cada render) e a timeline atual por props.
+        const ent = await entradaDoRender(id, publica, (l) => onEvento?.({ log: l }));
+        soltarPublica = ent.soltar;
+        entrada = ent.entrada;
+        publicDir = ent.publicDir;
+        const arqProps = path.join(tmp, 'props.json');
+        fs.writeFileSync(arqProps, JSON.stringify({ timeline: lerTimeline(id) }));
+        props = [`--props=${arqProps}`];
+      }
       // A RX 570 tem 4 GB: mais quadros ao mesmo tempo não acelera e estoura o limite de busca de cada quadro.
-      const base = [cli, 'render', entrada, 'Main', '--public-dir', publica, '--concurrency=2', '--timeout=120000',
+      const base = [cli, 'render', entrada, 'Main', ...publicDir, ...props, '--concurrency=2', '--timeout=120000',
         ...(escala !== 1 ? [`--scale=${escala}`] : []), ...(semAudio ? ['--muted'] : [])];
       if (modo === 'gpu') {
         // Chrome desenha os quadros com a GPU (ANGLE); intermediário rápido e quase sem perda; final no encoder da GPU.
@@ -533,6 +608,7 @@ async function executarRender(id, { modo, formato, codec, motor: motorPedido, fp
       fs.copyFileSync(ajustado, saida);
     }
   } finally {
+    soltarPublica();
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 

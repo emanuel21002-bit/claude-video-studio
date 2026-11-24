@@ -25,6 +25,40 @@ const midias = (t) => t.trilhas.filter((tr) => !ehAudio(tr) && !tr.oculta).flatM
 const temZoom = (i) => i.zoom && (i.zoom.de ?? 1) !== (i.zoom.para ?? 1);
 const escalaMinima = (i) => (i.escala ?? 1) * Math.min(i.zoom?.de ?? 1, i.zoom?.para ?? 1);
 
+// A composição desenha as trilhas na ordem da lista: a primeira fica no fundo. Gráficos em trilhas abaixo de todos os
+// vídeos e imagens (um papel, uma cor ou uma textura de fundo, com a moldura onde o vídeo entra) não podem ir na
+// camada de cima, senão cobrem os vídeos: vão numa camada própria, por baixo deles.
+// Devolve o índice da primeira trilha visível com vídeo ou imagem (ou trilhas.length, se não houver).
+export function primeiraTrilhaComMidia(t) {
+  const k = t.trilhas.findIndex((tr) => tr.tipo !== 'audio' && !tr.oculta && tr.itens.some((i) => i.arquivo && (i.tipo === 'video' || i.tipo === 'imagem')));
+  return k < 0 ? t.trilhas.length : k;
+}
+
+// O que o Remotion desenha na camada: itens sem arquivo (texto, legenda, bloco). A camada de ajuste não entra: ela não
+// desenha nada sozinha (no Filmcraft o render cai no Remotion, ver render.mjs).
+const desenhaNaCamada = (i) => !i.arquivo && i.tipo !== 'ajuste';
+
+// Gráficos em "multiplicar" ou "tela" por cima dos vídeos: numa camada transparente, a mesclagem do navegador não
+// tem com o que misturar e o item sai chapado. Eles vão numa camada própria sobre um fundo neutro (branco não muda o
+// multiplicar, preto não muda a tela), que é misturada com os vídeos no modo dela.
+export const CAMADAS_MESCLA = { multiplicar: { modo: 'multiply', neutro: '#ffffff' }, tela: { modo: 'screen', neutro: '#000000' } };
+const parteDaMescla = (i) => (i.mesclagem === 'multiply' ? 'multiplicar' : i.mesclagem === 'screen' ? 'tela' : 'frente');
+
+// Os itens gráficos de uma parte: 'fundo' (trilhas abaixo de todas as mídias), 'multiplicar' e 'tela' (por cima das
+// mídias, com essa mesclagem) ou 'frente' (o resto, por cima de tudo).
+export function graficosDaParte(t, parte) {
+  const corte = primeiraTrilhaComMidia(t);
+  // Sem mídia nenhuma, tudo é frente: não há o que cobrir nem com o que misturar.
+  const temMidia = corte < t.trilhas.length;
+  const noFundo = (k) => temMidia && k < corte;
+  const daParte = (i, k) => (noFundo(k) ? 'fundo' : temMidia ? parteDaMescla(i) : 'frente') === parte;
+  return {
+    ...t,
+    fundo: CAMADAS_MESCLA[parte]?.neutro ?? 'transparent',
+    trilhas: t.trilhas.map((tr, k) => ({ ...tr, transicoes: undefined, itens: tr.itens.filter((i) => desenhaNaCamada(i) && daParte(i, k)) })),
+  };
+}
+
 // Por que esta timeline não sai pelo ffmpeg (vazio = sai).
 export function motivosSemFfmpeg(t) {
   const m = new Set();
@@ -147,8 +181,11 @@ function planoTransicoes(tr) {
 }
 
 // O último desenhado fica por cima: quem entra vem depois de quem sai.
+// Em ordem de tempo: itens de uma faixa não se sobrepõem, então a ordem não muda a imagem, mas o ffmpeg só segura os
+// quadros de cada clipe até a vez dele. Fora de ordem (um clipe de 26 s antes de um de 18 s na lista), ele guarda
+// quadros demais e estoura a memória (código 4294967284, ENOMEM).
 function ordemDesenho(tr) {
-  const itens = [...tr.itens];
+  const itens = [...tr.itens].sort((a, b) => a.inicio - b.inicio);
   for (const x of tr.transicoes ?? []) {
     const ia = itens.findIndex((i) => i.id === x.de);
     const ib = itens.findIndex((i) => i.id === x.para);
@@ -162,11 +199,14 @@ function ordemDesenho(tr) {
 // t: timeline; infos: { arquivo: {hdr, temAudio, largura, altura} }; assets: pasta dos materiais;
 // camada: { arquivo, duracao } | null (textos do Remotion); arquivos auxiliares (LUT, vinheta) vão para pastaTmp.
 // Devolve { args, grafo, auxiliares: [{ nome, origem? , vinheta? }], duracao }.
-export function planoFfmpeg(t, { infos = {}, assets, camada = null, tonemap, escala = 1, fpsSaida = 0 }) {
+// so: 'video' monta só a imagem (um trecho), 'audio' só o som (o vídeo inteiro); sem ele, os dois.
+// duracao: tamanho exato do que sai (um trecho termina onde o próximo começa, mesmo se houver vão no fim).
+// decodificacao: opções de entrada dos clipes de vídeo (decodificar na placa, threads).
+export function planoFfmpeg(t, { infos = {}, assets, camada = null, camadaFundo = null, camadasMescla = [], tonemap, escala = 1, fpsSaida = 0, duracao = null, so = null, decodificacao = [] }) {
   const W = t.largura;
   const H = t.altura;
   const fps = t.fps;
-  const D = Math.max(0.04, ...t.trilhas.flatMap((tr) => tr.itens).map((i) => i.inicio + i.duracao));
+  const D = duracao ?? Math.max(0.04, ...t.trilhas.flatMap((tr) => tr.itens).map((i) => i.inicio + i.duracao));
   const entradas = [];
   const grafo = [];
   const auxiliares = [];
@@ -174,10 +214,19 @@ export function planoFfmpeg(t, { infos = {}, assets, camada = null, tonemap, esc
   const vinhetas = new Map();
   const entrada = (args) => entradas.push(args) - 1;
 
-  grafo.push(`color=c=${(t.fundo ?? '#000000').replace('#', '0x')}:s=${W}x${H}:r=${fps}:d=${num(D)},format=yuv420p[b0]`);
+  if (so !== 'audio') grafo.push(`color=c=${(t.fundo ?? '#000000').replace('#', '0x')}:s=${W}x${H}:r=${fps}:d=${num(D)},format=yuv420p[b0]`);
   let base = 'b0';
   let n = 0;
   const audios = [];
+  // Num trecho, a camada começa no mesmo ponto (ProRes: todo quadro é chave, o corte é exato).
+  const entradaCamada = (cam) => entrada(cam.desde ? ['-ss', String(num(cam.desde)), '-t', String(num(D + 0.1)), '-i', cam.arquivo] : ['-i', cam.arquivo]);
+  // Gráficos por baixo de todos os vídeos (papel, cor de fundo): sobre a cor de fundo, antes das mídias.
+  if (camadaFundo && so !== 'audio') {
+    const fi = entradaCamada(camadaFundo);
+    grafo.push(`[${fi}:v]setpts=PTS-STARTPTS[camf]`);
+    grafo.push(`[b0][camf]overlay=eof_action=pass:format=auto,format=yuv420p[bf]`);
+    base = 'bf';
+  }
 
   for (const tr of t.trilhas) {
     if (tr.oculta || ehAudio(tr)) continue;
@@ -194,21 +243,39 @@ export function planoFfmpeg(t, { infos = {}, assets, camada = null, tonemap, esc
       const ini = i.inicio - adiantar;
       const total = i.duracao + adiantar + (pt?.estender ?? 0);
       const corte = Math.max(0, (i.corteInicio ?? 0) - adiantar * vel);
+      if (so === 'audio') {
+        // Só o som do clipe, sem decodificar a imagem.
+        if (i.tipo === 'video' && (i.volume ?? 0) > 0 && info.temAudio) {
+          const ia = entrada(['-vn', '-ss', String(num(corte)), '-t', String(num(total * vel + 0.25)), '-i', arq]);
+          audios.push({ i, rotuloEntrada: `${ia}:a:0`, vol: i.volume, vel, ini, total });
+        }
+        continue;
+      }
       const idx =
         i.tipo === 'video'
-          ? entrada(['-ss', String(num(corte)), '-t', String(num(total * vel + 0.25)), '-i', arq])
+          ? entrada([...decodificacao, '-ss', String(num(corte)), '-t', String(num(total * vel + 0.25)), '-i', arq])
           : entrada(['-loop', '1', '-framerate', String(fps), '-t', String(num(total + 0.1)), '-i', arq]);
+      // Em quadros, como a Sequence da prévia: do quadro onde o item começa ao quadro onde ele termina. Em segundos, um
+      // início fora da grade (6,52 s a 30 fps = quadro 195,6) era truncado pelo setpts e o clipe saía com um quadro a
+      // menos: o último quadro do take ficava com o fundo preto.
+      const q0 = Math.round(ini * fps);
+      const qn = Math.max(1, Math.round((i.inicio + i.duracao + (pt?.estender ?? 0)) * fps) - q0);
       const f = [];
-      // Tempo: começa em 0, velocidade, fps da timeline, duração do item.
+      // Tempo: começa em 0, velocidade, fps da timeline, quadros do item.
       f.push(vel !== 1 ? `setpts=(PTS-STARTPTS)/${num(vel)}` : 'setpts=PTS-STARTPTS');
-      f.push(`fps=${fps}`, `trim=duration=${num(total)}`);
-      if (info.hdr && tonemap) f.push(tonemap);
+      f.push(`fps=${fps}`, `trim=end_frame=${qn}`);
+      // Arquivo que acaba antes do clipe: segura o último quadro. Sem isso o overlay passa adiante e o fim do take fica
+      // com o fundo da timeline (preto).
+      f.push(`tpad=stop_mode=clone:stop=${qn}`, `trim=end_frame=${qn}`);
       // Geometria: o quadro F, centralizado na caixa W x H (a AbsoluteFill do item).
       const ajuste = i.ajuste ?? (i.tipo === 'video' ? 'cover' : 'contain');
       const capa = ajuste === 'cover' && !i.largura;
       if (i.largura) f.push(`scale=${Math.round(i.largura / 2) * 2}:-2`);
       else if (capa) f.push(`scale=${W}:${H}:force_original_aspect_ratio=increase`, `crop=${W}:${H}`);
       else f.push(`scale=${W}:${H}:force_original_aspect_ratio=decrease`, 'pad=ceil(iw/2)*2:ceil(ih/2)*2');
+      // Tone mapping HDR depois de reduzir: em ponto flutuante na CPU, ele custa por pixel. No 4K do iPhone, fazer no
+      // tamanho do quadro deixou a montagem cerca de 40% mais rápida (medido: 34,4 s → 20,8 s para 10 s de vídeo).
+      if (info.hdr && tonemap) f.push(tonemap);
       // Efeitos, em RGB.
       const e = i.efeitos ?? {};
       let lut = null;
@@ -256,7 +323,7 @@ export function planoFfmpeg(t, { infos = {}, assets, camada = null, tonemap, esc
           auxiliares.push({ nome, vinheta: filtroVinheta(W, H, q), W, H });
         }
         const vi = entrada(['-loop', '1', '-framerate', String(fps), '-t', String(num(total + 0.1)), '-i', vinhetas.get(q)]);
-        grafo.push(`[${vi}:v]format=rgba,trim=duration=${num(total)}[vn${k}]`);
+        grafo.push(`[${vi}:v]format=rgba,trim=end_frame=${qn}[vn${k}]`);
         grafo.push(`[${rotulo}][vn${k}]overlay=format=auto:shortest=1,${precisaAlfa ? 'format=rgba' : 'format=gbrp'}[${rotulo}v]`);
         rotulo += 'v';
       }
@@ -285,9 +352,12 @@ export function planoFfmpeg(t, { infos = {}, assets, camada = null, tonemap, esc
       const op = i.opacidade ?? 1;
       const modo = i.mesclagem && i.mesclagem !== 'normal' ? i.mesclagem : null;
       if (op < 1 && !modo) t2.push(`colorchannelmixer=aa=${num(op)}`);
-      t2.push(...fades, `setpts=PTS+${num(ini)}/TB`);
+      // Posição em quadros inteiros (em segundos, o setpts trunca e o clipe começa um quadro antes).
+      const emQuadros = `settb=expr=1/${fps},setpts=N+${q0}`;
+      t2.push(...fades, emQuadros);
       grafo.push(`[${rotulo}]${t2.join(',')}[p${k}]`);
-      const janela = `enable='between(t,${num(ini)},${num(ini + total - 0.0005)})'`;
+      // Do quadro q0 ao q0 + qn - 1, com meia folga de quadro de cada lado.
+      const janela = `enable='between(t,${num((q0 - 0.5) / fps)},${num((q0 + qn - 0.5) / fps)})'`;
       const novo = `b${k}`;
       if (!modo) {
         grafo.push(`[${base}][p${k}]overlay=x='${posX}':y='${posY}':eof_action=pass:format=auto:${janela}[${novo}]`);
@@ -295,7 +365,7 @@ export function planoFfmpeg(t, { infos = {}, assets, camada = null, tonemap, esc
         // screen/multiply: o item vai sobre um fundo neutro (preto não muda o screen, branco não muda o multiply)
         // do tamanho do quadro, e mistura com o que está embaixo, com a opacidade do item.
         const neutro = modo === 'screen' ? 'black' : 'white';
-        grafo.push(`color=c=${neutro}:s=${W}x${H}:r=${fps}:d=${num(total)},setpts=PTS+${num(ini)}/TB,format=rgba[n${k}]`);
+        grafo.push(`color=c=${neutro}:s=${W}x${H}:r=${fps},trim=end_frame=${qn},${emQuadros},format=rgba[n${k}]`);
         grafo.push(`[n${k}][p${k}]overlay=x='${posX}':y='${posY}':format=auto,format=gbrp[q${k}]`);
         grafo.push(`[${base}]format=gbrp[bg${k}]`);
         grafo.push(`[bg${k}][q${k}]blend=all_mode=${modo}:all_opacity=${num(op)}:eof_action=pass:${janela},format=yuv420p[${novo}]`);
@@ -306,9 +376,20 @@ export function planoFfmpeg(t, { infos = {}, assets, camada = null, tonemap, esc
     }
   }
 
+  // Gráficos em multiplicar/tela (sobre fundo neutro): misturados com tudo o que está embaixo.
+  if (so !== 'audio') {
+    camadasMescla.forEach((cam, m) => {
+      const ci = entradaCamada(cam);
+      grafo.push(`[${ci}:v]setpts=PTS-STARTPTS,format=gbrp[mq${m}]`);
+      grafo.push(`[${base}]format=gbrp[mb${m}]`);
+      grafo.push(`[mb${m}][mq${m}]blend=all_mode=${cam.modo}:eof_action=pass,format=yuv420p[bm${m}]`);
+      base = `bm${m}`;
+    });
+  }
+
   // Camada do Remotion (textos, legendas, blocos) por cima de tudo.
-  if (camada) {
-    const ci = entrada(['-i', camada.arquivo]);
+  if (camada && so !== 'audio') {
+    const ci = entradaCamada(camada);
     grafo.push(`[${ci}:v]setpts=PTS-STARTPTS[cam]`);
     grafo.push(`[${base}][cam]overlay=eof_action=pass:format=auto[bc]`);
     base = 'bc';
@@ -316,10 +397,11 @@ export function planoFfmpeg(t, { infos = {}, assets, camada = null, tonemap, esc
   const fim = [`format=yuv420p`];
   if (escala !== 1) fim.unshift(`scale=${Math.max(2, Math.round((W * escala) / 2) * 2)}:${Math.max(2, Math.round((H * escala) / 2) * 2)}:flags=lanczos`);
   if (fpsSaida && fpsSaida !== fps) fim.push(`fps=${fpsSaida}`);
-  grafo.push(`[${base}]${fim.join(',')},trim=duration=${num(D)}[vout]`);
+  if (so !== 'audio') grafo.push(`[${base}]${fim.join(',')},trim=duration=${num(D)}[vout]`);
 
   // Áudio: faixas de áudio (mudo respeitado) e o som dos clipes.
-  for (const tr of t.trilhas) {
+  if (so === 'video') audios.length = 0;
+  for (const tr of so === 'video' ? [] : t.trilhas) {
     if (!ehAudio(tr) || tr.muda || tr.oculta) continue;
     for (const i of tr.itens) {
       if (i.tipo !== 'audio' || !i.arquivo) continue;
@@ -356,6 +438,76 @@ export function planoFfmpeg(t, { infos = {}, assets, camada = null, tonemap, esc
   }
 
   return { entradas, grafo: grafo.join(';\n'), auxiliares, duracao: D, temAudio };
+}
+
+// ---------- exportar em trechos ----------
+// Um ffmpeg com todos os clipes abre todos ao mesmo tempo: cada decoder de vídeo 4K do iPhone segura uns 230 MB
+// (medido: 30 clipes chegaram a 11,7 GB) e a placa de vídeo nem consegue decodificar tantos juntos. Em trechos com
+// poucos clipes, a memória fica baixa e a decodificação pode ir para a GPU. Cada trecho sai com a mesma codificação
+// e eles são emendados sem recodificar; o som é montado inteiro numa passada à parte, para não ter emenda no áudio.
+
+const EPS = 0.0005;
+const cruza = (i, a, b) => i.inicio < b - EPS && i.inicio + i.duracao > a + EPS;
+
+// Onde dá para cortar sem mudar a imagem: fora de transições e de clipes com zoom (o zoom conta do começo do clipe).
+function pontosDeCorte(t) {
+  const fps = t.fps;
+  const visuais = t.trilhas.filter((tr) => !ehAudio(tr) && !tr.oculta);
+  const itens = visuais.flatMap((tr) => tr.itens);
+  const proibidos = [];
+  for (const tr of visuais) {
+    for (const x of tr.transicoes ?? []) {
+      const a = tr.itens.find((i) => i.id === x.de);
+      const b = tr.itens.find((i) => i.id === x.para);
+      const corte = b ? b.inicio : a ? a.inicio + a.duracao : null;
+      if (corte != null) proibidos.push([corte - (x.duracao ?? 0) - 1 / fps, corte + (x.duracao ?? 0) + 1 / fps]);
+    }
+  }
+  const pode = (c) => !itens.some((i) => temZoom(i) && i.inicio < c - EPS && i.inicio + i.duracao > c + EPS) && !proibidos.some(([a, b]) => c > a && c < b);
+  const candidatos = [...new Set(itens.map((i) => Math.round(i.inicio * fps) / fps))].filter((c) => c > EPS).sort((a, b) => a - b);
+  return candidatos.filter(pode);
+}
+
+// [[início, fim], ...] com no máximo maxClipes clipes de vídeo em cada trecho (quando dá para cortar).
+export function trechosDeExportacao(t, { maxClipes = 6, minimo = 1 } = {}) {
+  const D = Math.max(0.04, ...t.trilhas.flatMap((tr) => tr.itens).map((i) => i.inicio + i.duracao));
+  const videos = t.trilhas.filter((tr) => !ehAudio(tr) && !tr.oculta).flatMap((tr) => tr.itens).filter((i) => i.tipo === 'video');
+  const quantos = (a, b) => videos.filter((i) => cruza(i, a, b)).length;
+  const trechos = [];
+  let inicio = 0;
+  const pontos = pontosDeCorte(t).filter((c) => c < D - minimo);
+  for (let k = 0; k < pontos.length; k++) {
+    const proximo = pontos[k + 1] ?? D;
+    // Corta aqui se seguir até o próximo ponto passaria do limite.
+    if (pontos[k] - inicio >= minimo && quantos(inicio, proximo) > maxClipes) {
+      trechos.push([inicio, pontos[k]]);
+      inicio = pontos[k];
+    }
+  }
+  trechos.push([inicio, D]);
+  return trechos;
+}
+
+// A timeline só com o que aparece entre a e b, com o tempo contado de a. Clipes que atravessam a borda são aparados
+// (e o corte no arquivo anda junto); as bordas nunca caem em transição nem em zoom (ver pontosDeCorte).
+export function recortarTimeline(t, a, b) {
+  return {
+    ...t,
+    trilhas: t.trilhas
+      .filter((tr) => !ehAudio(tr))
+      .map((tr) => {
+        const itens = tr.itens.filter((i) => cruza(i, a, b)).map((i) => {
+          const ini = Math.max(i.inicio, a);
+          const fim = Math.min(i.inicio + i.duracao, b);
+          const novo = { ...i, inicio: num(ini - a), duracao: num(fim - ini) };
+          if (i.tipo === 'video') novo.corteInicio = num((i.corteInicio ?? 0) + (ini - i.inicio) * (i.velocidade ?? 1));
+          return novo;
+        });
+        const ids = new Set(itens.map((i) => i.id));
+        const transicoes = (tr.transicoes ?? []).filter((x) => (!x.de || ids.has(x.de)) && (!x.para || ids.has(x.para)) && (ids.has(x.de) || ids.has(x.para)));
+        return { ...tr, itens, ...(transicoes.length ? { transicoes } : { transicoes: undefined }) };
+      }),
+  };
 }
 
 // Gera a vinheta e copia as LUTs para a pasta de trabalho, onde o grafo as cita pelo nome (sem caminhos para escapar).

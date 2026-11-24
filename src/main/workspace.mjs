@@ -8,6 +8,7 @@ import { recurso, temRecurso } from './recursos.mjs';
 import { criarTimeline } from './timeline.mjs';
 import { slug } from './migracao.mjs';
 import { tamanhoVisivel } from './otio.mjs';
+import { duracaoDaImagem } from './limites-fonte.mjs';
 import { lerRoteiro } from './roteiro.mjs';
 import { trechoDoRoteiro } from './conferir-nucleo.mjs';
 
@@ -195,10 +196,14 @@ export async function sondarCompleto(arquivo) {
     const j = JSON.parse(saida);
     const v = j.streams?.find((s) => s.codec_type === 'video');
     return {
-      duracao: j.format?.duration ? Number(Number(j.format.duration).toFixed(2)) : null,
+      // Vídeo: a duração da imagem, para baixo (o Claude escolhe os cortes por ela; arredondar para cima ou usar a do
+      // contêiner deixava cortes além do último quadro, com preto no fim do take).
+      duracao: duracaoDaImagem(j, 2) || null,
       largura: tamanhoVisivel(v).largura,
       altura: tamanhoVisivel(v).altura,
       temAudio: !!j.streams?.find((s) => s.codec_type === 'audio'),
+      // Duração do som: num vídeo, a faixa de áudio pode ser mais curta ou mais longa que a imagem.
+      duracaoAudio: Number(j.streams?.find((s) => s.codec_type === 'audio')?.duration) || Number(j.format?.duration) || null,
     };
   } catch {
     return { duracao: null, largura: null, altura: null, temAudio: false };
@@ -386,10 +391,17 @@ export async function importarMaterial(origem, assets, usados, onLinha) {
 
 const ordemNatural = (a, b) => a.localeCompare(b, 'pt-BR', { numeric: true, sensitivity: 'base' });
 
-function audiosDaPasta(pasta) {
+// O decupar lê o som de qualquer coisa que o ffmpeg abra: áudios em mais formatos e vídeos (usa a faixa de áudio).
+export const EXT_DECUPAR_AUDIO = ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'oga', 'opus', 'flac', 'wma', 'aif', 'aiff', 'amr', 'caf', 'mka', 'ac3', 'weba', 'mp2'];
+export const EXT_DECUPAR_VIDEO = ['mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v', 'wmv', 'flv', '3gp', 'mts', 'm2ts', 'ts', 'mpg', 'mpeg'];
+export const EXT_DECUPAR = [...EXT_DECUPAR_AUDIO, ...EXT_DECUPAR_VIDEO];
+export const ehVideoDoDecupar = (nome) => EXT_DECUPAR_VIDEO.includes(path.extname(nome).slice(1).toLowerCase());
+const ehDoDecupar = (nome) => EXT_DECUPAR.includes(path.extname(nome).slice(1).toLowerCase());
+
+function audiosDaPasta(pasta, aceita = (n) => tipoDe(n) === 'audio') {
   return fs
     .readdirSync(pasta, { withFileTypes: true })
-    .filter((d) => d.isFile() && tipoDe(d.name) === 'audio')
+    .filter((d) => d.isFile() && aceita(d.name))
     .map((d) => d.name)
     .sort(ordemNatural)
     .map((n) => path.join(pasta, n));
@@ -397,30 +409,45 @@ function audiosDaPasta(pasta) {
 
 // Cada pasta com áudios é uma narração, e os áudios dela são um roteiro só. Pasta sem áudios direto,
 // mas com subpastas, vale uma narração por subpasta. Um arquivo de áudio solto é uma narração.
-export async function resolverNarracoes(caminhos) {
+// decupar: aceita também vídeos e mais formatos de áudio (EXT_DECUPAR); arquivos sem faixa de áudio ficam de fora
+// e voltam em `semAudio`.
+export async function resolverNarracoes(caminhos, { decupar = false } = {}) {
+  const aceita = decupar ? ehDoDecupar : (n) => tipoDe(n) === 'audio';
   const brutas = [];
   for (const c of caminhos) {
     if (!fs.statSync(c).isDirectory()) {
-      if (tipoDe(c) === 'audio') brutas.push({ nome: path.basename(c, path.extname(c)), arquivos: [c] });
+      if (aceita(c)) brutas.push({ nome: path.basename(c, path.extname(c)), arquivos: [c] });
       continue;
     }
-    const diretos = audiosDaPasta(c);
+    const diretos = audiosDaPasta(c, aceita);
     if (diretos.length) {
       brutas.push({ nome: path.basename(c), arquivos: diretos });
       continue;
     }
     const subpastas = fs.readdirSync(c, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort(ordemNatural);
     for (const sub of subpastas) {
-      const arquivos = audiosDaPasta(path.join(c, sub));
+      const arquivos = audiosDaPasta(path.join(c, sub), aceita);
       if (arquivos.length) brutas.push({ nome: sub, arquivos });
     }
   }
-  return Promise.all(
+  const semAudio = [];
+  const lista = await Promise.all(
     brutas.map(async (n) => {
       const infos = await Promise.all(n.arquivos.map(sondarCompleto));
+      if (decupar) {
+        // Vídeo sem som (ou arquivo que o ffmpeg não abre) não tem o que decupar.
+        const ok = infos.map((i) => i.temAudio);
+        semAudio.push(...n.arquivos.filter((_, k) => !ok[k]));
+        const arquivos = n.arquivos.filter((_, k) => ok[k]);
+        if (!arquivos.length) return null;
+        return { ...n, arquivos, duracao: infos.filter((_, k) => ok[k]).reduce((t, i) => t + (i.duracaoAudio ?? i.duracao ?? 0), 0) };
+      }
       return { ...n, duracao: infos.reduce((t, i) => t + (i.duracao ?? 0), 0) };
     }),
   );
+  const narracoes = lista.filter(Boolean);
+  if (decupar) narracoes.semAudio = semAudio;
+  return narracoes;
 }
 
 // Uma narração em vários áudios vira um arquivo só, na ordem dada, para a transcrição e os cortes seguirem um único tempo.

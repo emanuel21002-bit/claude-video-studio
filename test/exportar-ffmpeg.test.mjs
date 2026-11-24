@@ -35,3 +35,9 @@ test('grafo: corte, zoom, HDR, cor, mesclagem, camada e áudio', () => {
   assert.equal(p.temAudio, true);
   assert.deepEqual(p.auxiliares.map((a) => a.nome), ['lut0.cube']);
 });
+
+test('clipes fora de ordem na faixa entram em ordem de tempo (senão o ffmpeg estoura a memória)', () => {
+  const p = planoFfmpeg(base([clipe('tarde', 26), clipe('cedo', 18), clipe('meio', 20)]), { infos: {}, assets: 'A' });
+  const ordem = p.entradas.filter((e) => e.at(-1).endsWith('.mov')).map((e) => e.at(-1).split(/[\\/]/).pop());
+  assert.deepEqual(ordem, ['cedo.mov', 'meio.mov', 'tarde.mov']);
+});

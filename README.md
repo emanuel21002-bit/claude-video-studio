@@ -77,7 +77,8 @@ Recursos de edição, com os nomes de parâmetro no `timeline.json`:
 - **Transições** (`trilha.transicoes`): dissolver, fade, flash, empurrar, chicote, deslizar, cortina, íris e zoom.
 - **Materiais**: a aba ao lado do player lista os arquivos do projeto, com as pastas e subpastas de onde vieram, mais as narrações das outras timelines. Os arquivos ficam todos em `assets/` do projeto e a pasta é o campo `pasta` de cada material. Arrastar para uma trilha adiciona; soltar sobre um clipe substitui o arquivo dele e mantém lugar, efeitos e animações; o botão ⇄ substitui em todos os clipes.
 - **Formato**: 9:16, 16:9, 1:1 e 4:5 na barra da timeline. Posições, textos e larguras acompanham o quadro novo.
-- **Ferramentas**: selecionar (V), ripple (B), roll (N), slip (Y), slide (U), velocidade (R) e navalha (C).
+- **Desativar** (`desativado`): V liga e desliga os clipes selecionados. O clipe fica na timeline, mais escuro, mas some da prévia, do render, do Filmcraft (vai como clipe desligado) e da transcrição.
+- **Ferramentas**: selecionar (A), ripple (B), roll (N), slip (Y), slide (U), velocidade (R) e navalha (C).
 
 ## Filmcraft
 
@@ -92,9 +93,13 @@ Recursos de edição, com os nomes de parâmetro no `timeline.json`:
 
 O botão **Renderizar** abre a janela de exportação: nome, pasta, resolução, taxa de bits, codec, formato, fps e áudio. As escolhas ficam salvas para a próxima.
 
-O vídeo final pode sair pelo Filmcraft (padrão, se estiver em `recursos\filmcraft`) ou pelo Remotion, na mesma janela. Pelo Filmcraft, textos, legendas e blocos são renderizados pelo Remotion como uma camada transparente, guardada enquanto não mudam, e ele monta o resto em um passo só. Se ele falhar, o app exporta pelo Remotion. A prévia ao vivo é sempre do Remotion, e a correção de cor pode ter pequenas diferenças entre os dois.
+O vídeo final pode sair pelo Filmcraft (padrão, se estiver em `recursos\filmcraft`) ou pelo Remotion, na mesma janela. Pelo Filmcraft, textos, legendas e blocos são renderizados pelo Remotion como uma camada transparente, guardada enquanto não mudam, e ele monta o resto em um passo só. A camada respeita a ordem das trilhas: gráficos abaixo de todos os vídeos (um papel de fundo) vão numa camada por baixo deles, e gráficos em multiplicar ou tela vão numa camada sobre fundo neutro (branco ou preto), misturada com os vídeos nesse modo. O modo rápido faz o mesmo (`graficosDaParte` em `exportar-ffmpeg.mjs`). Se ele falhar, o app exporta pelo Remotion. A prévia ao vivo é sempre do Remotion, e a correção de cor pode ter pequenas diferenças entre os dois.
 
 Só roda um render por vez. Pedir o mesmo render enquanto ele roda não inicia outro, e pedir de novo sem nada mudar devolve o arquivo pronto.
+
+A composição do Remotion é empacotada uma vez por versão do código da timeline e guardada em `timelines\<timeline>\.render\` (ver `pacote-remotion.mjs`): o webpack só roda de novo quando o código muda, não a cada render. A timeline atual vai por `--props`, e tamanho, fps e duração vêm dela (`calculateMetadata` no `Root.tsx`).
+
+Ao ler a timeline, o app põe clipes de vídeo e imagem na grade de quadros e traz para dentro do arquivo os cortes que passam do fim dele (`limites-fonte.mjs`). As duas coisas davam quadro preto no fim do take. A duração de um vídeo é a da imagem (fluxo de vídeo), não a do contêiner, que no iPhone pode ser maior.
 
 | Modo | Remotion | HyperFrames |
 |---|---|---|

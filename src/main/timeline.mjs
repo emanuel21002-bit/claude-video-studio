@@ -6,8 +6,10 @@ import { carregar } from './settings.mjs';
 import { rodar, trabalhoPesado } from './proc.mjs';
 import { dirs, caminhoTimeline, caminhoAssets, caminhoCache, lerProjeto, gravarProjeto, importarMaterial, listarMateriais, textoDosRoteiros } from './workspace.mjs';
 import { corrigirPalavras } from './conferir-nucleo.mjs';
-import { infoVideo, TONEMAP, TONEMAP_GPU, ENCODERS_GPU, encoderGpu } from './transcodificar.mjs';
+import { infoVideo, duracaoGuardada, TONEMAP, TONEMAP_GPU, ENCODERS_GPU, encoderGpu } from './transcodificar.mjs';
+import { ajustarAoArquivo, ajustarAGrade } from './limites-fonte.mjs';
 import { FORMATOS } from './presets.mjs';
+import { garantirFontes } from './fontes.mjs';
 
 const aqui = path.dirname(fileURLToPath(import.meta.url));
 const MODELO = ['index.ts', 'Root.tsx', 'TimelineVideo.tsx', 'lut.tsx', 'blocos.tsx', 'previa.tsx'];
@@ -80,11 +82,32 @@ export const novoId = (prefixo = 'i') => `${prefixo}${Date.now().toString(36)}${
 
 const arquivoTimeline = (id) => path.join(caminhoTimeline(id), 'timeline.json');
 
+// Para render e exportação: tira os clipes desativados (V na timeline), que só ficam guardados no arquivo.
+export const semDesativados = (t) =>
+  t?.trilhas?.some((tr) => tr.itens?.some((i) => i.desativado))
+    ? { ...t, trilhas: t.trilhas.map((tr) => ({ ...tr, itens: tr.itens.filter((i) => !i.desativado) })) }
+    : t;
+export const lerTimelineDoRender = (id) => semDesativados(lerTimeline(id));
+
 export function lerTimeline(id) {
   const t = JSON.parse(fs.readFileSync(arquivoTimeline(id), 'utf8'));
   // Grava já no formato novo: o Claude lê o arquivo direto e precisa ver as mesmas faixas que a tela.
-  if (migrarTimeline(t)) fs.writeFileSync(arquivoTimeline(id), JSON.stringify(t, null, 2));
+  const migrou = migrarTimeline(t);
+  // Clipe que pede imagem além do fim do arquivo vira faixa preta no fim do take: o corte volta para dentro do arquivo.
+  // O Claude grava timeline.json direto, sem passar pela tela, então a correção é feita aqui, na leitura.
+  // Clipes fora da grade de quadros também davam um quadro preto no fim do take (ver ajustarAGrade).
+  const naGrade = ajustarAGrade(t);
+  const ajustados = ajustarAoArquivo(t, (a) => duracaoGuardada(path.join(caminhoAssets(id), a)));
+  if (migrou || naGrade || ajustados.length) fs.writeFileSync(arquivoTimeline(id), JSON.stringify(t, null, 2));
   return t;
+}
+
+// Antes de exportar: lê os vídeos da timeline que ainda não foram lidos e corrige os cortes além do fim.
+export async function lerTimelineConferida(id) {
+  const t = JSON.parse(fs.readFileSync(arquivoTimeline(id), 'utf8'));
+  const arquivos = new Set(t.trilhas.flatMap((tr) => tr.itens).filter((i) => i.tipo === 'video' && i.arquivo).map((i) => i.arquivo));
+  await Promise.all([...arquivos].map((a) => infoVideo(path.join(caminhoAssets(id), a)).catch(() => null)));
+  return lerTimeline(id);
 }
 
 // Confere a timeline antes de gravar ou renderizar. Devolve a lista de problemas (vazia = ok).
@@ -139,6 +162,7 @@ export function validarTimeline(id, t) {
 
 export function gravarTimeline(id, t) {
   migrarTimeline(t);
+  garantirFontes(id, t);
   const erros = validarTimeline(id, t);
   if (erros.length) throw new Error(erros.join('\n'));
   fs.writeFileSync(arquivoTimeline(id), JSON.stringify(t, null, 2));
@@ -234,14 +258,15 @@ function agrupar(palavras, { maxPalavras, maxCaracteres }) {
 
 // Gera a trilha de legendas seguindo os pedaços de narração que estão na timeline:
 // se a narração foi cortada ou movida, as legendas acompanham.
-export function gerarLegendas(id, { maxPalavras = 4, maxCaracteres = 26, estilo, x, y } = {}) {
+// daTimeline: usa a transcrição de tudo o que toca na timeline (transcricao-timeline.json, já nos tempos dela) em vez da narração do projeto.
+export function gerarLegendas(id, { maxPalavras = 4, maxCaracteres = 26, estilo, x, y, daTimeline = false } = {}) {
   const projeto = lerProjeto(id);
-  const caminho = path.join(caminhoTimeline(id), 'transcricao.json');
-  if (!fs.existsSync(caminho)) throw new Error('Este projeto não tem transcrição.');
-  if (!projeto.narracao && !projeto.narradoPor) throw new Error('Este projeto não tem narração.');
+  const caminho = path.join(caminhoTimeline(id), daTimeline ? 'transcricao-timeline.json' : 'transcricao.json');
+  if (!fs.existsSync(caminho)) throw new Error(daTimeline ? 'Transcreva a timeline antes de gerar as legendas.' : 'Este projeto não tem transcrição.');
+  if (!daTimeline && !projeto.narracao && !projeto.narradoPor) throw new Error('Este projeto não tem narração.');
   const transcritas = JSON.parse(fs.readFileSync(caminho, 'utf8')).palavras;
   // Com roteiro, os tempos continuam vindo do áudio, mas a grafia e a pontuação vêm dele.
-  const roteiro = textoDosRoteiros(id);
+  const roteiro = daTimeline ? null : textoDosRoteiros(id);
   let correcao = null;
   if (roteiro) {
     try {
@@ -261,21 +286,28 @@ export function gerarLegendas(id, { maxPalavras = 4, maxCaracteres = 26, estilo,
   }
   const exemplo = trilha.itens.find((i) => i.tipo === 'legenda');
   // A fala vem do áudio de narração ou, quando a narração está no vídeo, dos pedaços desse vídeo na timeline.
-  const pedacos = projeto.narracao
+  const pedacos = daTimeline
+    ? []
+    : projeto.narracao
     ? t.trilhas.filter((tr) => tr.tipo === 'audio').flatMap((tr) => tr.itens).filter((i) => i.arquivo === projeto.narracao.arquivo)
     : t.trilhas.flatMap((tr) => tr.itens).filter((i) => i.tipo === 'video' && i.arquivo === projeto.narradoPor);
 
   const itens = [];
-  for (const a of pedacos) {
-    const corte = a.corteInicio ?? 0;
-    const vel = a.velocidade ?? 1;
-    const dentro = palavras
-      .filter((w) => w.inicio >= corte && w.inicio < corte + a.duracao * vel)
-      .map((w) => ({
-        texto: w.texto,
-        inicio: a.inicio + (w.inicio - corte) / vel,
-        fim: Math.min(a.inicio + a.duracao, a.inicio + (w.fim - corte) / vel),
-      }));
+  // Da timeline, as palavras já estão nos tempos dela; da narração, cada pedaço dela na timeline leva o seu trecho.
+  const listas = daTimeline
+    ? [palavras]
+    : pedacos.map((a) => {
+        const corte = a.corteInicio ?? 0;
+        const vel = a.velocidade ?? 1;
+        return palavras
+          .filter((w) => w.inicio >= corte && w.inicio < corte + a.duracao * vel)
+          .map((w) => ({
+            texto: w.texto,
+            inicio: a.inicio + (w.inicio - corte) / vel,
+            fim: Math.min(a.inicio + a.duracao, a.inicio + (w.fim - corte) / vel),
+          }));
+      });
+  for (const dentro of listas) {
     for (const g of agrupar(dentro, { maxPalavras, maxCaracteres })) {
       const inicio = g[0].inicio;
       const duracao = Math.max(0.1, g.at(-1).fim - inicio);
