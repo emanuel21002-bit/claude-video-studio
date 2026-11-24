@@ -380,7 +380,7 @@ async function exportarPeloFfmpeg(id, saida, { modo, codec, escala, semAudio, fp
       som = path.join(trab, 'som.m4a');
       fs.writeFileSync(path.join(trab, 'grafo-som.txt'), planoSom.grafo);
       await etapa('Montando o som', s.ffmpegPath, [
-        '-y', '-hide_banner', '-stats', ...planoSom.entradas.flat(), '-/filter_complex', 'grafo-som.txt', '-map', '[aout]', '-c:a', 'aac', '-b:a', '320k', som,
+        '-y', '-hide_banner', '-stats', ...planoSom.entradas.flat(), '-/filter_complex', 'grafo-som.txt', '-map', '[aout]', '-t', String(planoSom.duracao), '-c:a', 'aac', '-b:a', '320k', som,
       ], { ...opts, cwd: trab, peso: [0.9, 0.97], duracao: planoSom.duracao });
     }
   }

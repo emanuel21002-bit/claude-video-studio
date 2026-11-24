@@ -251,7 +251,59 @@ function estiloTransicao(tr: any, papel: 'sai' | 'entra', p: number, comPar: boo
   }
   if (tipo === 'slide') return { estilo: papel === 'entra' ? { transform: mover(p - 1) } : {} };
   if (tipo === 'linear_wipe' || tipo === 'wipe' || tipo === 'soft_wipe') {
-    return { estilo: papel === 'entra' ? { clipPath: `inset(0 ${(1 - p) * 100}% 0 0)` } : {} };
+    const r = (1 - p) * 100;
+    const lados: Record<string, string> = { dir: `inset(0 ${r}% 0 0)`, esq: `inset(0 0 0 ${r}%)`, baixo: `inset(0 0 ${r}% 0)`, cima: `inset(${r}% 0 0 0)` };
+    return { estilo: papel === 'entra' ? { clipPath: lados[tr.direcao ?? 'dir'] ?? lados.dir } : {} };
+  }
+  // Transições só do app (como as do CapCut); no Filmcraft vão como a mais parecida dele.
+  const pico = Math.sin(p * Math.PI);
+  const suave = p * p * (3 - 2 * p);
+  if (tipo === 'app_girar') {
+    if (papel === 'sai') return { estilo: { transform: `rotate(${suave * 180}deg) scale(${1 + suave})`, opacity: comPar ? 1 : 1 - p } };
+    return { estilo: { transform: `rotate(${(suave - 1) * 180}deg) scale(${0.4 + 0.6 * suave})`, opacity: suave } };
+  }
+  if (tipo === 'app_zoom_in') {
+    if (papel === 'sai') return { estilo: { transform: `scale(${1 + suave * 1.5})`, opacity: 1 - suave } };
+    return { estilo: { transform: `scale(${0.5 + 0.5 * suave})`, opacity: suave } };
+  }
+  if (tipo === 'app_zoom_out') {
+    if (papel === 'sai') return { estilo: { transform: `scale(${1 - 0.5 * suave})`, opacity: 1 - suave } };
+    return { estilo: { transform: `scale(${1.6 - 0.6 * suave})`, opacity: suave } };
+  }
+  if (tipo === 'app_desfoque') {
+    if (papel === 'sai') return { estilo: { filter: `blur(${p * 30}px)` } };
+    return { estilo: { filter: `blur(${(1 - p) * 30}px)`, opacity: p } };
+  }
+  if (tipo === 'app_luz') {
+    const brilho = `brightness(${1 + pico * 2.5}) saturate(${1 - pico * 0.4})`;
+    if (papel === 'sai') return { estilo: { filter: brilho } };
+    return { estilo: { filter: brilho, opacity: p } };
+  }
+  if (tipo === 'app_glitch') {
+    const salto = pico * 6;
+    const t = `translate(${Math.sin(p * 71) * salto}%, ${Math.cos(p * 53) * salto * 0.4}%)`;
+    const f = `hue-rotate(${pico * 160}deg) saturate(${1 + pico * 2}) contrast(${1 + pico * 0.6})`;
+    if (papel === 'sai') return { estilo: { transform: t, filter: f } };
+    return { estilo: { transform: t, filter: f, opacity: p >= 0.5 ? 1 : 0 } };
+  }
+  if (tipo === 'app_tremer') {
+    const t = `translate(${Math.sin(p * 47) * pico * 4}%, ${Math.cos(p * 39) * pico * 3}%) rotate(${Math.sin(p * 31) * pico * 3}deg)`;
+    if (papel === 'sai') return { estilo: { transform: t } };
+    return { estilo: { transform: t, opacity: p } };
+  }
+  if (tipo === 'app_abrir') return { estilo: papel === 'entra' ? { clipPath: `inset(0 ${(1 - suave) * 50}% 0 ${(1 - suave) * 50}%)` } : {} };
+  if (tipo === 'app_losango') {
+    const r = suave * 100;
+    return { estilo: papel === 'entra' ? { clipPath: `polygon(50% ${50 - r}%, ${50 + r}% 50%, 50% ${50 + r}%, ${50 - r}% 50%)` } : {} };
+  }
+  if (tipo === 'app_persiana') {
+    const faixas = 8;
+    const partes = Array.from({ length: faixas }, (_, k) => {
+      const a = (k / faixas) * 100;
+      const b = a + (suave * 100) / faixas;
+      return `0% ${a}%, 100% ${a}%, 100% ${b}%, 0% ${b}%, 0% ${a}%`;
+    });
+    return { estilo: papel === 'entra' ? { clipPath: `polygon(evenodd, ${partes.join(', ')})` } : {} };
   }
   if (tipo === 'iris_round') return { estilo: papel === 'entra' ? { clipPath: `circle(${p * 75}% at 50% 50%)` } : {} };
   if (tipo === 'cross_zoom' || tipo === 'zoom_blur') {

@@ -625,11 +625,11 @@ ipcMain.handle('fontes:preparar', (_e, { id, familia }) => prepararFonte(id, fam
 
 // O que toca na timeline (clipes com som e áudios), com os tempos dela. Cada arquivo é transcrito uma vez e fica no projeto.
 ipcMain.handle('transcricao-timeline:ler', (_e, id) => lerTranscricaoDaTimeline(id));
-ipcMain.handle('transcricao-timeline:iniciar', async (_e, { id }) => {
+ipcMain.handle('transcricao-timeline:iniciar', async (_e, { id, so }) => {
   if (!whisperDisponivel()) throw new Error('O Whisper não está configurado: sem ele não dá para transcrever (veja Configurações).');
   transcricaoVideoAtual = new AbortController();
   try {
-    return await transcreverTimeline(id, (texto) => enviar('transcricao-timeline', { id, texto }), transcricaoVideoAtual.signal, comWhisper);
+    return await transcreverTimeline(id, (texto) => enviar('transcricao-timeline', { id, texto }), transcricaoVideoAtual.signal, comWhisper, so);
   } finally {
     transcricaoVideoAtual = null;
   }

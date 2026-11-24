@@ -257,7 +257,11 @@ function folgas(x) {
   return [x.duracao / 2, x.duracao / 2];
 }
 
-function transicaoOtio(x, fps) {
+// Transições só do app: no Filmcraft, a dele mais parecida; o tipo do app volta pelo metadata.
+const DO_APP = { app_girar: 'cross_zoom', app_zoom_in: 'cross_zoom', app_zoom_out: 'cross_zoom', app_desfoque: 'cross_dissolve', app_luz: 'dip_to_white', app_glitch: 'cross_dissolve', app_tremer: 'cross_dissolve', app_abrir: 'linear_wipe', app_losango: 'iris_round', app_persiana: 'linear_wipe' };
+
+function transicaoOtio(x0, fps) {
+  const x = DO_APP[x0.tipo] ? { ...x0, tipo: DO_APP[x0.tipo], filmcraft: undefined } : x0;
   const [antes, depois] = folgas(x);
   const raw = x.filmcraft?.effect?.effect === x.tipo ? x.filmcraft.effect : { effect: x.tipo, enabled: true, params: {} };
   return {
@@ -266,7 +270,7 @@ function transicaoOtio(x, fps) {
     transition_type: x.tipo === 'cross_dissolve' ? 'SMPTE_Dissolve' : 'Custom_Transition',
     in_offset: rt(antes, fps),
     out_offset: rt(depois, fps),
-    metadata: { filmcraft: { effect: raw, align: { centro: 'CenterAtCut', inicio: 'StartAtCut', fim: 'EndAtCut' }[x.alinhamento ?? 'centro'], reverse: x.filmcraft?.reverse ?? false } },
+    metadata: { filmcraft: { effect: raw, align: { centro: 'CenterAtCut', inicio: 'StartAtCut', fim: 'EndAtCut' }[x.alinhamento ?? 'centro'], reverse: x.filmcraft?.reverse ?? false }, ...(DO_APP[x0.tipo] ? { movai: { tipo: x0.tipo } } : {}) },
   };
 }
 
@@ -718,7 +722,10 @@ export function deOtio(otio, original, projeto, { novoId, mapaArquivos, base: pa
       const m = p.c.metadata?.filmcraft ?? {};
       const inn = segundos(p.c.in_offset);
       const out = segundos(p.c.out_offset);
-      const tipo = m.effect?.effect ?? (p.c.transition_type === 'SMPTE_Dissolve' ? 'cross_dissolve' : p.c.name);
+      const doApp = p.c.metadata?.movai?.tipo;
+      const tipoFc = m.effect?.effect ?? (p.c.transition_type === 'SMPTE_Dissolve' ? 'cross_dissolve' : p.c.name);
+      // Do app e não trocada lá: volta o tipo do app.
+      const tipo = doApp && DO_APP[doApp] === tipoFc ? doApp : tipoFc;
       const x = {
         id: antigas.find((a) => a.de === p.anterior?.id && a.para === p.para?.id)?.id ?? novoId('x'),
         tipo,
@@ -727,7 +734,8 @@ export function deOtio(otio, original, projeto, { novoId, mapaArquivos, base: pa
         ...(p.anterior ? { de: p.anterior.id } : {}),
         ...(p.para ? { para: p.para.id } : {}),
       };
-      if (m.effect && Object.keys(m.effect.params ?? {}).length) x.filmcraft = { effect: m.effect, reverse: m.reverse };
+      if (tipo === doApp) {}
+      else if (m.effect && Object.keys(m.effect.params ?? {}).length) x.filmcraft = { effect: m.effect, reverse: m.reverse };
       else if (m.reverse) x.filmcraft = { reverse: true };
       const anterior = antigas.find((a) => a.id === x.id);
       if (anterior?.direcao) x.direcao = anterior.direcao;

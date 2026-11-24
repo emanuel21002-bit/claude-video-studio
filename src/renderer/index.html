@@ -469,6 +469,7 @@
           <div id="dock-deposito" class="dock-deposito">
             <div id="painel-materiais" class="inspetor painel-dock"><div id="materiais" class="painel-aba"></div></div>
             <div id="painel-efeitos" class="inspetor painel-dock"><div id="efeitos" class="painel-aba"></div></div>
+            <div id="painel-transicoes" class="inspetor painel-dock"><div id="transicoes" class="painel-aba"></div></div>
             <div id="painel-propriedades" class="inspetor painel-dock"><div id="inspetor" class="painel-aba"></div></div>
             <div id="painel-origem" class="painel-dock"></div>
             <div id="painel-previa" class="painel-dock painel-previa">
@@ -558,6 +559,14 @@
     <dialog id="dlg-transcricao">
       <h2>Transcrição da timeline</h2>
       <div id="tt-corpo" class="tt-corpo" data-estado="rodando">
+        <div class="tt-alvo">
+          <label for="tt-alvo">Transcrever</label>
+          <select id="tt-alvo">
+            <option value="tudo">Tudo o que toca na timeline</option>
+            <option value="selecao">Só os clipes selecionados</option>
+          </select>
+          <button id="tt-iniciar" type="button">Transcrever</button>
+        </div>
         <div class="tt-rodando"><span id="tt-estado">Preparando…</span> <button id="tt-cancelar" type="button">Cancelar</button></div>
         <div class="tt-erro-box"><span id="tt-erro"></span></div>
         <div class="tt-resultado">

@@ -74,7 +74,7 @@ export function motivosSemFfmpeg(t) {
       if (temZoom(i) && (!capa || escalaMinima(i) < 0.999 || i.rotacao)) m.add('zoom fora do quadro cheio');
       if ((i.efeitos?.vinheta || i.efeitos?.corte) && !capa) m.add('vinheta ou recorte em imagem que não cobre o quadro');
     }
-    if (!ehAudio(tr)) for (const x of tr.transicoes ?? []) if (TRANSICOES_DE_FORA.has(x.tipo) || x.cor) m.add(`transição "${x.tipo}"`);
+    if (!ehAudio(tr)) for (const x of tr.transicoes ?? []) if (TRANSICOES_DE_FORA.has(x.tipo) || String(x.tipo).startsWith('app_') || x.cor || x.direcao) m.add(`transição "${x.tipo}"`);
   }
   return [...m];
 }
@@ -412,7 +412,9 @@ export function planoFfmpeg(t, { infos = {}, assets, camada = null, camadaFundo 
   }
   const ra = [];
   audios.forEach(({ i, rotuloEntrada, vol, vel, ini, total }, a) => {
-    const f = ['asetpts=PTS-STARTPTS'];
+    // Tudo em 48 kHz estéreo antes de contar o tempo pelas amostras (N/SR): o tempo de origem de alguns arquivos às vezes
+    // vinha inválido (AV_NOPTS), o atrim nunca via o fim e o som ficava sendo montado sem parar.
+    const f = ['aresample=48000', 'aformat=sample_rates=48000:channel_layouts=stereo', 'asetpts=N/SR/TB'];
     // atempo aceita de 0,5 a 2 por vez: velocidades fora disso viram uma corrente.
     let v = vel;
     while (v > 2) {
@@ -427,13 +429,13 @@ export function planoFfmpeg(t, { infos = {}, assets, camada = null, camadaFundo 
     f.push(`atrim=duration=${num(total)}`, `volume=${num(vol)}`);
     if (i.fadeIn > 0) f.push(`afade=t=in:st=0:d=${num(i.fadeIn)}`);
     if (i.fadeOut > 0) f.push(`afade=t=out:st=${num(Math.max(0, total - i.fadeOut))}:d=${num(i.fadeOut)}`);
-    f.push(`adelay=${Math.round(ini * 1000)}:all=1`, 'aresample=48000');
+    f.push(`adelay=${Math.round(ini * 1000)}:all=1`);
     grafo.push(`[${rotuloEntrada}]${f.join(',')}[a${a}]`);
     ra.push(`[a${a}]`);
   });
   let temAudio = false;
   if (ra.length) {
-    grafo.push(`${ra.join('')}amix=inputs=${ra.length}:normalize=0:duration=longest,apad,atrim=duration=${num(D)}[aout]`);
+    grafo.push(`${ra.join('')}amix=inputs=${ra.length}:normalize=0:duration=longest,apad=whole_dur=${num(D)},atrim=duration=${num(D)},asetpts=N/SR/TB[aout]`);
     temAudio = true;
   }
 

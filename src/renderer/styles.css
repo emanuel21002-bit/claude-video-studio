@@ -1121,3 +1121,107 @@ body.movendo-itens, body.movendo-itens * { cursor: grabbing !important; }
 /* Clipe desativado (V): fica na timeline, mais escuro, e não aparece na prévia nem no render */
 .tl-item.desativado { filter: brightness(0.4) saturate(0.4); }
 .tl-item.desativado.selecionado { filter: brightness(0.55) saturate(0.5); }
+
+/* Transcrição: escolher tudo ou só os clipes selecionados */
+.tt-corpo > .tt-alvo { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px; }
+.tt-alvo select { flex: 1; }
+
+/* ---------- Aba de transições (como a do CapCut) ---------- */
+#transicoes { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
+.tr-cats { display: flex; flex-wrap: wrap; gap: 4px; }
+.tr-cat { padding: 3px 10px; border-radius: 999px; font-size: 12px; background: transparent; border: 1px solid var(--borda); color: var(--fraco); }
+.tr-cat.ativa { background: var(--acento); border-color: var(--acento); color: #2a1710; font-weight: 600; }
+.tr-controles { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 6px 8px; border: 1px solid var(--borda); border-radius: 8px; }
+.tr-dur { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fraco); flex: 1 1 180px; }
+.tr-dur input { flex: 1; min-width: 60px; accent-color: var(--acento); }
+.tr-dur-valor { min-width: 38px; text-align: right; font-variant-numeric: tabular-nums; color: inherit; }
+.tr-dirs { display: flex; gap: 2px; }
+.tr-dir { width: 26px; height: 24px; padding: 0; font-size: 13px; }
+.tr-dir.ativa { background: var(--acento); border-color: var(--acento); color: #2a1710; }
+.tr-acoes { display: flex; gap: 6px; }
+.tr-acoes button { font-size: 12px; padding: 3px 10px; }
+.tr-dica { font-size: 11px; color: var(--fraco); }
+.tr-grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+.tr-card { display: flex; flex-direction: column; gap: 4px; cursor: pointer; border-radius: 8px; padding: 4px; border: 1px solid transparent; user-select: none; }
+.tr-card:hover { background: rgba(255, 255, 255, 0.04); }
+.tr-card.ativa { border-color: var(--acento); background: rgba(235, 154, 107, 0.1); }
+.tr-nome { font-size: 11px; text-align: center; color: var(--fraco); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tr-card.ativa .tr-nome { color: var(--acento-2); }
+
+.tr-mini { position: relative; aspect-ratio: 16 / 10; border-radius: 6px; overflow: hidden; background: #000; --dx: -1; --dy: 0; }
+.tr-mini.dir-dir { --dx: 1; --dy: 0; }
+.tr-mini.dir-cima { --dx: 0; --dy: -1; }
+.tr-mini.dir-baixo { --dx: 0; --dy: 1; }
+.tr-mini i { position: absolute; inset: 0; display: grid; place-items: center; font-style: normal; font-weight: 800; font-size: 20px; }
+.tr-a { background: linear-gradient(135deg, #3d6fd6, #36c6f0); color: #fff; }
+.tr-b { background: linear-gradient(135deg, #f08a3e, #ffd056); color: #3a1d08; clip-path: polygon(58% 0, 100% 0, 100% 100%, 42% 100%); }
+.tr-mini::after { content: ''; position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+/* Parado mostra A|B; com o mouse em cima (ou selecionada) toca a transição em loop. */
+.tr-card:not(:hover, .ativa) .tr-a { justify-items: start; padding-left: 20%; }
+.tr-card:not(:hover, .ativa) .tr-b { justify-items: end; padding-right: 20%; }
+.tr-card:hover .tr-b, .tr-card.ativa .tr-b { clip-path: none; animation: tb-fade 1.6s ease-in-out infinite; }
+.tr-card:hover .tr-a, .tr-card.ativa .tr-a { animation: none 1.6s ease-in-out infinite; }
+.tr-card:hover .tr-mini::after, .tr-card.ativa .tr-mini::after { animation: none 1.6s ease-in-out infinite; }
+
+@keyframes tb-fade { 0%, 20% { opacity: 0; } 70%, 100% { opacity: 1; } }
+@keyframes tb-meio { 0%, 47% { opacity: 0; } 53%, 100% { opacity: 1; } }
+@keyframes tb-pisca { 0%, 15% { opacity: 0; } 50% { opacity: 1; } 85%, 100% { opacity: 0; } }
+@keyframes tb-pisca-rapido { 0%, 40% { opacity: 0; } 50% { opacity: 1; } 65%, 100% { opacity: 0; } }
+
+.tr-card:is(:hover, .ativa) .tr-dip_to_black .tr-b, .tr-card:is(:hover, .ativa) .tr-dip_to_white .tr-b, .tr-card:is(:hover, .ativa) .tr-flash .tr-b { animation-name: tb-meio; }
+.tr-card:is(:hover, .ativa) .tr-dip_to_black::after { background: #000; animation-name: tb-pisca; }
+.tr-card:is(:hover, .ativa) .tr-dip_to_white::after { background: #fff; animation-name: tb-pisca; }
+.tr-card:is(:hover, .ativa) .tr-flash::after { background: #fff; animation-name: tb-pisca-rapido; }
+.tr-card:is(:hover, .ativa) .tr-app_luz::after { background: radial-gradient(circle, #fff 0%, #ffe6b0 45%, transparent 75%); animation-name: tb-pisca; }
+
+@keyframes tb-entra { 0%, 15% { transform: translate(calc(var(--dx) * -100%), calc(var(--dy) * -100%)); } 85%, 100% { transform: none; } }
+@keyframes tb-sai { 0%, 15% { transform: none; } 85%, 100% { transform: translate(calc(var(--dx) * 100%), calc(var(--dy) * 100%)); } }
+@keyframes tb-entra-chicote { 0%, 15% { transform: translate(calc(var(--dx) * -100%), calc(var(--dy) * -100%)); filter: blur(0); } 50% { filter: blur(6px); } 85%, 100% { transform: none; filter: blur(0); } }
+@keyframes tb-sai-chicote { 0%, 15% { transform: none; filter: blur(0); } 50% { filter: blur(6px); } 85%, 100% { transform: translate(calc(var(--dx) * 100%), calc(var(--dy) * 100%)); } }
+.tr-card:is(:hover, .ativa) .tr-push .tr-b, .tr-card:is(:hover, .ativa) .tr-slide .tr-b { animation-name: tb-entra; }
+.tr-card:is(:hover, .ativa) .tr-push .tr-a { animation-name: tb-sai; }
+.tr-card:is(:hover, .ativa) .tr-whip .tr-b { animation-name: tb-entra-chicote; }
+.tr-card:is(:hover, .ativa) .tr-whip .tr-a { animation-name: tb-sai-chicote; }
+
+@keyframes tb-girar { 0%, 15% { transform: rotate(-180deg) scale(0.4); opacity: 0; } 85%, 100% { transform: none; opacity: 1; } }
+@keyframes tb-zoom-a { 0%, 15% { transform: none; filter: blur(0); } 50% { filter: blur(4px); } 85%, 100% { transform: scale(2); filter: blur(0); } }
+@keyframes tb-zoom-b { 0%, 15% { transform: scale(2); opacity: 0; filter: blur(4px); } 85%, 100% { transform: none; opacity: 1; filter: blur(0); } }
+@keyframes tb-aproximar { 0%, 15% { transform: scale(0.5); opacity: 0; } 85%, 100% { transform: none; opacity: 1; } }
+@keyframes tb-afastar { 0%, 15% { transform: scale(1.6); opacity: 0; } 85%, 100% { transform: none; opacity: 1; } }
+@keyframes tb-desfoque { 0%, 15% { filter: blur(10px); opacity: 0; } 85%, 100% { filter: blur(0); opacity: 1; } }
+@keyframes tb-glitch { 0%, 44% { opacity: 0; transform: none; } 46% { opacity: 1; transform: translate(8%, -3%); filter: hue-rotate(120deg); } 50% { transform: translate(-6%, 2%); filter: hue-rotate(260deg) saturate(3); } 54% { transform: translate(4%, 0); filter: none; } 58%, 100% { opacity: 1; transform: none; } }
+@keyframes tb-tremer { 0%, 15% { opacity: 0; transform: none; } 30% { transform: translate(-5%, 3%) rotate(-2deg); } 45% { transform: translate(5%, -3%) rotate(2deg); } 60% { transform: translate(-3%, 2%); } 85%, 100% { opacity: 1; transform: none; } }
+.tr-card:is(:hover, .ativa) .tr-app_girar .tr-b { animation-name: tb-girar; }
+.tr-card:is(:hover, .ativa) .tr-cross_zoom .tr-a { animation-name: tb-zoom-a; }
+.tr-card:is(:hover, .ativa) .tr-cross_zoom .tr-b { animation-name: tb-zoom-b; }
+.tr-card:is(:hover, .ativa) .tr-app_zoom_in .tr-b { animation-name: tb-aproximar; }
+.tr-card:is(:hover, .ativa) .tr-app_zoom_out .tr-b { animation-name: tb-afastar; }
+.tr-card:is(:hover, .ativa) .tr-app_desfoque .tr-b { animation-name: tb-desfoque; }
+.tr-card:is(:hover, .ativa) .tr-app_glitch .tr-b { animation-name: tb-glitch; }
+.tr-card:is(:hover, .ativa) .tr-app_tremer .tr-b { animation-name: tb-tremer; }
+
+@keyframes tb-cortina-esq { 0%, 15% { clip-path: inset(0 0 0 100%); } 85%, 100% { clip-path: inset(0); } }
+@keyframes tb-cortina-dir { 0%, 15% { clip-path: inset(0 100% 0 0); } 85%, 100% { clip-path: inset(0); } }
+@keyframes tb-cortina-cima { 0%, 15% { clip-path: inset(100% 0 0 0); } 85%, 100% { clip-path: inset(0); } }
+@keyframes tb-cortina-baixo { 0%, 15% { clip-path: inset(0 0 100% 0); } 85%, 100% { clip-path: inset(0); } }
+@keyframes tb-iris { 0%, 15% { clip-path: circle(0% at 50% 50%); } 85%, 100% { clip-path: circle(75% at 50% 50%); } }
+@keyframes tb-abrir { 0%, 15% { clip-path: inset(0 50% 0 50%); } 85%, 100% { clip-path: inset(0); } }
+@keyframes tb-losango { 0%, 15% { clip-path: polygon(50% 50%, 50% 50%, 50% 50%, 50% 50%); } 85%, 100% { clip-path: polygon(50% -50%, 150% 50%, 50% 150%, -50% 50%); } }
+@property --tr-persiana { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
+@keyframes tb-persiana { 0%, 15% { --tr-persiana: 0%; } 85%, 100% { --tr-persiana: 12.5%; } }
+.tr-card:is(:hover, .ativa) .tr-linear_wipe.dir-esq .tr-b { animation-name: tb-cortina-esq; }
+.tr-card:is(:hover, .ativa) .tr-linear_wipe.dir-dir .tr-b { animation-name: tb-cortina-dir; }
+.tr-card:is(:hover, .ativa) .tr-linear_wipe.dir-cima .tr-b { animation-name: tb-cortina-cima; }
+.tr-card:is(:hover, .ativa) .tr-linear_wipe.dir-baixo .tr-b { animation-name: tb-cortina-baixo; }
+.tr-card:is(:hover, .ativa) .tr-iris_round .tr-b { animation-name: tb-iris; }
+.tr-card:is(:hover, .ativa) .tr-app_abrir .tr-b { animation-name: tb-abrir; }
+.tr-card:is(:hover, .ativa) .tr-app_losango .tr-b { animation-name: tb-losango; }
+.tr-card:is(:hover, .ativa) .tr-app_persiana .tr-b {
+  animation-name: tb-persiana;
+  -webkit-mask-image: repeating-linear-gradient(#000 0 var(--tr-persiana), transparent var(--tr-persiana) 12.5%);
+  mask-image: repeating-linear-gradient(#000 0 var(--tr-persiana), transparent var(--tr-persiana) 12.5%);
+}
+
+/* Marcadores na régua (M) */
+.tl-marcador { position: absolute; top: 0; width: 10px; height: 10px; margin-left: -5px; background: #6fd08c; clip-path: polygon(0 0, 100% 0, 100% 60%, 50% 100%, 0 60%); cursor: pointer; z-index: 2; }
+.tl-marcador:hover { background: #a6f0bd; }

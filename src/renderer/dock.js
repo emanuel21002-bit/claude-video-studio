@@ -10,6 +10,7 @@ const Dock = (() => {
     materiais: { titulo: 'Materiais', el: () => document.querySelector('#painel-materiais') },
     propriedades: { titulo: 'Propriedades', el: () => document.querySelector('#painel-propriedades') },
     efeitos: { titulo: 'Efeitos', el: () => document.querySelector('#painel-efeitos') },
+    transicoes: { titulo: 'Transições', el: () => document.querySelector('#painel-transicoes') },
     origem: { titulo: 'Origem', el: () => document.querySelector('#painel-origem') },
     previa: { titulo: 'Prévia', el: () => document.querySelector('#painel-previa') },
     claude: { titulo: 'Claude', el: () => document.querySelector('#painel-claude') },
@@ -17,7 +18,7 @@ const Dock = (() => {
   };
   // Materiais, propriedades e timeline só existem nos projetos com timeline; a origem só quando há algo aberto nela.
   const disponivel = (id) => {
-    if (id === 'materiais' || id === 'propriedades' || id === 'efeitos' || id === 'timeline') return !document.querySelector('#tl').hidden;
+    if (id === 'materiais' || id === 'propriedades' || id === 'efeitos' || id === 'transicoes' || id === 'timeline') return !document.querySelector('#tl').hidden;
     if (id === 'origem') {
       const f = document.querySelector('#fonte');
       return !!f && !f.hidden;
@@ -29,7 +30,7 @@ const Dock = (() => {
   const split = (dir, filhos, tamanhos) => ({ t: 'split', dir, filhos, tamanhos });
   const padrao = () =>
     split('row', [
-      split('col', [split('row', [grupo(['materiais', 'efeitos', 'propriedades']), grupo(['origem']), grupo(['previa'])], [22, 30, 48]), grupo(['timeline'])], [62, 38]),
+      split('col', [split('row', [grupo(['materiais', 'efeitos', 'transicoes', 'propriedades']), grupo(['origem']), grupo(['previa'])], [22, 30, 48]), grupo(['timeline'])], [62, 38]),
       grupo(['claude']),
     ], [76, 24]);
 

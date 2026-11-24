@@ -19,7 +19,16 @@ const TL = (() => {
   const ANIMACOES = ['', 'fade', 'slide-cima', 'slide-baixo', 'slide-esq', 'slide-dir', 'zoom', 'pop'];
   const MESCLAGENS = ['', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'];
   const CURVAS = [['linear', 'Linear'], ['bezier', 'Suave'], ['easeOut', 'Sair suave'], ['easeIn', 'Chegar suave'], ['hold', 'Segurar']];
-  const TRANSICOES = [['', 'Nenhuma'], ['cross_dissolve', 'Dissolver'], ['dip_to_black', 'Fade pelo preto'], ['dip_to_white', 'Fade pelo branco'], ['flash', 'Flash'], ['push', 'Empurrar'], ['whip', 'Chicote'], ['slide', 'Deslizar'], ['linear_wipe', 'Cortina'], ['iris_round', 'Íris'], ['cross_zoom', 'Zoom']];
+  // [id, nome, categoria, tem direção]. Os "app_" só existem aqui (no Filmcraft vão como a mais parecida dele).
+  const CATALOGO_TRANSICOES = [
+    ['cross_dissolve', 'Dissolver', 'Básicas'], ['dip_to_black', 'Fade pelo preto', 'Básicas'], ['dip_to_white', 'Fade pelo branco', 'Básicas'], ['app_desfoque', 'Desfoque', 'Básicas'],
+    ['push', 'Empurrar', 'Movimento', true], ['slide', 'Deslizar', 'Movimento', true], ['whip', 'Chicote', 'Movimento', true], ['app_girar', 'Girar', 'Movimento'],
+    ['cross_zoom', 'Zoom', 'Zoom'], ['app_zoom_in', 'Aproximar', 'Zoom'], ['app_zoom_out', 'Afastar', 'Zoom'],
+    ['flash', 'Flash', 'Luz e efeitos'], ['app_luz', 'Clarão', 'Luz e efeitos'], ['app_glitch', 'Glitch', 'Luz e efeitos'], ['app_tremer', 'Tremer', 'Luz e efeitos'],
+    ['linear_wipe', 'Cortina', 'Formas', true], ['iris_round', 'Íris', 'Formas'], ['app_abrir', 'Abrir ao meio', 'Formas'], ['app_losango', 'Losango', 'Formas'], ['app_persiana', 'Persiana', 'Formas'],
+  ];
+  const TRANSICOES = [['', 'Nenhuma'], ...CATALOGO_TRANSICOES.map(([id, n]) => [id, n])];
+  const temDirecao = (tipo) => !!CATALOGO_TRANSICOES.find((x) => x[0] === tipo)?.[3];
   const MARGEM_ENCOSTO = 0.05;
   const EXT_ROTEIRO = /\.(pdf|docx|odt|txt|md|rtf)$/i;
   const FORMATOS = { '9:16': [1080, 1920], '16:9': [1920, 1080], '1:1': [1080, 1080], '4:5': [1080, 1350] };
@@ -378,6 +387,26 @@ const TL = (() => {
       const min = Math.floor(t / 60);
       m.textContent = `${min}:${String(Math.floor(t % 60)).padStart(2, '0')}${passo < 1 && t % 1 ? '.5' : ''}`;
       regua.append(m);
+    }
+    // Marcadores (M), como no Premiere: clique vai até ele, botão direito apaga.
+    for (const mk of s.t.marcadores ?? []) {
+      const el = document.createElement('span');
+      el.className = 'tl-marcador';
+      el.style.left = mk.tempo * s.pps + 'px';
+      el.title = `Marcador em ${formatarTempo(mk.tempo)} — clique para ir, botão direito para apagar`;
+      el.addEventListener('pointerdown', (e) => {
+        e.stopPropagation();
+        irPara(mk.tempo);
+      });
+      el.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        alterar(() => {
+          s.t.marcadores = s.t.marcadores.filter((x) => x.id !== mk.id);
+          if (!s.t.marcadores.length) delete s.t.marcadores;
+        });
+      });
+      regua.append(el);
     }
   }
 
@@ -1531,6 +1560,231 @@ const TL = (() => {
     });
   }
 
+  // ---------- como no Premiere ----------
+
+  // Pontos de edição (começo e fim de cada clipe, em todas as faixas): ↑ e ↓ andam entre eles.
+  function irParaPonto(sentido) {
+    const pontos = [...new Set([0, ...todosItens().flatMap((i) => [i.inicio, i.inicio + i.duracao]).map(arredondar)])].sort((a, b) => a - b);
+    const alvo = sentido > 0 ? pontos.find((p) => p > s.tempo + 0.001) : [...pontos].reverse().find((p) => p < s.tempo - 0.001);
+    if (alvo != null) irPara(alvo);
+  }
+
+  function adicionarMarcador() {
+    const t = noQuadro(s.tempo);
+    if ((s.t.marcadores ?? []).some((m) => Math.abs(m.tempo - t) < 0.001)) return;
+    alterar(() => {
+      (s.t.marcadores ??= []).push({ id: novoId(), tempo: t });
+      s.t.marcadores.sort((a, b) => a.tempo - b.tempo);
+    });
+  }
+
+  function irParaMarcador(sentido) {
+    const tempos = (s.t.marcadores ?? []).map((m) => m.tempo);
+    const alvo = sentido > 0 ? tempos.find((p) => p > s.tempo + 0.001) : [...tempos].reverse().find((p) => p < s.tempo - 0.001);
+    if (alvo != null) irPara(alvo);
+  }
+
+  // Alt+setas: move os clipes selecionados um quadro (Shift: cinco).
+  function empurrarSelecao(quadros) {
+    const alvos = todosItens().filter((i) => s.selecao.has(i.id));
+    if (!alvos.length) return;
+    const d = quadros * umQuadro();
+    if (alvos.some((i) => i.inicio + d < -0.0001)) return;
+    alterar(() => alvos.forEach((i) => (i.inicio = arredondar(i.inicio + d))));
+  }
+
+  // Q e W: corta do começo do clipe até o cursor (Q) ou do cursor até o fim (W) e fecha o vão na faixa.
+  // Vale para os selecionados sob o cursor; sem eles, para tudo o que está sob o cursor.
+  function apararNoCursor(lado) {
+    const c = s.tempo;
+    const noCursor = (i) => i.inicio < c - 0.001 && i.inicio + i.duracao > c + 0.001;
+    const sel = todosItens().filter((i) => s.selecao.has(i.id) && noCursor(i));
+    const alvos = sel.length ? sel : todosItens().filter(noCursor);
+    if (!alvos.length) return;
+    let volta = null;
+    alterar(() => {
+      for (const item of alvos) {
+        const tr = trilhaDe(item.id);
+        if (!dividirItem(item, tr, c)) continue;
+        const novo = tr.itens[tr.itens.indexOf(item) + 1];
+        const sai = lado === 'inicio' ? item : novo;
+        const corte = sai.duracao;
+        const fim = sai.inicio + sai.duracao;
+        if (lado === 'inicio') volta = Math.min(volta ?? Infinity, item.inicio);
+        tr.itens.splice(tr.itens.indexOf(sai), 1);
+        tr.transicoes = (tr.transicoes ?? []).filter((x) => x.de !== sai.id && x.para !== sai.id);
+        if (!tr.transicoes.length) delete tr.transicoes;
+        for (const i of tr.itens) if (i.inicio >= fim - 0.001) i.inicio = arredondar(i.inicio - corte);
+      }
+      s.sel = null;
+      s.selecao = new Set();
+    });
+    if (volta != null) irPara(volta);
+  }
+
+  // Ctrl+Shift+K: divide todas as faixas no cursor, com ou sem seleção.
+  function dividirTudo() {
+    const c = s.tempo;
+    const alvos = s.t.trilhas.flatMap((tr) => tr.itens.filter((i) => i.inicio < c && i.inicio + i.duracao > c).map((i) => [i, tr]));
+    if (alvos.length) alterar(() => alvos.forEach(([i, tr]) => dividirItem(i, tr, c)));
+  }
+
+  // ---------- aba de transições (como a do CapCut) ----------
+
+  const CATEGORIAS_TRANSICAO = ['Todas', ...new Set(CATALOGO_TRANSICOES.map((x) => x[2]))];
+  const SETAS = [['esq', '←', 'Para a esquerda'], ['dir', '→', 'Para a direita'], ['cima', '↑', 'Para cima'], ['baixo', '↓', 'Para baixo']];
+  const nomeTransicao = (tipo) => TRANSICOES.find(([id]) => id === tipo)?.[1] ?? tipo;
+
+  // Os selecionados; sem seleção, os clipes que começam no corte mais perto do cursor.
+  function alvosDeTransicao() {
+    const visuais = todosItens().filter((i) => !ehAudio(trilhaDe(i.id)) && i.tipo !== 'ajuste');
+    const sel = visuais.filter((i) => s.selecao.has(i.id));
+    if (sel.length) return sel.map((i) => i.id);
+    const tol = Math.max(0.25, 12 / s.pps);
+    return visuais.filter((i) => i.inicio > 0.001 && Math.abs(i.inicio - s.tempo) <= tol).map((i) => i.id);
+  }
+
+  // Transições de entrada dos selecionados (para mudar a duração ou a direção delas).
+  function transicoesDaSelecao() {
+    return [...s.selecao].map((id) => [id, trilhaDe(id)?.transicoes?.find((x) => x.para === id)]).filter(([, x]) => x);
+  }
+
+  function aplicarTransicaoDaAba(tipo) {
+    if (s.bloqueada) return;
+    const ids = alvosDeTransicao();
+    if (!ids.length) return avisar('Selecione os clipes, ou ponha o cursor num corte entre dois clipes.');
+    aplicarTransicaoEntrada(ids, tipo);
+  }
+
+  function aplicarTransicaoATodos(tipo) {
+    if (s.bloqueada || !tipo) return;
+    const ids = [];
+    for (const tr of s.t.trilhas) {
+      if (ehAudio(tr) || tr.oculta) continue;
+      for (const i of tr.itens) {
+        if (!['video', 'imagem', 'bloco'].includes(i.tipo)) continue;
+        const { antes } = vizinhos(i, tr);
+        if (antes && Math.abs(antes.inicio + antes.duracao - i.inicio) <= MARGEM_ENCOSTO) ids.push(i.id);
+      }
+    }
+    if (!ids.length) return avisar('Nenhum corte entre clipes encostados.');
+    aplicarTransicaoEntrada(ids, tipo);
+    avisar(`${nomeTransicao(tipo)} em ${ids.length} corte${ids.length === 1 ? '' : 's'}.`);
+  }
+
+  // Mudar duração ou direção na aba ajusta as transições já postas nos selecionados.
+  function reaplicarNaSelecao() {
+    const lista = transicoesDaSelecao();
+    if (!lista.length || s.bloqueada) return;
+    const porTipo = new Map();
+    for (const [id, x] of lista) porTipo.set(x.tipo, [...(porTipo.get(x.tipo) ?? []), id]);
+    for (const [tipo, ids] of porTipo) aplicarTransicaoEntrada(ids, tipo);
+  }
+
+  function desenharTransicoes() {
+    const box = qs('#transicoes');
+    if (!box || !s.t) return;
+    const lista = transicoesDaSelecao();
+    const atual = lista.length === s.selecao.size && lista.length ? lista[0][1] : null;
+    s.trCategoria ??= 'Todas';
+    s.trDuracao ??= 0.5;
+    s.trDirecao ??= 'esq';
+    // Ao selecionar um clipe com transição, a aba mostra a duração e a direção dela.
+    if (atual && s.trVista !== atual.id) {
+      s.trDuracao = atual.duracao;
+      if (atual.direcao) s.trDirecao = atual.direcao;
+    }
+    s.trVista = atual?.id ?? null;
+    const novo = (tag, classe, texto) => {
+      const e = document.createElement(tag);
+      if (classe) e.className = classe;
+      if (texto != null) e.textContent = texto;
+      return e;
+    };
+    box.innerHTML = '';
+
+    const cats = novo('div', 'tr-cats');
+    for (const c of CATEGORIAS_TRANSICAO) {
+      const b = novo('button', 'tr-cat' + (c === s.trCategoria ? ' ativa' : ''), c);
+      b.type = 'button';
+      b.onclick = () => {
+        s.trCategoria = c;
+        desenharTransicoes();
+      };
+      cats.append(b);
+    }
+
+    const ctl = novo('div', 'tr-controles');
+    const linhaDur = novo('label', 'tr-dur');
+    linhaDur.append(novo('span', '', 'Duração'));
+    const faixa = document.createElement('input');
+    faixa.type = 'range';
+    faixa.min = 0.1;
+    faixa.max = 3;
+    faixa.step = 0.1;
+    faixa.value = s.trDuracao;
+    const valor = novo('span', 'tr-dur-valor', `${Number(s.trDuracao).toFixed(1).replace('.', ',')} s`);
+    faixa.oninput = () => {
+      s.trDuracao = Number(faixa.value);
+      valor.textContent = `${s.trDuracao.toFixed(1).replace('.', ',')} s`;
+    };
+    faixa.onchange = () => reaplicarNaSelecao();
+    linhaDur.append(faixa, valor);
+    const dirs = novo('div', 'tr-dirs');
+    dirs.title = 'Direção de Empurrar, Deslizar, Chicote e Cortina';
+    for (const [id, seta, dica] of SETAS) {
+      const b = novo('button', 'tr-dir' + (s.trDirecao === id ? ' ativa' : ''), seta);
+      b.type = 'button';
+      b.title = dica;
+      b.onclick = () => {
+        s.trDirecao = id;
+        reaplicarNaSelecao();
+        desenharTransicoes();
+      };
+      dirs.append(b);
+    }
+    const acoes = novo('div', 'tr-acoes');
+    const todos = novo('button', '', 'Aplicar a todos');
+    todos.type = 'button';
+    const base = atual?.tipo ?? s.trUltima ?? 'cross_dissolve';
+    todos.title = `Põe "${nomeTransicao(base)}" em todos os cortes entre clipes encostados`;
+    todos.onclick = () => aplicarTransicaoATodos(base);
+    const tirar = novo('button', '', 'Remover');
+    tirar.type = 'button';
+    tirar.title = 'Tira a transição de entrada dos clipes selecionados (ou do corte sob o cursor)';
+    tirar.disabled = !lista.length && !alvosDeTransicao().length;
+    tirar.onclick = () => aplicarTransicaoEntrada(alvosDeTransicao(), '');
+    acoes.append(todos, tirar);
+    ctl.append(linhaDur, dirs, acoes);
+
+    const dica = novo('div', 'tr-dica', s.selecao.size
+      ? `Clique para pôr na entrada ${s.selecao.size === 1 ? 'do clipe selecionado' : `dos ${s.selecao.size} clipes selecionados`}.`
+      : 'Clique para pôr no corte sob o cursor, ou arraste até o começo de um clipe.');
+
+    const grade = novo('div', 'tr-grade');
+    for (const [id, nome, cat] of CATALOGO_TRANSICOES) {
+      if (s.trCategoria !== 'Todas' && cat !== s.trCategoria) continue;
+      const card = novo('div', 'tr-card' + (lista.some(([, x]) => x.tipo === id) ? ' ativa' : ''));
+      card.draggable = true;
+      card.title = `${nome} — clique para aplicar, arraste até um clipe`;
+      const mini = novo('div', `tr-mini tr-${id} dir-${s.trDirecao}`);
+      mini.append(novo('i', 'tr-a', 'A'), novo('i', 'tr-b', 'B'));
+      card.append(mini, novo('span', 'tr-nome', nome));
+      card.onclick = () => aplicarTransicaoDaAba(id);
+      card.addEventListener('dragstart', (e) => {
+        s.arrastandoEfeito = { tipo: 'transicao', id };
+        e.dataTransfer.setData('text/plain', nome);
+        e.dataTransfer.effectAllowed = 'copy';
+      });
+      card.addEventListener('dragend', () => {
+        s.arrastandoEfeito = null;
+        limparAlvosDeSoltar();
+      });
+      grade.append(card);
+    }
+    box.append(cats, ctl, dica, grade);
+  }
+
   function adicionarTexto() {
     const livres = s.t.trilhas.filter((tr) => !ehAudio(tr) && !tr.itens.some((i) => ['video', 'imagem', 'legenda'].includes(i.tipo)));
     const item = {
@@ -2289,11 +2543,22 @@ const TL = (() => {
     ['selecionarTudo', 'Editar', 'Selecionar tudo', ['Ctrl+A'], () => selecionarVarios(todosItens().map((i) => i.id))],
     ['excluir', 'Editar', 'Excluir', ['Delete', 'Backspace'], () => excluir(false)],
     ['excluirFechar', 'Editar', 'Excluir e fechar o vão', ['Shift+Delete', 'Shift+Backspace'], () => excluir(true)],
-    ['dividir', 'Timeline', 'Dividir no cursor', ['S'], () => dividir()],
+    ['dividir', 'Timeline', 'Dividir no cursor', ['S', 'Ctrl+K'], () => dividir()],
+    ['dividirTudo', 'Timeline', 'Dividir todas as faixas no cursor', ['Ctrl+Shift+K'], () => dividirTudo()],
+    ['apararInicio', 'Timeline', 'Cortar do começo do clipe até o cursor e fechar o vão', ['Q'], () => apararNoCursor('inicio')],
+    ['apararFim', 'Timeline', 'Cortar do cursor até o fim do clipe e fechar o vão', ['W'], () => apararNoCursor('fim')],
+    ['transicaoPadrao', 'Timeline', 'Transição padrão (Dissolver) nos selecionados ou no corte', ['Ctrl+D'], () => aplicarTransicaoDaAba('cross_dissolve')],
+    ['marcador', 'Timeline', 'Adicionar marcador no cursor', ['M'], () => adicionarMarcador()],
+    ['empurrarEsq', 'Timeline', 'Mover os selecionados um quadro para trás', ['Alt+ArrowLeft'], () => empurrarSelecao(-1)],
+    ['empurrarDir', 'Timeline', 'Mover os selecionados um quadro para a frente', ['Alt+ArrowRight'], () => empurrarSelecao(1)],
+    ['empurrarEsq5', 'Timeline', 'Mover os selecionados cinco quadros para trás', ['Alt+Shift+ArrowLeft'], () => empurrarSelecao(-5)],
+    ['empurrarDir5', 'Timeline', 'Mover os selecionados cinco quadros para a frente', ['Alt+Shift+ArrowRight'], () => empurrarSelecao(5)],
+    ['zoomMais', 'Timeline', 'Aproximar a timeline', ['='], () => aplicarZoom(s.pps * 1.25)],
+    ['zoomMenos', 'Timeline', 'Afastar a timeline', ['-'], () => aplicarZoom(s.pps / 1.25)],
     ['camadaAjuste', 'Timeline', 'Nova camada de ajuste no cursor', [], () => novaCamadaAjuste()],
     ['texto', 'Timeline', 'Adicionar texto', [], () => adicionarTexto()],
     ['ima', 'Timeline', 'Ligar ou desligar o ímã', [], () => qs('#tl-ima').click()],
-    ['ajustarNaTela', 'Timeline', 'Ajustar a timeline na tela', [], () => ajustarNaTela()],
+    ['ajustarNaTela', 'Timeline', 'Ajustar a timeline na tela', ['\\'], () => ajustarNaTela()],
     ['tocar', 'Reprodução', 'Tocar / pausar', ['Space'], () => tocarOuPausar()],
     ['quadroAntes', 'Reprodução', 'Um quadro para trás', ['ArrowLeft'], () => irPara(s.tempo - 1 / fps())],
     ['quadroDepois', 'Reprodução', 'Um quadro para a frente', ['ArrowRight'], () => irPara(s.tempo + 1 / fps())],
@@ -2301,6 +2566,10 @@ const TL = (() => {
     ['segundoDepois', 'Reprodução', 'Um segundo para a frente', ['Shift+ArrowRight'], () => irPara(s.tempo + 1)],
     ['inicio', 'Reprodução', 'Ir para o início', ['Home'], () => irPara(0)],
     ['fim', 'Reprodução', 'Ir para o fim', ['End'], () => irPara(duracaoTotal())],
+    ['pontoAntes', 'Reprodução', 'Ponto de edição anterior', ['ArrowUp'], () => irParaPonto(-1)],
+    ['pontoDepois', 'Reprodução', 'Próximo ponto de edição', ['ArrowDown'], () => irParaPonto(1)],
+    ['marcadorAntes', 'Reprodução', 'Marcador anterior', ['Ctrl+Shift+M'], () => irParaMarcador(-1)],
+    ['marcadorDepois', 'Reprodução', 'Próximo marcador', ['Shift+M'], () => irParaMarcador(1)],
     ['desativar', 'Timeline', 'Desativar / ativar os clipes selecionados', ['V'], () => alternarDesativados()],
     ['ferramenta.selecao', 'Ferramentas', 'Selecionar', ['A'], () => escolherFerramenta('selecao')],
     ['ferramenta.ripple', 'Ferramentas', 'Ripple', ['B'], () => escolherFerramenta('ripple')],
@@ -2919,7 +3188,7 @@ const TL = (() => {
     }
     qs('#tt-legendas').disabled = !r.palavras.length;
     qs('#tt-copiar').disabled = !r.segmentos.length;
-    qs('#tt-resumo').textContent = `${r.segmentos.length} trechos · ${r.palavras.length} palavras · ${r.arquivos.length} arquivo${r.arquivos.length === 1 ? '' : 's'} com som`;
+    qs('#tt-resumo').textContent = (r.so ? `Só ${r.so.length} clipe${r.so.length === 1 ? '' : 's'} · ` : '') + `${r.segmentos.length} trechos · ${r.palavras.length} palavras · ${r.arquivos.length} arquivo${r.arquivos.length === 1 ? '' : 's'} com som`;
     s.transcricaoTimeline = r;
     qs('#tt-corpo').dataset.estado = 'pronto';
   }
@@ -2928,19 +3197,22 @@ const TL = (() => {
     const dlg = qs('#dlg-transcricao');
     if (!dlg.open) dlg.showModal();
     const id = s.id;
+    // Um áudio, um grupo (os clipes selecionados) ou tudo o que toca.
+    const so = qs('#tt-alvo').value === 'selecao' ? [...s.ttSelecao].sort() : null;
     const salva = refazer ? null : await api.lerTranscricaoTimeline(id);
-    if (salva && !salva.desatualizada) return desenharTranscricaoTimeline(salva);
+    const mesmoAlvo = salva && JSON.stringify(salva.so ?? null) === JSON.stringify(so);
+    if (salva && mesmoAlvo && !salva.desatualizada) return desenharTranscricaoTimeline(salva);
     if (transcrevendoTimeline) return;
     transcrevendoTimeline = true;
     qs('#tt-estado').textContent = 'Preparando…';
     qs('#tt-corpo').dataset.estado = 'rodando';
     try {
-      desenharTranscricaoTimeline(await api.transcreverTimeline({ id }));
+      desenharTranscricaoTimeline(await api.transcreverTimeline({ id, so }));
       qs('#tt-corpo').dataset.estado = 'pronto';
     } catch (e) {
       const msg = String(e.message ?? e).split(String.fromCharCode(10))[0].replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
-      if (salva) desenharTranscricaoTimeline(salva);
-      qs('#tt-corpo').dataset.estado = salva ? 'pronto' : 'erro';
+      if (salva && mesmoAlvo) desenharTranscricaoTimeline(salva);
+      qs('#tt-corpo').dataset.estado = salva && mesmoAlvo ? 'pronto' : 'erro';
       qs('#tt-erro').textContent = msg;
     }
     transcrevendoTimeline = false;
@@ -2958,8 +3230,16 @@ const TL = (() => {
       qs('#tt-resumo').textContent = '';
       qs('#tt-aviso').textContent = '';
       qs('#tt-erro').textContent = '';
+      // Com clipes selecionados, já abre transcrevendo só eles (um áudio ou um grupo).
+      s.ttSelecao = new Set(s.selecao);
+      const alvo = qs('#tt-alvo');
+      alvo.options[1].disabled = !s.ttSelecao.size;
+      alvo.options[1].textContent = s.ttSelecao.size ? `Só os clipes selecionados (${s.ttSelecao.size})` : 'Só os clipes selecionados (selecione antes de abrir)';
+      alvo.value = s.ttSelecao.size ? 'selecao' : 'tudo';
       abrirTranscricaoTimeline(false);
     };
+    qs('#tt-iniciar').onclick = () => abrirTranscricaoTimeline(false);
+    qs('#tt-alvo').onchange = () => abrirTranscricaoTimeline(false);
     qs('#tt-refazer').onclick = () => abrirTranscricaoTimeline(true);
     qs('#tt-cancelar').onclick = () => api.cancelarTranscricaoVideo();
     qs('#tt-fechar').onclick = () => qs('#dlg-transcricao').close();
@@ -3352,6 +3632,7 @@ const TL = (() => {
   }
 
   function desenharInspetor() {
+    desenharTransicoes();
     const box = qs('#inspetor');
     // Não reconstrói enquanto o usuário digita num campo do próprio inspetor.
     if (box.contains(document.activeElement) && document.activeElement.tagName !== 'BUTTON' && box.dataset.item === String(s.sel)) return;
@@ -3483,7 +3764,8 @@ const TL = (() => {
   }
 
   // Transição de entrada: a mesma regra do inspetor (encosta no anterior, se houver; alinha onde houver sobra).
-  function aplicarTransicaoEntrada(ids, tipo, duracao = 0.5) {
+  function aplicarTransicaoEntrada(ids, tipo, duracao = s.trDuracao ?? 0.5, direcao = s.trDirecao ?? 'esq') {
+    if (tipo) s.trUltima = tipo;
     const alvos = itensAlvo(ids).filter((i) => !ehAudio(trilhaDe(i.id)) && i.tipo !== 'ajuste');
     if (!alvos.length) return;
     let seco = false;
@@ -3497,7 +3779,7 @@ const TL = (() => {
           const d = Math.max(umQuadro(), duracao);
           const lugar = alinhamentoPossivel(antes, item, d);
           if (!lugar) seco = true;
-          trilha.transicoes.push({ id: atual?.id ?? novoId(), tipo, duracao: arredondar(d), alinhamento: lugar ?? 'centro', ...(antes ? { de: antes.id } : {}), para: item.id });
+          trilha.transicoes.push({ id: atual?.id ?? novoId(), tipo, duracao: arredondar(d), alinhamento: lugar ?? 'centro', ...(temDirecao(tipo) ? { direcao } : {}), ...(antes ? { de: antes.id } : {}), para: item.id });
         }
         if (!trilha.transicoes.length) delete trilha.transicoes;
       }
@@ -3887,7 +4169,7 @@ const TL = (() => {
   // Como no Filmcraft: o painel clicado por último fica marcado e recebe os atalhos. A timeline recebe todos; o
   // player, só os de reprodução; nos outros painéis (materiais, propriedades, efeitos, Claude) só valem desfazer,
   // refazer e a lista de atalhos, para Delete, Ctrl+C, setas e letras não mexerem na timeline sem querer.
-  const AREAS = [['#tl', 'timeline'], ['#painel-previa', 'player'], ['#painel-materiais', 'materiais'], ['#painel-propriedades', 'propriedades'], ['#painel-efeitos', 'efeitos'], ['#painel-origem', 'origem'], ['#painel-claude', 'claude']];
+  const AREAS = [['#tl', 'timeline'], ['#painel-previa', 'player'], ['#painel-materiais', 'materiais'], ['#painel-propriedades', 'propriedades'], ['#painel-efeitos', 'efeitos'], ['#painel-transicoes', 'transicoes'], ['#painel-origem', 'origem'], ['#painel-claude', 'claude']];
   const GLOBAIS = new Set(['desfazer', 'refazer', 'atalhos']);
   const valeNaArea = (acao) => GLOBAIS.has(acao[0]) || s.area === 'timeline' || (s.area === 'player' && acao[1] === 'Reprodução');
 

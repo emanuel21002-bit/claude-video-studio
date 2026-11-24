@@ -33,11 +33,17 @@ export function lerTranscricaoDaTimeline(id) {
 
 // Transcreve o áudio de tudo o que toca na timeline, com os tempos da timeline. Cada arquivo é transcrito uma vez
 // (fica guardado no projeto); refazer depois de mexer nos cortes só remapeia os tempos. `fila` serializa o Whisper.
-export async function transcreverTimeline(id, onLinha, sinal, fila = (fn) => fn()) {
+// `so`: ids dos clipes a transcrever (um áudio ou um grupo); sem ele, tudo o que toca.
+export async function transcreverTimeline(id, onLinha, sinal, fila = (fn) => fn(), so = null) {
   const projeto = lerProjeto(id);
   const t = semDesativados(lerTimeline(id));
-  const itens = itensComSom(t, projeto);
-  if (!itens.length) throw new Error('Nenhum clipe com som nesta timeline: os vídeos estão sem volume ou mudos e não há áudios.');
+  const escolhidos = so?.length ? new Set(so) : null;
+  const itens = itensComSom(t, projeto).filter((i) => !escolhidos || escolhidos.has(i.id));
+  if (!itens.length) {
+    throw new Error(escolhidos
+      ? 'Nenhum dos clipes selecionados tem som: selecione áudios ou vídeos com volume.'
+      : 'Nenhum clipe com som nesta timeline: os vídeos estão sem volume ou mudos e não há áudios.');
+  }
   const duracoes = new Map([...projeto.materiais, ...(projeto.narracoes ?? [])].map((m) => [m.arquivo, m.duracao]));
   const arquivos = [...new Set(itens.map((i) => i.arquivo))];
   const transcricoes = {};
@@ -57,6 +63,7 @@ export async function transcreverTimeline(id, onLinha, sinal, fila = (fn) => fn(
     geradoEm: new Date().toISOString(),
     timelineMtime: fs.statSync(path.join(caminhoTimeline(id), 'timeline.json')).mtimeMs,
     arquivos,
+    so: escolhidos ? [...escolhidos].sort() : null,
     segmentos,
     palavras,
   };
