@@ -378,7 +378,7 @@ function Caixa({ item, durFrames, atraso = 0, ajustes = [], children }: { item: 
     rotacao ? `rotate(${rotacao}deg)` : '',
   ].join(' ');
   return (
-    <AbsoluteFill style={{ opacity: parametro(item, 'opacidade', t, 1) * a.opacidade, transform, alignItems: 'center', justifyContent: 'center' }}>
+    <AbsoluteFill data-item={item.id} style={{ opacity: parametro(item, 'opacidade', t, 1) * a.opacidade, transform, alignItems: 'center', justifyContent: 'center' }}>
       <Efeitos item={item} t={t}>
         {ajustes.reduce((dentro: React.ReactNode, aj: any) => {
           const tAj = item.inicio + t - aj.inicio;
@@ -616,7 +616,7 @@ export const TimelineVideo: React.FC<{ timeline: any; baseAssets?: string; proxi
     return timeline.trilhas.map((_: any, k: number) => visiveis.slice(k + 1).flat());
   }, [timeline]);
   return (
-    <AbsoluteFill style={{ backgroundColor: timeline.fundo ?? '#000' }}>
+    <AbsoluteFill data-comp-raiz="" style={{ backgroundColor: timeline.fundo ?? '#000' }}>
       {timeline.trilhas.map((trilha: any, k: number) =>
         trilha.oculta ? null : <Componente key={trilha.id} trilha={trilha} fps={fps} url={url} proxies={proxies} ajustes={trilha.tipo === 'audio' ? undefined : ajustesAcima[k]} />,
       )}

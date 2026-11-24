@@ -248,6 +248,7 @@ const TL = (() => {
     requestAnimationFrame(() => {
       previaAgendada = false;
       if (s.t) s.previa?.ref.current?.atualizar(clonar(s.t));
+      agendarCaixa();
     });
   }
 
@@ -307,9 +308,224 @@ const TL = (() => {
       },
       aoTocar: (t) => {
         s.tocando = t;
+        agendarCaixa();
         qs('#tl-tocar').textContent = t ? '❚❚' : '▶';
       },
     });
+  }
+
+  // ---------- caixa de transformar na prévia (como o Monitor de programa do Premiere) ----------
+  // Clique na imagem seleciona o clipe de cima naquele ponto; arrastar move; os cantos mudam a escala; a alça de cima
+  // gira. Com Shift, a rotação vai de 15 em 15 graus. Perto do centro, a posição gruda nele (guias).
+
+  const TRANSFORMAVEIS = new Set(['video', 'imagem', 'texto', 'legenda', 'bloco']);
+  let caixaAgendada = false;
+  let arrasteCaixa = null;
+
+  function agendarCaixa() {
+    if (caixaAgendada) return;
+    caixaAgendada = true;
+    // Dois quadros: o React da prévia redesenha depois da mudança.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      caixaAgendada = false;
+      desenharCaixa();
+    }));
+  }
+
+  function valorAtual(item, caminho, padrao) {
+    const kfs = item.keyframes?.[caminho];
+    if (kfs?.length) return valorEm(kfs, tempoNoItem(item));
+    return lerCampo(item, caminho) ?? padrao;
+  }
+
+  function zoomAtual(item) {
+    if (!item.zoom) return 1;
+    const p = Math.max(0, Math.min(1, (s.tempo - item.inicio) / item.duracao));
+    return (item.zoom.de ?? 1) + ((item.zoom.para ?? 1) - (item.zoom.de ?? 1)) * p;
+  }
+
+  // Tamanho do conteúdo, em pixels do quadro, sem a transformação do clipe (medido no que a prévia desenhou).
+  function tamanhoDoConteudo(item) {
+    const W = s.t.largura;
+    const H = s.t.altura;
+    const raiz = qs(`#previa-host [data-item="${CSS.escape(item.id)}"]`);
+    if (!raiz) return null;
+    const midia = raiz.querySelector('video, img, canvas');
+    if ((item.tipo === 'video' || item.tipo === 'imagem') && midia) {
+      const w = midia.offsetWidth || W;
+      const h = midia.offsetHeight || H;
+      const nw = midia.videoWidth || midia.naturalWidth || 0;
+      const nh = midia.videoHeight || midia.naturalHeight || 0;
+      const ajuste = item.ajuste ?? (item.tipo === 'video' ? 'cover' : 'contain');
+      if (nw && nh && ajuste === 'contain' && !item.largura) {
+        const r = Math.min(w / nw, h / nh);
+        return [nw * r, nh * r];
+      }
+      return [w, h];
+    }
+    // Texto, legenda e efeitos: desce pelas camadas que ocupam o quadro todo até o conteúdo de verdade.
+    let el = raiz;
+    while (el.firstElementChild && el.offsetWidth >= W - 1 && el.offsetHeight >= H - 1) el = el.firstElementChild;
+    return [el.offsetWidth || W, el.offsetHeight || H];
+  }
+
+  // Caixa do clipe na tela: centro, tamanho e ângulo.
+  function caixaNaTela(item) {
+    const raiz = qs('#previa-host [data-comp-raiz]');
+    const tam = tamanhoDoConteudo(item);
+    if (!raiz || !tam) return null;
+    const r = raiz.getBoundingClientRect();
+    if (!r.width) return null;
+    const k = r.width / s.t.largura;
+    const esc = valorAtual(item, 'escala', 1) * zoomAtual(item);
+    return {
+      k,
+      quadro: r,
+      cx: r.left + r.width / 2 + valorAtual(item, 'x', 0) * k,
+      cy: r.top + r.height / 2 + valorAtual(item, 'y', 0) * k,
+      w: tam[0] * esc * k,
+      h: tam[1] * esc * k,
+      ang: valorAtual(item, 'rotacao', 0),
+    };
+  }
+
+  const visivelAgora = (item, tr) =>
+    !tr.oculta && !ehAudio(tr) && !item.desativado && TRANSFORMAVEIS.has(item.tipo) && s.tempo >= item.inicio - 0.0001 && s.tempo < item.inicio + item.duracao;
+
+  function dentroDaCaixa(c, x, y) {
+    const a = (-c.ang * Math.PI) / 180;
+    const dx = x - c.cx;
+    const dy = y - c.cy;
+    const lx = dx * Math.cos(a) - dy * Math.sin(a);
+    const ly = dx * Math.sin(a) + dy * Math.cos(a);
+    return Math.abs(lx) <= c.w / 2 && Math.abs(ly) <= c.h / 2;
+  }
+
+  function elCaixa() {
+    let camada = qs('#tl-transformar');
+    if (camada) return camada;
+    camada = document.createElement('div');
+    camada.id = 'tl-transformar';
+    camada.innerHTML = '<div class="tt-guia tt-guia-v"></div><div class="tt-guia tt-guia-h"></div><div class="tt-caixa"><i data-a="gira" class="tt-gira" title="Girar (Shift: de 15 em 15°)"></i><i data-a="no"></i><i data-a="ne"></i><i data-a="so"></i><i data-a="se"></i></div>';
+    document.body.append(camada);
+    camada.querySelector('.tt-caixa').addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      const item = itemSel();
+      if (item) comecarArrasteCaixa(e, item, e.target.dataset.a ?? 'mover');
+    });
+    return camada;
+  }
+
+  function desenharCaixa() {
+    const camada = elCaixa();
+    const host = qs('#previa-host');
+    const item = s.selecao.size === 1 ? itemSel() : null;
+    const tr = item && trilhaDe(item.id);
+    const pode = item && tr && !host.hidden && host.offsetParent && s.previa && !s.tocando && visivelAgora(item, tr);
+    const c = pode && caixaNaTela(item);
+    if (!c) {
+      camada.hidden = true;
+      return;
+    }
+    camada.hidden = false;
+    // A camada cobre só a área do player: a caixa some onde sai dele.
+    const h = host.getBoundingClientRect();
+    Object.assign(camada.style, { left: h.left + 'px', top: h.top + 'px', width: h.width + 'px', height: h.height + 'px' });
+    const caixa = camada.querySelector('.tt-caixa');
+    Object.assign(caixa.style, {
+      left: c.cx - h.left - c.w / 2 + 'px',
+      top: c.cy - h.top - c.h / 2 + 'px',
+      width: c.w + 'px',
+      height: c.h + 'px',
+      transform: `rotate(${c.ang}deg)`,
+    });
+    caixa.classList.toggle('travada', !!s.bloqueada);
+    const gv = camada.querySelector('.tt-guia-v');
+    const gh = camada.querySelector('.tt-guia-h');
+    gv.hidden = !arrasteCaixa?.grudouX;
+    gh.hidden = !arrasteCaixa?.grudouY;
+    gv.style.left = c.quadro.left + c.quadro.width / 2 - h.left + 'px';
+    gh.style.top = c.quadro.top + c.quadro.height / 2 - h.top + 'px';
+  }
+
+  // Clique na prévia: seleciona o clipe de cima que estiver no ponto e já começa a mover.
+  function aoClicarPrevia(e) {
+    if (e.button !== 0 || !s.t || s.tocando || !s.previa) return;
+    for (const tr of [...s.t.trilhas].reverse()) {
+      if (ehAudio(tr)) continue;
+      for (const item of tr.itens) {
+        if (!visivelAgora(item, tr)) continue;
+        const c = caixaNaTela(item);
+        if (!c || !dentroDaCaixa(c, e.clientX, e.clientY)) continue;
+        // Efeito que cobre o quadro inteiro (papel, light leak) não rouba o clique dos clipes de baixo.
+        if (item.tipo === 'bloco' && c.w >= c.quadro.width * 0.98 && c.h >= c.quadro.height * 0.98) continue;
+        e.preventDefault();
+        e.stopPropagation();
+        if (!s.selecao.has(item.id) || s.selecao.size > 1) selecionar(item.id);
+        marcarArea('player');
+        comecarArrasteCaixa(e, item, 'mover');
+        return;
+      }
+    }
+  }
+
+  function comecarArrasteCaixa(e, item, acao) {
+    if (s.bloqueada) return;
+    const c = caixaNaTela(item);
+    if (!c) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const x0 = e.clientX;
+    const y0 = e.clientY;
+    const ini = { x: valorAtual(item, 'x', 0), y: valorAtual(item, 'y', 0), escala: valorAtual(item, 'escala', 1), rotacao: valorAtual(item, 'rotacao', 0) };
+    const dist0 = Math.hypot(x0 - c.cx, y0 - c.cy) || 1;
+    const ang0 = Math.atan2(y0 - c.cy, x0 - c.cx);
+    arrasteCaixa = { acao };
+    s.alterandoCampo = false;
+    document.body.classList.add('transformando');
+    let quadro = 0;
+    let ultimo = e;
+    const aplicar = () => {
+      quadro = 0;
+      const ev = ultimo;
+      if (acao === 'mover') {
+        let nx = ini.x + (ev.clientX - x0) / c.k;
+        let ny = ini.y + (ev.clientY - y0) / c.k;
+        if (ev.shiftKey) Math.abs(ev.clientX - x0) > Math.abs(ev.clientY - y0) ? (ny = ini.y) : (nx = ini.x);
+        // Gruda no centro a menos de 8 px da tela (Ctrl solta).
+        const perto = 8 / c.k;
+        arrasteCaixa.grudouX = !ev.ctrlKey && Math.abs(nx) < perto;
+        arrasteCaixa.grudouY = !ev.ctrlKey && Math.abs(ny) < perto;
+        if (arrasteCaixa.grudouX) nx = 0;
+        if (arrasteCaixa.grudouY) ny = 0;
+        aoEditarCampo(item, 'x', Math.round(nx));
+        aoEditarCampo(item, 'y', Math.round(ny));
+      } else if (acao === 'gira') {
+        let ang = ini.rotacao + ((Math.atan2(ev.clientY - c.cy, ev.clientX - c.cx) - ang0) * 180) / Math.PI;
+        if (ev.shiftKey) ang = Math.round(ang / 15) * 15;
+        aoEditarCampo(item, 'rotacao', Math.round(ang * 10) / 10);
+      } else {
+        const f = Math.hypot(ev.clientX - c.cx, ev.clientY - c.cy) / dist0;
+        aoEditarCampo(item, 'escala', Math.max(0.01, Math.round(ini.escala * f * 1000) / 1000));
+      }
+      desenharCaixa();
+    };
+    const mover = (ev) => {
+      ultimo = ev;
+      if (!quadro) quadro = requestAnimationFrame(aplicar);
+    };
+    const soltar = () => {
+      window.removeEventListener('pointermove', mover);
+      window.removeEventListener('pointerup', soltar);
+      if (quadro) cancelAnimationFrame(quadro);
+      document.body.classList.remove('transformando');
+      arrasteCaixa = null;
+      s.alterandoCampo = false;
+      desenharInspetor();
+      agendarCaixa();
+    };
+    window.addEventListener('pointermove', mover);
+    window.addEventListener('pointerup', soltar);
   }
 
   function desmontarPrevia() {
@@ -739,8 +955,16 @@ const TL = (() => {
     for (const c of s.camposKf) {
       const kfs = c.item.keyframes?.[c.caminho];
       const t = tempoNoItem(c.item);
-      if (kfs?.length && document.activeElement !== c.entrada) c.entrada.value = arredondar(valorEm(kfs, t));
+      if (kfs?.length && document.activeElement !== c.entrada) {
+        if (c.entrada._definir) c.entrada._definir(valorEm(kfs, t));
+        else c.entrada.value = arredondar(valorEm(kfs, t));
+      }
       const aqui = kfs?.find((k) => naMesmaHora(k.t, t));
+      if (c.crono) {
+        const animado = c.caminhos.some((p) => c.item.keyframes?.[p]?.length);
+        c.crono.classList.toggle('ativo', animado);
+        c.box.hidden = !animado;
+      }
       c.diamante.classList.toggle('ativo', !!kfs?.length);
       c.diamante.classList.toggle('no-ponto', !!aqui);
       c.curva.hidden = !aqui;
@@ -812,6 +1036,7 @@ const TL = (() => {
     const texto = formatarTempo(s.tempo);
     if (tempoEl.textContent !== texto) tempoEl.textContent = texto;
     // Tocando, a timeline acompanha o cursor.
+    agendarCaixa();
     if (s.tocando) {
       const corpo = qs('#tl-corpo');
       const x = LARGURA_CAB + s.tempo * s.pps;
@@ -3503,6 +3728,7 @@ const TL = (() => {
   }
 
   function criarCampo(item, [caminho, titulo, tipo, passo, padrao]) {
+    if ((tipo === 'num' || tipo === 'faixa') && caminho !== 'estilo.peso') return linhaNumerica(item, [[caminho, titulo, tipo, passo, padrao]], titulo);
     const rotulo = document.createElement('label');
     rotulo.textContent = titulo;
     const atual = lerCampo(item, caminho);
@@ -3647,7 +3873,13 @@ const TL = (() => {
     );
     const corpo = document.createElement('div');
     corpo.className = 'pr-corpo';
-    for (const c of campos) corpo.append(criarCampo(item, c));
+    const x = campos.find(([c]) => c === 'x');
+    const y = campos.find(([c]) => c === 'y');
+    for (const c of campos) {
+      if (x && y && c === y) continue;
+      if (x && y && c === x) corpo.append(linhaNumerica(item, [x, y], 'Posição'));
+      else corpo.append(criarCampo(item, c));
+    }
     d.append(corpo);
     return d;
   }
@@ -3661,8 +3893,257 @@ const TL = (() => {
     return d;
   }
 
+  // ---------- números como os do Premiere ----------
+  // Valor azul: arrastar para os lados muda (Shift 10x, Ctrl 1/10), clique para digitar, Enter grava, Esc desiste.
+  // Posição e escala aparecem como no Premiere: posição em pixels a partir do canto, escala e opacidade em %.
+
+  const PADROES_NUM = { escala: 1, opacidade: 1, velocidade: 1, 'efeitos.cor.lutIntensidade': 100 };
+
+  function padraoDoCampo(caminho, tipo, passo, padrao) {
+    if (tipo === 'faixa') return passo ?? 1;
+    if (padrao != null) return padrao;
+    if (caminho in PADROES_NUM) return PADROES_NUM[caminho];
+    const [raiz, id, campo] = caminho.split('.');
+    if (raiz === 'efeitos') {
+      const p = EFEITOS.find(([x]) => x === id)?.[2]?.find(([c]) => c === campo)?.[3];
+      if (p != null) return p;
+    }
+    return 0;
+  }
+
+  const numeroBr = (n, casas) => n.toLocaleString('pt-BR', { minimumFractionDigits: casas, maximumFractionDigits: casas, useGrouping: false });
+  const lerNumero = (txt) => Number(String(txt).trim().replace(/\s|%|°|s$/g, '').replace(',', '.'));
+
+  // paraTela/deTela convertem entre o valor guardado e o mostrado; arraste é quanto muda por pixel.
+  function formatoDe(caminho, tipo, passo) {
+    const W = s.t.largura;
+    const H = s.t.altura;
+    if (caminho === 'x') return { paraTela: (v) => v + W / 2, deTela: (n) => Math.round(n - W / 2), casas: 1, unidade: '', arraste: 1 };
+    if (caminho === 'y') return { paraTela: (v) => v + H / 2, deTela: (n) => Math.round(n - H / 2), casas: 1, unidade: '', arraste: 1 };
+    if (caminho === 'escala') return { paraTela: (v) => v * 100, deTela: (n) => Math.max(0, Math.round(n * 10) / 1000), casas: 1, unidade: '', arraste: 0.5 };
+    if (caminho === 'velocidade') return { paraTela: (v) => v * 100, deTela: (n) => Math.max(0.05, Math.round(n * 10) / 1000), casas: 1, unidade: ' %', arraste: 0.5 };
+    if (caminho === 'rotacao') return { paraTela: (v) => v, deTela: (n) => Math.round(n * 10) / 10, casas: 1, unidade: '°', arraste: 0.5 };
+    if (tipo === 'faixa') return { paraTela: (v) => v * 100, deTela: (n) => Math.max(0, Math.min(1, Math.round(n * 10) / 1000)), casas: 1, unidade: ' %', arraste: 0.5 };
+    if (/^(corteInicio|fadeIn|fadeOut)$/.test(caminho)) return { paraTela: (v) => v, deTela: (n) => Math.max(0, Math.round(n * 100) / 100), casas: 2, unidade: ' s', arraste: 0.01 };
+    const p = passo ?? 1;
+    const casas = p >= 1 ? 0 : Math.min(3, String(p).split('.')[1]?.length ?? 1);
+    return { paraTela: (v) => v, deTela: (n) => Number((Math.round(n / Math.min(p, 1)) * Math.min(p, 1)).toFixed(casas)), casas, unidade: '', arraste: p };
+  }
+
+  function criarValor(item, [caminho, titulo, tipo, passo, padrao]) {
+    const f = formatoDe(caminho, tipo, passo);
+    const pad = padraoDoCampo(caminho, tipo, passo, padrao);
+    const atual = () => {
+      const kfs = item.keyframes?.[caminho];
+      if (kfs?.length) return valorEm(kfs, tempoNoItem(item));
+      const v = lerCampo(item, caminho);
+      return typeof v === 'number' ? v : pad;
+    };
+    const el = document.createElement('span');
+    el.className = 'pr-valor';
+    el.title = `${titulo}: arraste para os lados para mudar (Shift: mais rápido, Ctrl: mais fino), ou clique para digitar`;
+    const entrada = document.createElement('input');
+    entrada.type = 'text';
+    entrada.className = 'pr-digitar';
+    entrada.hidden = true;
+    const mostrar = (v) => (el.textContent = numeroBr(f.paraTela(v), f.casas) + f.unidade);
+    mostrar(atual());
+    entrada._definir = (v) => mostrar(v);
+    const gravar = (v) => {
+      aoEditarCampo(item, caminho, v);
+      mostrar(v);
+      agendarCaixa();
+    };
+    const editar = () => {
+      el.hidden = true;
+      entrada.hidden = false;
+      entrada.value = numeroBr(f.paraTela(atual()), f.casas);
+      entrada.focus();
+      entrada.select();
+    };
+    let saindo = false;
+    const sair = (gravarValor) => {
+      if (saindo) return;
+      saindo = true;
+      const n = lerNumero(entrada.value);
+      if (gravarValor && Number.isFinite(n)) gravar(f.deTela(n));
+      s.alterandoCampo = false;
+      entrada.hidden = true;
+      el.hidden = false;
+      saindo = false;
+    };
+    entrada.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') sair(true);
+      if (e.key === 'Escape') sair(false);
+    });
+    entrada.addEventListener('blur', () => sair(true));
+    el.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || s.bloqueada) return;
+      e.preventDefault();
+      el.setPointerCapture(e.pointerId);
+      const x0 = e.clientX;
+      const v0 = f.paraTela(atual());
+      let mexeu = false;
+      let quadro = 0;
+      let ultimo = e;
+      s.alterandoCampo = false;
+      s.arrastandoValor = true;
+      const aplicar = () => {
+        quadro = 0;
+        const mult = ultimo.shiftKey ? 10 : ultimo.ctrlKey ? 0.1 : 1;
+        gravar(f.deTela(v0 + (ultimo.clientX - x0) * f.arraste * mult));
+      };
+      const mover = (ev) => {
+        if (!mexeu && Math.abs(ev.clientX - x0) < 3) return;
+        mexeu = true;
+        document.body.classList.add('arrastando-valor');
+        ultimo = ev;
+        if (!quadro) quadro = requestAnimationFrame(aplicar);
+      };
+      const soltar = () => {
+        el.removeEventListener('pointermove', mover);
+        el.removeEventListener('pointerup', soltar);
+        el.removeEventListener('pointercancel', soltar);
+        document.body.classList.remove('arrastando-valor');
+        if (quadro) {
+          cancelAnimationFrame(quadro);
+          aplicar();
+        }
+        s.alterandoCampo = false;
+        s.arrastandoValor = false;
+        if (!mexeu) editar();
+        else if (s.inspetorPendente) desenharInspetor();
+      };
+      el.addEventListener('pointermove', mover);
+      el.addEventListener('pointerup', soltar);
+      el.addEventListener('pointercancel', soltar);
+    });
+    const box = document.createElement('span');
+    box.className = 'pr-valor-box';
+    box.append(el, entrada);
+    return { el: box, entrada, atual };
+  }
+
+  // Cronômetro, ◀ ◆ ▶ e curva para uma ou mais propriedades juntas (Posição anima X e Y juntos, como no Premiere).
+  function controlesKfMulti(item, caminhos, entradas, crono) {
+    const box = document.createElement('span');
+    box.className = 'kf-controles';
+    const botao = (rotulo, titulo, fn) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = rotulo;
+      b.title = titulo;
+      b.onclick = (e) => {
+        e.preventDefault();
+        fn();
+      };
+      return b;
+    };
+    const tempos = () => [...new Set(caminhos.flatMap((p) => (item.keyframes?.[p] ?? []).map((k) => k.t)))].sort((a, b) => a - b);
+    const ir = (dir) => {
+      const t = s.tempo - item.inicio;
+      const ts = tempos();
+      const alvo = dir < 0 ? ts.filter((x) => x < t - 0.001).at(-1) : ts.find((x) => x > t + 0.001);
+      if (alvo != null) irPara(item.inicio + alvo);
+    };
+    const criarAqui = () => {
+      const t = tempoNoItem(item);
+      item.keyframes ??= {};
+      caminhos.forEach((p, k) => {
+        const kfs = (item.keyframes[p] ??= []);
+        if (!kfs.some((x) => naMesmaHora(x.t, t))) kfs.push({ t, v: entradas[k].atual(), curva: 'linear' });
+        kfs.sort((a, b) => a.t - b.t);
+      });
+    };
+    const diamante = botao('◆', 'Adicionar/remover keyframe no cursor', () =>
+      alterar(() => {
+        const t = tempoNoItem(item);
+        const tem = caminhos.some((p) => item.keyframes?.[p]?.some((k) => naMesmaHora(k.t, t)));
+        if (tem) for (const p of caminhos) if (item.keyframes?.[p]) item.keyframes[p] = item.keyframes[p].filter((k) => !naMesmaHora(k.t, t));
+        else criarAqui();
+        limparKeyframes(item);
+      }),
+    );
+    crono.onclick = (e) => {
+      e.preventDefault();
+      if (s.bloqueada) return;
+      const animado = caminhos.some((p) => item.keyframes?.[p]?.length);
+      if (animado) {
+        if (!confirm('Desligar a animação apaga todos os keyframes desta propriedade. Continuar?')) return;
+        alterar(() => {
+          // Fica o valor do cursor, como no Premiere.
+          caminhos.forEach((p, k) => {
+            const v = entradas[k].atual();
+            delete item.keyframes[p];
+            gravarCampo(item, p, v);
+          });
+          limparKeyframes(item);
+        });
+      } else alterar(criarAqui);
+    };
+    const curva = document.createElement('select');
+    curva.className = 'kf-curva';
+    curva.title = 'Curva do trecho que sai deste keyframe';
+    for (const [id, nome] of CURVAS) curva.append(new Option(nome, id));
+    curva.onchange = () =>
+      alterar(() => {
+        for (const p of caminhos) {
+          const k = item.keyframes?.[p]?.find((x) => naMesmaHora(x.t, tempoNoItem(item)));
+          if (k) k.curva = curva.value;
+        }
+      });
+    box.append(botao('◀', 'Ir para o keyframe anterior', () => ir(-1)), diamante, botao('▶', 'Ir para o próximo keyframe', () => ir(1)), curva);
+    caminhos.forEach((p, k) => s.camposKf.push({ item, caminho: p, entrada: entradas[k].entrada, diamante, curva, crono, box, caminhos }));
+    return box;
+  }
+
+  // Uma linha do Premiere: cronômetro, nome, valor(es) azuis, navegação de keyframes e redefinir.
+  function linhaNumerica(item, defs, titulo) {
+    const linha = document.createElement('div');
+    linha.className = 'pr-linha';
+    const animavel = defs.every(([c]) => ANIMAVEIS.has(c));
+    const crono = document.createElement('button');
+    crono.type = 'button';
+    crono.className = 'pr-crono';
+    crono.textContent = '⏱';
+    crono.title = 'Ativar/desativar animação (keyframes)';
+    if (!animavel) crono.classList.add('vazio');
+    const nome = document.createElement('span');
+    nome.className = 'pr-rotulo';
+    nome.textContent = titulo;
+    nome.title = titulo;
+    const valores = document.createElement('span');
+    valores.className = 'pr-valores';
+    const entradas = defs.map((d) => criarValor(item, d));
+    for (const v of entradas) valores.append(v.el);
+    linha.append(crono, nome, valores);
+    linha.append(animavel ? controlesKfMulti(item, defs.map(([c]) => c), entradas, crono) : document.createElement('span'));
+    const redefinir = document.createElement('button');
+    redefinir.type = 'button';
+    redefinir.className = 'pr-reset';
+    redefinir.textContent = '↺';
+    redefinir.title = `Redefinir ${titulo}`;
+    redefinir.onclick = () =>
+      alterar(() => {
+        for (const [c] of defs) {
+          apagarCampo(item, c);
+          if (item.keyframes) delete item.keyframes[c];
+        }
+        limparKeyframes(item);
+      });
+    linha.append(redefinir);
+    return linha;
+  }
+
   function desenharInspetor() {
     desenharTransicoes();
+    // Arrastando um valor: o painel não se refaz embaixo do mouse; refaz ao soltar.
+    if (s.arrastandoValor) {
+      s.inspetorPendente = true;
+      return;
+    }
+    agendarCaixa();
     const box = qs('#inspetor');
     // Painel escondido (outra aba do grupo): redesenha quando ele aparecer.
     if (!box.offsetParent) {
@@ -4365,6 +4846,10 @@ const TL = (() => {
       if (qs('#transicoes')?.offsetParent && !s.trChave) desenharTransicoes();
     });
     for (const sel of ['#painel-propriedades', '#painel-transicoes']) if (qs(sel)) aoAparecer.observe(qs(sel));
+    new ResizeObserver(() => agendarCaixa()).observe(qs('#previa-host'));
+    qs('#previa-host').addEventListener('pointerdown', aoClicarPrevia, true);
+    window.addEventListener('resize', agendarCaixa);
+    qs('#tl-corpo')?.addEventListener('scroll', agendarCaixa, { passive: true });
     marcarArea('timeline');
     areaDeSoltar(qs('#tl'), adicionarArquivos);
     areaDeSoltar(qs('#materiais'), adicionarAoProjeto);

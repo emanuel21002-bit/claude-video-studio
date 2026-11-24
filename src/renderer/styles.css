@@ -1253,3 +1253,40 @@ body.movendo-itens, body.movendo-itens * { cursor: grabbing !important; }
 .inspetor .tr-dir { width: 26px; padding: 0; }
 .inspetor .tr-acoes button { padding: 3px 10px; }
 .inspetor .pr-redefinir { padding: 0 6px; }
+
+/* Caixa de transformar na prévia (como o Monitor de programa do Premiere) */
+#tl-transformar { position: fixed; z-index: 40; overflow: hidden; pointer-events: none; }
+#tl-transformar[hidden] { display: none; }
+.tt-caixa { position: absolute; box-sizing: border-box; border: 1px solid #4aa3ff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5); cursor: move; pointer-events: auto; }
+.tt-caixa.travada { pointer-events: none; opacity: 0.5; }
+.tt-caixa i { position: absolute; width: 10px; height: 10px; margin: -6px 0 0 -6px; background: #fff; border: 1px solid #4aa3ff; box-sizing: border-box; }
+.tt-caixa i[data-a='no'] { left: 0; top: 0; cursor: nwse-resize; }
+.tt-caixa i[data-a='ne'] { left: 100%; top: 0; cursor: nesw-resize; }
+.tt-caixa i[data-a='so'] { left: 0; top: 100%; cursor: nesw-resize; }
+.tt-caixa i[data-a='se'] { left: 100%; top: 100%; cursor: nwse-resize; }
+.tt-caixa i.tt-gira { left: 50%; top: -22px; border-radius: 50%; cursor: grab; }
+.tt-caixa i.tt-gira::after { content: ''; position: absolute; left: 3.5px; top: 9px; width: 1px; height: 13px; background: #4aa3ff; }
+.tt-guia { position: absolute; background: #ff4fd8; pointer-events: none; }
+.tt-guia[hidden] { display: none; }
+.tt-guia-v { top: 0; bottom: 0; width: 1px; }
+.tt-guia-h { left: 0; right: 0; height: 1px; }
+body.transformando, body.transformando * { user-select: none; }
+
+/* ---------- Linhas numéricas como as dos Controles de efeito do Premiere ---------- */
+.pr-linha { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto auto 18px; align-items: center; column-gap: 6px; min-height: 24px; font-size: 12px; }
+.pr-linha:hover { background: rgba(255, 255, 255, 0.03); }
+.pr-rotulo { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #d8d8d8; }
+.pr-valores { display: flex; gap: 10px; justify-content: flex-end; }
+.pr-valor { color: #4aa3ff; cursor: ew-resize; font-variant-numeric: tabular-nums; border-bottom: 1px dotted rgba(74, 163, 255, 0.55); user-select: none; white-space: nowrap; }
+.pr-valor:hover { color: #8cc6ff; }
+.pr-valor[hidden], .pr-digitar[hidden] { display: none; }
+.inspetor .pr-digitar { width: 70px; margin: 0; padding: 1px 4px; text-align: right; font-variant-numeric: tabular-nums; }
+.inspetor .pr-crono, .inspetor .pr-reset { width: 18px; height: 18px; margin: 0; padding: 0; font-size: 12px; line-height: 1; background: transparent; border: 0; color: #8a8a8a; }
+.inspetor .pr-crono.ativo { color: #4aa3ff; }
+.inspetor .pr-crono.vazio { visibility: hidden; }
+.inspetor .pr-reset { opacity: 0; }
+.pr-linha:hover .pr-reset { opacity: 1; }
+.pr-linha .kf-controles { margin-top: 0; }
+.pr-linha .kf-controles[hidden] { display: none; }
+body.arrastando-valor, body.arrastando-valor * { cursor: ew-resize !important; user-select: none; }
+.inspetor .pr-linha .kf-curva { width: 64px; margin: 0; padding: 1px 2px; font-size: 11px; }
