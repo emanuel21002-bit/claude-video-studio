@@ -31,3 +31,13 @@ test('a camada de textos de um intervalo entra a partir do começo dele', () => 
   const p = planoFfmpeg(t, { infos, assets: 'C:/x', so: 'video', camada: { arquivo: 'cam.mov', duracao: 3, desde: 1.5 } });
   assert.ok(p.entradas.some((e) => e.join(' ') === '-ss 1.5 -t 6.1 -i cam.mov'), JSON.stringify(p.entradas));
 });
+
+test('mídia otimizada: a imagem lê a cópia SDR, sem tone mapping, e o som continua no original', () => {
+  const tv = { ...t, trilhas: [{ id: 'v', tipo: 'video', itens: [{ id: 'a', tipo: 'video', arquivo: 'a.mov', inicio: 0, duracao: 3, corteInicio: 0, volume: 1 }] }] };
+  const trocas = { 'a.mov': { caminho: 'C:/cache/otm.mp4', info: { largura: 1188, altura: 2112, hdr: false } } };
+  const img = planoFfmpeg(tv, { infos: { 'a.mov': { largura: 2160, altura: 3840, hdr: true, temAudio: true } }, assets: 'C:/x', tonemap: 'TONEMAP_CPU', so: 'video', naPlaca: true, trocas });
+  assert.ok(img.entradas.flat().includes('C:/cache/otm.mp4'));
+  assert.doesNotMatch(img.grafo, /TONEMAP_CPU|libplacebo/); // já vem SDR e pequena: escala simples na CPU
+  const som = planoFfmpeg(tv, { infos: { 'a.mov': { largura: 2160, altura: 3840, hdr: true, temAudio: true } }, assets: 'C:/x', so: 'audio', trocas });
+  assert.ok(!som.entradas.flat().includes('C:/cache/otm.mp4'));
+});

@@ -59,14 +59,14 @@ export function hashDaCamada(id, soGraficos) {
 // multiplicar/tela ({ arquivo, duracao, modo }), da de baixo para a de cima.
 // intervalo [de, ate]: só esse pedaço da timeline (o pré-render refaz só os trechos que mudaram). A camada começa em
 // `de`: quem usa desconta `inicio` do tempo.
-export async function renderizarCamadas(id, t, onLinha, { intervalo = null } = {}) {
-  const fundo = await renderizarCamada(id, t, onLinha, { parte: 'fundo', intervalo });
+export async function renderizarCamadas(id, t, onLinha, { intervalo = null, sinal, baixa = false } = {}) {
+  const fundo = await renderizarCamada(id, t, onLinha, { parte: 'fundo', intervalo, sinal, baixa });
   const mescla = [];
   for (const [parte, { modo }] of Object.entries(CAMADAS_MESCLA)) {
-    const c = await renderizarCamada(id, t, onLinha, { parte, intervalo });
+    const c = await renderizarCamada(id, t, onLinha, { parte, intervalo, sinal, baixa });
     if (c) mescla.push({ ...c, modo });
   }
-  const frente = await renderizarCamada(id, t, onLinha, { parte: 'frente', intervalo });
+  const frente = await renderizarCamada(id, t, onLinha, { parte: 'frente', intervalo, sinal, baixa });
   return { frente, fundo, mescla };
 }
 
@@ -74,8 +74,16 @@ const NOME_PARTE = { fundo: 'o fundo (gráficos por baixo dos vídeos)', multipl
 
 // Texto, legendas e blocos são desenhados pelo Remotion: vão como um vídeo transparente, só para referência.
 // parte: 'frente' (por cima dos vídeos, o padrão) ou 'fundo' (por baixo deles; ver graficosDaParte).
-export async function renderizarCamada(id, t, onLinha, { parte = 'frente', intervalo = null } = {}) {
+export async function renderizarCamada(id, t, onLinha, { parte = 'frente', intervalo = null, sinal, baixa = false, soSePronta = false } = {}) {
   const soGraficos = graficosDaParte(t, parte);
+  // A camada inteira já pronta (feita em segundo plano, por exemplo) serve a qualquer intervalo.
+  if (intervalo) {
+    const inteira = await renderizarCamada(id, t, null, { parte, soSePronta: true });
+    if (inteira) {
+      onLinha?.(NOME_PARTE[parte] ? `Camada com ${NOME_PARTE[parte]} já pronta: reaproveitando.` : 'Textos, legendas e efeitos já prontos: reaproveitando a camada.');
+      return inteira;
+    }
+  }
   const [de, ate] = intervalo ?? [0, Infinity];
   const itens = soGraficos.trilhas.flatMap((tr) => tr.itens).filter((i) => i.inicio < ate - 0.0005 && i.inicio + i.duracao > de + 0.0005);
   if (!itens.length) return null;
@@ -90,6 +98,7 @@ export async function renderizarCamada(id, t, onLinha, { parte = 'frente', inter
     onLinha?.(NOME_PARTE[parte] ? `Camada com ${NOME_PARTE[parte]} igual à da última vez: reaproveitando a camada pronta.` : 'Textos, legendas e efeitos iguais aos da última vez: reaproveitando a camada pronta.');
     return { arquivo: saida, duracao, inicio: de };
   }
+  if (soSePronta) return null;
   // Guarda as últimas camadas: voltar a uma versão anterior (desfazer uma troca de cor, por exemplo) não renderiza de novo.
   const antigas = fs.readdirSync(pasta(id)).filter((n) => /^camada-.*\.mov$/.test(n))
     .map((n) => ({ n, t: fs.statSync(path.join(pasta(id), n)).mtimeMs })).sort((a, b) => b.t - a.t);
@@ -113,8 +122,11 @@ export async function renderizarCamada(id, t, onLinha, { parte = 'frente', inter
       ...ent.publicDir, `--props=${props}`, `--concurrency=${paraleloCamada()}`, '--timeout=120000',
       '--codec=prores', '--prores-profile=4444', '--pixel-format=yuva444p10le', '--image-format=png', '--gl=angle',
       `--frames=${Math.round(de * t.fps)}-${Math.max(Math.round(de * t.fps), Math.ceil(fim * t.fps) - 1)}`,
-    ], { cwd: ws, env: { TEMP: tmp, TMP: tmp } });
+    ], { cwd: ws, env: { TEMP: tmp, TMP: tmp }, sinal, baixa });
     fs.renameSync(parcial, saida);
+  } catch (e) {
+    fs.rmSync(parcial, { force: true });
+    throw e;
   } finally {
     soltar();
     fs.rmSync(tmp, { recursive: true, force: true });

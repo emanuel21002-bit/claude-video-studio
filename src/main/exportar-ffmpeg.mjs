@@ -202,7 +202,7 @@ function ordemDesenho(tr) {
 // so: 'video' monta só a imagem (um trecho), 'audio' só o som (o vídeo inteiro); sem ele, os dois.
 // duracao: tamanho exato do que sai (um trecho termina onde o próximo começa, mesmo se houver vão no fim).
 // decodificacao: opções de entrada dos clipes de vídeo (decodificar na placa, threads).
-export function planoFfmpeg(t, { infos = {}, assets, camada = null, camadaFundo = null, camadasMescla = [], tonemap, escala = 1, fpsSaida = 0, duracao = null, so = null, decodificacao = [], naPlaca = false }) {
+export function planoFfmpeg(t, { infos = {}, assets, camada = null, camadaFundo = null, camadasMescla = [], tonemap, escala = 1, fpsSaida = 0, duracao = null, so = null, decodificacao = [], naPlaca = false, trocas = {} }) {
   let usouPlaca = false;
   const W = t.largura;
   const H = t.altura;
@@ -236,8 +236,10 @@ export function planoFfmpeg(t, { infos = {}, assets, camada = null, camadaFundo 
       if (!MIDIA.has(i.tipo)) continue;
       const k = ++n;
       const vel = i.velocidade ?? 1;
-      const arq = path.join(assets, i.arquivo);
-      const info = infos[i.arquivo] ?? {};
+      // Mídia otimizada (cópia SDR menor) no lugar do original, só para a imagem: o som vem sempre do original.
+      const troca = so === 'video' ? trocas[i.arquivo] : null;
+      const arq = troca?.caminho ?? path.join(assets, i.arquivo);
+      const info = troca?.info ?? infos[i.arquivo] ?? {};
       // Com transição, quem entra começa antes (adiantar) e quem sai vai além do fim (estender), com mais arquivo.
       const pt = plano.get(i.id);
       const adiantar = pt?.adiantar ?? 0;
@@ -273,7 +275,8 @@ export function planoFfmpeg(t, { infos = {}, assets, camada = null, camadaFundo 
       const capa = ajuste === 'cover' && !i.largura;
       // Na placa (libplacebo, Vulkan): reduz, corta e faz o tone mapping de uma vez, sem a CPU tocar no 4K. Medido num
       // trecho de 8 s do iPhone (HEVC 10 bits, HLG): 7,3 s → 5,0 s; o resto é a decodificação (3,5 s).
-      if (naPlaca && i.tipo === 'video' && capa) {
+      // Só compensa com HDR ou com bem mais pixels que o quadro (a cópia otimizada já vem no tamanho: CPU basta).
+      if (naPlaca && i.tipo === 'video' && capa && (info.hdr || (info.largura ?? 0) * (info.altura ?? 0) > 2.5 * W * H)) {
         usouPlaca = true;
         f.push(`libplacebo=w=${W}:h=${H}:pad_crop_ratio=1${info.hdr ? ':tonemapping=bt.2390' : ''}:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:format=yuv420p`);
       } else {

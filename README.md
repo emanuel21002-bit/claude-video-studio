@@ -103,6 +103,10 @@ O vídeo final pode sair pelo Filmcraft (padrão, se estiver em `recursos\filmcr
 
 Na placa de vídeo, cada clipe que cobre o quadro é reduzido, cortado e tem o tone mapping HDR feito pelo libplacebo (Vulkan), sem a CPU tocar no 4K: num trecho real do iPhone, 7,3 s → 5,0 s. Se o Vulkan falhar, o app volta sozinho ao caminho anterior. Rodar trechos em paralelo foi medido e não compensa (8%): a placa já fica no limite.
 
+**Mídia otimizada** (`otimizada.mjs`), como a do Premiere: cada vídeo HDR ou bem maior que o quadro ganha uma cópia SDR em H.264 no tamanho que a timeline usa (com folga para os zooms, em degraus de 5%), feita na placa e guardada em `.cache/otimizada/` do projeto. Os trechos do modo rápido leem a cópia; o som sempre vem do original. Medido com dois clipes 4K HDR do iPhone, dissolve, zoom e cor: 15,8 s (CPU) → 13,0 s (libplacebo) → 6,2 s (cópia otimizada).
+
+**Segundo plano** (`segundo-plano.mjs`): 20 s depois da última edição, sem render rodando, o app prepara a mídia otimizada e a camada de textos do Remotion, em prioridade baixa. Começar um render ou editar de novo cancela; o export nunca espera por isso: o que não estiver pronto ele faz como antes. A camada inteira pronta serve a qualquer intervalo do pré-render.
+
 Só roda um render por vez. Pedir o mesmo render enquanto ele roda não inicia outro, e pedir de novo sem nada mudar devolve o arquivo pronto.
 
 A composição do Remotion é empacotada uma vez por versão do código da timeline e guardada em `timelines\<timeline>\.render\` (ver `pacote-remotion.mjs`): o webpack só roda de novo quando o código muda, não a cada render. A timeline atual vai por `--props`, e tamanho, fps e duração vêm dela (`calculateMetadata` no `Root.tsx`).

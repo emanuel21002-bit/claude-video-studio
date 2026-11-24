@@ -9,6 +9,8 @@ import { escreverModelo, lerTimelineDoRender as lerTimeline, lerTimelineConferid
 import { normalizarSaida, kbpsDe, argsVideo, limparNome } from './exportacao.mjs';
 import { motivosSemFfmpeg, planoFfmpeg, prepararAuxiliares, trechosDeExportacao, recortarTimeline } from './exportar-ffmpeg.mjs';
 import { entradaDoRender } from './pacote-remotion.mjs';
+import { pararSegundoPlano } from './segundo-plano.mjs';
+import { otimizadasProntas } from './otimizada.mjs';
 
 // Progresso vem como "123/900" (frames) ou "45%" nas linhas dos CLIs.
 function lerProgresso(linha) {
@@ -276,6 +278,7 @@ export function renderizar(id, opcoes = {}, onEvento, sinal) {
       return { arquivo, preview: ultimo.preview, segundos: 0, reaproveitado: true };
     }
     trabalhoPesado.renders++;
+    pararSegundoPlano();
     return executarRender(id, { modo, formato, marca, pastaSaida, nome, ...ext }, onEvento, sinal).finally(() => {
       trabalhoPesado.renders--;
     });
@@ -338,19 +341,19 @@ async function exportarPeloFfmpeg(id, saida, { modo, codec, escala, semAudio, fp
   // textos do Remotion só é renderizada no intervalo deles.
   const pastaPrevias = path.join(caminhoTimeline(id), '.previas');
   const escolhas = { codec, kbps, escala, fps, ext, encoder: naGpu ? encoderId : null };
-  const chaves = trechos.length > 1 ? trechos.map(([a, b]) => chaveDoTrecho(id, t, a, b, assets, escolhas)) : [];
+  const chaves = trechos.map(([a, b]) => chaveDoTrecho(id, t, a, b, assets, escolhas));
   const prontas = chaves.map((k) => {
     const p = path.join(pastaPrevias, `${k}${ext}`);
     return fs.existsSync(p) ? p : null;
   });
-  const faltam = trechos.length > 1 ? trechos.map((_, k) => k).filter((k) => !prontas[k]) : [0];
+  const faltam = trechos.map((_, k) => k).filter((k) => !prontas[k]);
   let camada = null;
   let camadaFundo = null;
   let camadasMescla = [];
   if (faltam.length) {
     opts.onEvento?.({ etapa: 'Preparando textos e legendas', progresso: 0.02 });
     const inicioCamada = Date.now();
-    const intervalo = trechos.length > 1 && faltam.length < trechos.length ? [trechos[faltam[0]][0], trechos[faltam.at(-1)][1]] : null;
+    const intervalo = faltam.length < trechos.length ? [trechos[faltam[0]][0], trechos[faltam.at(-1)][1]] : null;
     ({ frente: camada, fundo: camadaFundo, mescla: camadasMescla } = await renderizarCamadas(id, t, (l) => {
       opts.onEvento?.({ log: l });
       if (/reaproveitando|Renderizando /.test(l)) opts.onEvento?.({ etapa: l.replace(/ para o Filmcraft/, '').replace(/…$/, ''), progresso: 0.05 });
@@ -397,14 +400,9 @@ async function exportarPeloFfmpeg(id, saida, { modo, codec, escala, semAudio, fp
   };
   const camadaDe = (c, a) => c && { ...c, desde: a - (c.inicio ?? 0) };
 
-  const somDoVideo = (plano) => (plano.temAudio && !semAudio ? ['-map', '[vout]', '-map', '[aout]', '-c:a', 'aac', '-b:a', '320k'] : ['-map', '[vout]', '-an']);
-  if (trechos.length === 1) {
-    await rodarPlano(
-      (tent) => planoFfmpeg(t, { infos, assets, camada, camadaFundo, camadasMescla, tonemap: TONEMAP, escala, fpsSaida: fps, decodificacao: tent.dec, naPlaca: tent.naPlaca }),
-      trab, saida, (plano) => [...somDoVideo(plano), '-movflags', '+faststart'], 'Montando o vídeo', [0.3, 1],
-    );
-    return;
-  }
+  // Mídia otimizada já pronta (feita em segundo plano): os trechos leem a cópia SDR menor em vez do 4K HDR.
+  const trocas = faltam.length ? await otimizadasProntas(id, t) : {};
+  if (Object.keys(trocas).length) opts.onEvento?.({ log: `Usando a mídia otimizada de ${Object.keys(trocas).length} vídeo(s).` });
 
   // Em trechos: cada um com poucos clipes abertos, depois emendados sem recodificar e com o som montado à parte.
   const total = trechos.at(-1)[1];
@@ -426,7 +424,7 @@ async function exportarPeloFfmpeg(id, saida, { modo, codec, escala, semAudio, fp
     const destino = path.join(pasta, `parte${ext}`);
     const tk = recortarTimeline(t, a, b);
     await rodarPlano(
-      (tent) => planoFfmpeg(tk, { infos, assets, camada: camadaDe(camada, a), camadaFundo: camadaDe(camadaFundo, a), camadasMescla: camadasMescla.map((c) => camadaDe(c, a)), tonemap: TONEMAP, escala, fpsSaida: fps, duracao: b - a, so: 'video', decodificacao: tent.dec, naPlaca: tent.naPlaca }),
+      (tent) => planoFfmpeg(tk, { infos, assets, camada: camadaDe(camada, a), camadaFundo: camadaDe(camadaFundo, a), camadasMescla: camadasMescla.map((c) => camadaDe(c, a)), tonemap: TONEMAP, escala, fpsSaida: fps, duracao: b - a, so: 'video', decodificacao: tent.dec, naPlaca: tent.naPlaca, trocas }),
       pasta, destino, () => ['-map', '[vout]', '-an'], `Montando o trecho ${k + 1} de ${trechos.length}`, peso,
     );
     // Guarda como prévia (cópia: o trabalho temporário é apagado no fim).

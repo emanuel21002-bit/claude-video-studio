@@ -19,6 +19,7 @@ import { conferir, trechosSemAudio } from './conferir-nucleo.mjs';
 import { whisperDisponivel, transcrever, transcreverArquivo } from './transcricao.mjs';
 import { listarTranscricoes, transcreverVideo } from './transcricao-video.mjs';
 import { transcreverTimeline, lerTranscricaoDaTimeline } from './transcricao-timeline.mjs';
+import { agendarSegundoPlano } from './segundo-plano.mjs';
 import { fontesDoSistema, minhasFontes, adicionarFontes, removerFonte, prepararFonte } from './fontes.mjs';
 import { renderizar, estimarRender } from './render.mjs';
 import { conversar, cancelar, ocupado, chatOcupado, primeiraMensagem, claudeExe } from './agente.mjs';
@@ -483,7 +484,12 @@ ipcMain.handle('render:cancelar-todos', (_e, chave) => lotesRender.get(chave)?.a
 ipcMain.handle('timeline:ler', (_e, id) => lerTimeline(id));
 ipcMain.handle('filmcraft:abrir', (_e, { id, descartar }) => abrirNoFilmcraft(id, { descartar }, (l) => enviar('log', l)));
 ipcMain.handle('filmcraft:trazer', (_e, id) => trazerDoFilmcraft(id, (l) => enviar('log', l)));
-ipcMain.handle('timeline:salvar', (_e, { id, timeline }) => gravarTimeline(id, timeline));
+ipcMain.handle('timeline:salvar', (_e, { id, timeline }) => {
+  const r = gravarTimeline(id, timeline);
+  // Pré-render em segundo plano: mídia otimizada e camada de textos ficam prontas para o export.
+  agendarSegundoPlano(id, (l) => enviar('log', l));
+  return r;
+});
 ipcMain.handle('timeline:previa', (_e, id) => prepararPrevia(id));
 ipcMain.handle('timeline:midia', (_e, { id, arquivo, extras }) => midiaDoArquivo(id, arquivo, { extras }));
 ipcMain.handle('timeline:proxy', (_e, { id, arquivo }) => gerarProxyDe(id, arquivo).catch(() => null));
