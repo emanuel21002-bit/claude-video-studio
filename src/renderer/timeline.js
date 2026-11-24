@@ -109,6 +109,23 @@ const TL = (() => {
     return nova;
   }
 
+  // Como no Premiere: faixa nova do mesmo tipo logo acima ou logo abaixo de uma que já existe, na tela.
+  // No vídeo, acima na tela é a camada de cima (vem depois na lista); no áudio, acima na tela vem antes na lista.
+  function novaFaixaJunto(trilha, lado, tipo = ehAudio(trilha) ? 'audio' : 'video') {
+    const nova = { id: novoId(), tipo, itens: [] };
+    const k = s.t.trilhas.indexOf(trilha);
+    const depois = tipo === 'audio' ? lado === 'abaixo' : lado === 'acima';
+    s.t.trilhas.splice(depois ? k + 1 : k, 0, nova);
+    return nova;
+  }
+
+  function excluirFaixa(trilha) {
+    const audio = ehAudio(trilha);
+    if (s.t.trilhas.filter((x) => ehAudio(x) === audio).length < 2) return avisar('A timeline precisa de pelo menos uma faixa de ' + (audio ? 'áudio.' : 'vídeo.'));
+    if (trilha.itens.length && !confirm(`Excluir a faixa ${codigoDe(trilha)} e os ${trilha.itens.length} clipe(s) dela?`)) return;
+    alterar(() => s.t.trilhas.splice(s.t.trilhas.indexOf(trilha), 1));
+  }
+
   // Cada faixa é uma linha só, como no Filmcraft e no CapCut: um item que começa em cima de outro sai para a próxima
   // faixa do mesmo tipo que estiver livre nesse trecho (para cima no vídeo, para baixo no áudio); sem nenhuma, uma nova
   // logo depois desta. Devolve true se mudou algo.
@@ -450,6 +467,8 @@ const TL = (() => {
         else trilha.oculta = !trilha.oculta;
       });
     cab.append(codigo, nome, botao);
+    cab.addEventListener('contextmenu', (e) => menuDoCabecalho(e, trilha));
+    cab.title = 'Botão direito: nova faixa acima ou abaixo, excluir faixa';
     // A borda de baixo do cabeçalho muda a altura da faixa; clique duplo volta ao tamanho padrão.
     const borda = document.createElement('div');
     borda.className = 'tl-redim';
@@ -1681,10 +1700,18 @@ const TL = (() => {
     for (const [tipo, ids] of porTipo) aplicarTransicaoEntrada(ids, tipo);
   }
 
-  function desenharTransicoes() {
+  function desenharTransicoes(forcar = false) {
     const box = qs('#transicoes');
     if (!box || !s.t) return;
+    if (!box.offsetParent) {
+      s.trChave = null;
+      return;
+    }
     const lista = transicoesDaSelecao();
+    // Toda edição redesenha a timeline; a aba só refaz os cards quando a seleção ou as transições dela mudam.
+    const chave = JSON.stringify([[...s.selecao], lista, s.trCategoria, s.trDirecao, s.trDuracao, s.bloqueada]);
+    if (!forcar && chave === s.trChave) return;
+    s.trChave = chave;
     const atual = lista.length === s.selecao.size && lista.length ? lista[0][1] : null;
     s.trCategoria ??= 'Todas';
     s.trDuracao ??= 0.5;
@@ -1709,7 +1736,7 @@ const TL = (() => {
       b.type = 'button';
       b.onclick = () => {
         s.trCategoria = c;
-        desenharTransicoes();
+        desenharTransicoes(true);
       };
       cats.append(b);
     }
@@ -1739,7 +1766,7 @@ const TL = (() => {
       b.onclick = () => {
         s.trDirecao = id;
         reaplicarNaSelecao();
-        desenharTransicoes();
+        desenharTransicoes(true);
       };
       dirs.append(b);
     }
@@ -1816,7 +1843,7 @@ const TL = (() => {
       const { roteiros, erros } = await api.adicionarRoteiros({ id, caminhos });
       if (s.id !== id) return;
       s.roteiros = roteiros;
-      desenharMateriais();
+      desenharProjeto();
       avisar(erros.length ? 'Não li: ' + erros.join('; ') : 'Roteiro enviado. Clique em "Gerar legendas" para refazê-las com ele.');
     } catch (e) {
       avisar('Não li o roteiro: ' + e.message.split('\n').at(-1));
@@ -1899,7 +1926,6 @@ const TL = (() => {
     const narracoes = (p.narracoes ?? []).filter((n) => n.arquivo !== p.narracao?.arquivo).map((n) => ({ ...n, tipo: 'audio', pasta: 'Narrações' }));
     s.materiais = [...p.materiais, ...(p.narracao ? [{ ...p.narracao, tipo: 'audio' }] : []), ...narracoes];
     s.roteiros = p.roteiros ?? [];
-    s.transcricoes = await api.transcricoesVideo(id).catch(() => ({}));
     if (!s.fontes) await carregarFontes();
     if (s.id !== id) return;
     desenharMateriais();
@@ -2879,7 +2905,7 @@ const TL = (() => {
       chip.querySelector('button').onclick = async () => {
         if (s.bloqueada) return;
         s.roteiros = await api.removerRoteiro({ id: s.id, arquivo: r.arquivo });
-        desenharMateriais();
+        desenharProjeto();
       };
       lista.append(chip);
     }
@@ -2891,96 +2917,27 @@ const TL = (() => {
     return box;
   }
 
-  // Transcrição do áudio dos vídeos do projeto (Whisper local), para saber quais têm narração.
-  const ROTULO_FALA = { narracao: 'Narração', 'fala-curta': 'Fala curta', 'sem-fala': 'Sem fala' };
-  const rotuloFala = (arquivo) => ROTULO_FALA[s.transcricoes?.[arquivo]?.veredito] ?? '';
-
-  async function transcreverVideos(arquivos) {
-    if (s.transcrevendo?.size || !arquivos.length) return;
-    const id = s.id;
-    s.transcrevendo = new Map(arquivos.map((a) => [a, 'Na fila…']));
-    desenharMateriais();
-    try {
-      s.transcricoes = await api.transcreverVideos({ id, arquivos });
-    } catch (e) {
-      avisar(String(e.message ?? e).split(String.fromCharCode(10))[0].replace(/^Error invoking remote method '[^']+': (Error: )?/, ''));
-    }
-    s.transcrevendo = new Map();
-    if (s.id === id) desenharMateriais();
-  }
-
-  function blocoTranscricao() {
-    const box = document.createElement('div');
-    box.className = 'materiais-roteiro';
-    box.innerHTML = '<h5>Narração nos vídeos</h5><small>Transcreve o áudio dos vídeos no seu computador (Whisper) e mostra quais têm narração. O Claude também lê o resultado.</small>';
-    const videos = s.materiais.filter((m) => m.tipo === 'video' && m.temAudio);
-    if (!videos.length) {
-      const vazio = document.createElement('small');
-      vazio.textContent = 'Nenhum vídeo com áudio neste projeto.';
-      box.append(vazio);
-      return box;
-    }
-    s.transcricoes ??= {};
-    const rodando = !!s.transcrevendo?.size;
-    const pendentes = videos.filter((v) => !s.transcricoes[v.arquivo] || s.transcricoes[v.arquivo].desatualizada);
-    const botao = document.createElement('button');
-    botao.textContent = rodando ? 'Cancelar transcrição' : pendentes.length ? `Transcrever áudio dos vídeos (${pendentes.length})` : 'Transcrever de novo (todos)';
-    botao.onclick = () => {
-      if (rodando) return api.cancelarTranscricaoVideo();
+  // Aba "Roteiro e packs": o roteiro do projeto e os packs de edição que o Claude pode usar.
+  function desenharProjeto() {
+    const box = qs('#projeto');
+    if (!box) return;
+    box.innerHTML = '';
+    const packs = document.createElement('div');
+    packs.className = 'materiais-roteiro';
+    packs.innerHTML = '<h5>Packs de edição</h5><small>Escolha o que o Claude pode usar e traga arquivos dos packs para o projeto, sem copiar.</small>';
+    const abrir = document.createElement('button');
+    abrir.textContent = 'Packs de edição…';
+    abrir.onclick = () => {
       if (s.bloqueada) return avisar('Espere o Claude terminar.');
-      transcreverVideos((pendentes.length ? pendentes : videos).map((v) => v.arquivo));
+      abrirPacksDoProjeto(s.id, async () => {
+        await carregarMateriais();
+        carregarMidia();
+      });
     };
-    box.append(botao);
-    const lista = document.createElement('div');
-    lista.className = 'transc-lista';
-    for (const v of videos) {
-      const r = s.transcricoes[v.arquivo];
-      const andamento = s.transcrevendo?.get(v.arquivo);
-      if (!r && andamento === undefined) continue;
-      const linha = document.createElement('div');
-      linha.className = 'transc-linha';
-      linha.dataset.arquivo = v.arquivo;
-      const topo = document.createElement('div');
-      topo.className = 'transc-topo';
-      const nome = document.createElement('span');
-      nome.className = 'transc-nome';
-      nome.textContent = v.arquivo;
-      nome.title = v.arquivo;
-      const selo = document.createElement('span');
-      selo.className = 'transc-selo ' + (andamento !== undefined ? 'andando' : r.veredito);
-      selo.textContent = andamento !== undefined ? '…' : ROTULO_FALA[r.veredito];
-      topo.append(nome, selo);
-      const info = document.createElement('div');
-      info.className = 'transc-info';
-      info.textContent = andamento !== undefined ? andamento : `${Math.round(r.cobertura * 100)}% do vídeo com fala · ${r.palavras} palavras${r.desatualizada ? ' · o arquivo mudou, transcreva de novo' : ''}`;
-      linha.append(topo, info);
-      if (r?.texto && andamento === undefined) {
-        const texto = document.createElement('div');
-        texto.className = 'transc-texto';
-        texto.hidden = true;
-        texto.textContent = r.texto + (r.texto.length >= 600 ? '…' : '');
-        linha.append(texto);
-        linha.title = 'Clique para ver o começo do que é falado';
-        linha.onclick = () => (texto.hidden = !texto.hidden);
-      }
-      lista.append(linha);
-    }
-    box.append(lista);
-    return box;
+    packs.append(abrir);
+    box.append(blocoRoteiro(), packs);
   }
 
-  api.aoTranscreverVideo((e) => {
-    if (e.id !== s.id) return;
-    if (e.status === 'transcrevendo') {
-      s.transcrevendo?.set(e.arquivo, e.texto);
-      for (const l of document.querySelectorAll('.transc-linha')) if (l.dataset.arquivo === e.arquivo) l.querySelector('.transc-info').textContent = e.texto;
-      return;
-    }
-    s.transcrevendo?.delete(e.arquivo);
-    if (e.status === 'pronto') (s.transcricoes ??= {})[e.arquivo] = e.resumo;
-    if (e.status === 'erro') avisar(`Não consegui transcrever ${e.arquivo}: ${e.erro}`);
-    desenharMateriais();
-  });
 
   function desenharMateriais() {
     const box = qs('#materiais');
@@ -2992,17 +2949,11 @@ const TL = (() => {
     pasta.textContent = '+ Importar pasta';
     pasta.title = 'Importa os materiais da pasta e das subpastas';
     pasta.onclick = async () => adicionarAoProjeto(await api.escolherPasta());
-    const packs = document.createElement('button');
-    packs.textContent = 'Packs de edição…';
-    packs.title = 'Escolha o que o Claude pode usar e traga arquivos dos packs, sem copiar';
-    packs.onclick = () => {
-      if (s.bloqueada) return avisar('Espere o Claude terminar.');
-      abrirPacksDoProjeto(s.id, async () => {
-        await carregarMateriais();
-        carregarMidia();
-      });
-    };
-    box.append(importar, pasta, packs, blocoRoteiro(), blocoTranscricao());
+    const botoes = document.createElement('div');
+    botoes.className = 'materiais-botoes';
+    botoes.append(importar, pasta);
+    box.append(botoes);
+    desenharProjeto();
     const cartao = (m) => {
       const card = document.createElement('div');
       card.className = 'material';
@@ -3021,7 +2972,7 @@ const TL = (() => {
       nome.textContent = m.arquivo;
       const info = document.createElement('div');
       info.className = 'material-info';
-      info.textContent = m.tipo === 'imagem' ? 'Imagem' : `${(m.duracao ?? 0).toFixed(1)} s${rotuloFala(m.arquivo) ? ' · ' + rotuloFala(m.arquivo) : ''}`;
+      info.textContent = m.tipo === 'imagem' ? 'Imagem' : `${(m.duracao ?? 0).toFixed(1)} s`;
       const trocar = document.createElement('button');
       trocar.className = 'material-trocar';
       trocar.textContent = '⇄';
@@ -3631,9 +3582,95 @@ const TL = (() => {
     return rotulo;
   }
 
+  // Grupos do painel Propriedades, na ordem dos Controles de efeito do Premiere.
+  const GRUPOS_PROPRIEDADES = [
+    ['Texto', ['texto', 'estilo', 'props']],
+    ['Movimento', ['x', 'y', 'escala', 'rotacao', 'ajuste', 'largura']],
+    ['Opacidade', ['opacidade', 'mesclagem']],
+    ['Animação de entrada e saída', ['entrada', 'saida']],
+    ['Remapeamento de tempo', ['velocidade', 'corteInicio']],
+    ['Áudio', ['volume', 'fadeIn', 'fadeOut']],
+  ];
+
+  function apagarCampo(item, caminho) {
+    const partes = caminho.split('.');
+    const pai = partes.slice(0, -1).reduce((o, k) => o?.[k], item);
+    if (pai) delete pai[partes.at(-1)];
+    for (let k = partes.length - 1; k > 0; k--) {
+      const o = partes.slice(0, k).reduce((x, p) => x?.[p], item);
+      if (o && typeof o === 'object' && !Object.keys(o).length) delete partes.slice(0, k - 1).reduce((x, p) => x?.[p], item)[partes[k - 1]];
+    }
+  }
+
+  // Cabeçalho de grupo com triângulo, selo fx e o botão de redefinir; aberto ou fechado fica lembrado.
+  function cabecalhoGrupo(nome, aberto, aoRedefinir) {
+    const d = document.createElement('details');
+    d.className = 'pr-grupo';
+    s.gruposAbertos ??= {};
+    d.open = s.gruposAbertos[nome] ?? aberto;
+    d.addEventListener('toggle', () => (s.gruposAbertos[nome] = d.open));
+    const sum = document.createElement('summary');
+    const fx = document.createElement('span');
+    fx.className = 'pr-fx';
+    fx.textContent = 'fx';
+    const t = document.createElement('span');
+    t.className = 'pr-nome';
+    t.textContent = nome;
+    sum.append(fx, t);
+    if (aoRedefinir) {
+      const r = document.createElement('button');
+      r.type = 'button';
+      r.className = 'pr-redefinir';
+      r.textContent = '↺';
+      r.title = `Redefinir ${nome} (volta ao padrão e tira os keyframes)`;
+      r.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        aoRedefinir();
+      };
+      sum.append(r);
+    }
+    d.append(sum);
+    return d;
+  }
+
+  function grupoPropriedades(item, nome, campos) {
+    const d = cabecalhoGrupo(nome, true, () =>
+      alterar(() => {
+        for (const [c] of campos) {
+          if (c === 'texto' || c === 'props') continue;
+          apagarCampo(item, c);
+          if (item.keyframes) delete item.keyframes[c];
+        }
+        limparKeyframes(item);
+      }),
+    );
+    const corpo = document.createElement('div');
+    corpo.className = 'pr-corpo';
+    for (const c of campos) corpo.append(criarCampo(item, c));
+    d.append(corpo);
+    return d;
+  }
+
+  // As seções que já existiam (efeitos, transição, arquivo) entram no mesmo formato de grupo.
+  function grupoSecao(nome, secao, aberto = true) {
+    const d = cabecalhoGrupo(nome, aberto);
+    secao.querySelector(':scope > h5')?.remove();
+    secao.classList.add('pr-corpo');
+    d.append(secao);
+    return d;
+  }
+
   function desenharInspetor() {
     desenharTransicoes();
     const box = qs('#inspetor');
+    // Painel escondido (outra aba do grupo): redesenha quando ele aparecer.
+    if (!box.offsetParent) {
+      s.inspetorPendente = true;
+      s.camposKf = [];
+      return;
+    }
+    s.inspetorPendente = false;
     // Não reconstrói enquanto o usuário digita num campo do próprio inspetor.
     if (box.contains(document.activeElement) && document.activeElement.tagName !== 'BUTTON' && box.dataset.item === String(s.sel)) return;
     box.innerHTML = '';
@@ -3662,18 +3699,27 @@ const TL = (() => {
     tempo.id = 'tl-inspetor-tempo';
     tempo.className = 'tl-inspetor-tempo';
     tempo.textContent = `${item.inicio.toFixed(2)} s → ${(item.inicio + item.duracao).toFixed(2)} s`;
-    box.append(titulo, tempo);
-    if (item.arquivo) {
-      const a = document.createElement('div');
-      a.className = 'tl-inspetor-tempo';
-      a.textContent = item.arquivo;
-      box.append(a);
+    titulo.className = 'pr-titulo';
+    const cab = document.createElement('div');
+    cab.className = 'pr-cabecalho';
+    const origem = document.createElement('div');
+    origem.className = 'pr-origem';
+    origem.textContent = item.arquivo ? `Origem: ${item.arquivo}` : `Sequência: ${rotuloItem(item)}`;
+    origem.title = origem.textContent;
+    cab.append(titulo, origem, tempo);
+    box.append(cab);
+    // Como os Controles de efeito do Premiere: cada grupo (fx) abre e fecha e tem o seu "redefinir".
+    const campos = CAMPOS[item.tipo] ?? [];
+    for (const [nome, caminhos] of GRUPOS_PROPRIEDADES) {
+      const doGrupo = campos.filter(([c]) => caminhos.some((p) => c === p || c.startsWith(p + '.')));
+      if (doGrupo.length) box.append(grupoPropriedades(item, nome, doGrupo));
     }
-    for (const c of CAMPOS[item.tipo] ?? []) box.append(criarCampo(item, c));
-    if (item.arquivo) box.append(secaoArquivo(item));
-    if (item.tipo !== 'audio' && item.tipo !== 'legenda') box.append(secaoEfeitos(item));
+    const soltos = campos.filter(([c]) => !GRUPOS_PROPRIEDADES.some(([, caminhos]) => caminhos.some((p) => c === p || c.startsWith(p + '.'))));
+    if (soltos.length) box.append(grupoPropriedades(item, 'Outros', soltos));
+    if (item.tipo !== 'audio' && item.tipo !== 'legenda') box.append(grupoSecao('Efeitos de vídeo', secaoEfeitos(item)));
     const trilhaDoItem = trilhaDe(item.id);
-    if (trilhaDoItem && !ehAudio(trilhaDoItem) && item.tipo !== 'ajuste') box.append(secaoTransicao(item, trilhaDoItem));
+    if (trilhaDoItem && !ehAudio(trilhaDoItem) && item.tipo !== 'ajuste') box.append(grupoSecao('Transição de entrada', secaoTransicao(item, trilhaDoItem)));
+    if (item.arquivo) box.append(grupoSecao('Substituir arquivo', secaoArquivo(item), false));
     atualizarCamposKf();
     if (item.tipo === 'legenda') {
       const b = document.createElement('button');
@@ -4154,14 +4200,28 @@ const TL = (() => {
       { rotulo: 'Colar aqui', acao: () => { irPara(t); colarSelecao(); }, desativado: travada || !areaTransferencia },
       !audio && { rotulo: 'Nova camada de ajuste aqui', acao: () => novaCamadaAjuste(t, 5, trilha), desativado: travada },
       'sep',
-      { rotulo: 'Nova faixa de vídeo', acao: () => alterar(() => novaFaixa('video', { acimaDeTudo: true })), desativado: travada },
-      { rotulo: 'Nova faixa de áudio', acao: () => alterar(() => novaFaixa('audio')), desativado: travada },
-      !trilha.itens.length && s.t.trilhas.filter((x) => ehAudio(x) === audio).length > 1 && {
-        rotulo: 'Remover esta faixa',
-        acao: () => alterar(() => s.t.trilhas.splice(s.t.trilhas.indexOf(trilha), 1)),
-        desativado: travada,
-      },
+      ...entradasDeFaixa(trilha),
     ]);
+  }
+
+  // Menu do cabeçalho da faixa (e o fim do menu da pista), como o "Adicionar faixa" do Premiere.
+  function entradasDeFaixa(trilha) {
+    const travada = s.bloqueada;
+    const audio = ehAudio(trilha);
+    const nome = audio ? 'áudio' : 'vídeo';
+    const criar = (lado, tipo) => () => alterar(() => novaFaixaJunto(trilha, lado, tipo));
+    return [
+      { rotulo: `Nova faixa de ${nome} acima de ${codigoDe(trilha)}`, acao: criar('acima'), desativado: travada },
+      { rotulo: `Nova faixa de ${nome} abaixo de ${codigoDe(trilha)}`, acao: criar('abaixo'), desativado: travada },
+      { rotulo: audio ? 'Nova faixa de vídeo (no topo)' : 'Nova faixa de áudio (no fim)', acao: () => alterar(() => (audio ? novaFaixa('video', { acimaDeTudo: true }) : novaFaixa('audio'))), desativado: travada },
+      'sep',
+      { rotulo: `Excluir a faixa ${codigoDe(trilha)}`, acao: () => excluirFaixa(trilha), desativado: travada || s.t.trilhas.filter((x) => ehAudio(x) === audio).length < 2 },
+    ];
+  }
+
+  function menuDoCabecalho(e, trilha) {
+    e.preventDefault();
+    abrirMenu(e.clientX, e.clientY, entradasDeFaixa(trilha));
   }
 
   // ---------- teclado e mouse ----------
@@ -4169,7 +4229,7 @@ const TL = (() => {
   // Como no Filmcraft: o painel clicado por último fica marcado e recebe os atalhos. A timeline recebe todos; o
   // player, só os de reprodução; nos outros painéis (materiais, propriedades, efeitos, Claude) só valem desfazer,
   // refazer e a lista de atalhos, para Delete, Ctrl+C, setas e letras não mexerem na timeline sem querer.
-  const AREAS = [['#tl', 'timeline'], ['#painel-previa', 'player'], ['#painel-materiais', 'materiais'], ['#painel-propriedades', 'propriedades'], ['#painel-efeitos', 'efeitos'], ['#painel-transicoes', 'transicoes'], ['#painel-origem', 'origem'], ['#painel-claude', 'claude']];
+  const AREAS = [['#tl', 'timeline'], ['#painel-previa', 'player'], ['#painel-materiais', 'materiais'], ['#painel-propriedades', 'propriedades'], ['#painel-efeitos', 'efeitos'], ['#painel-transicoes', 'transicoes'], ['#painel-projeto', 'projeto'], ['#painel-origem', 'origem'], ['#painel-claude', 'claude']];
   const GLOBAIS = new Set(['desfazer', 'refazer', 'atalhos']);
   const valeNaArea = (acao) => GLOBAIS.has(acao[0]) || s.area === 'timeline' || (s.area === 'player' && acao[1] === 'Reprodução');
 
@@ -4299,6 +4359,12 @@ const TL = (() => {
     );
     window.addEventListener('keydown', aoTeclar);
     window.addEventListener('pointerdown', aoClicarArea, true);
+    const aoAparecer = new ResizeObserver(() => {
+      if (!s.t) return;
+      if (s.inspetorPendente && qs('#inspetor')?.offsetParent) desenharInspetor();
+      if (qs('#transicoes')?.offsetParent && !s.trChave) desenharTransicoes();
+    });
+    for (const sel of ['#painel-propriedades', '#painel-transicoes']) if (qs(sel)) aoAparecer.observe(qs(sel));
     marcarArea('timeline');
     areaDeSoltar(qs('#tl'), adicionarArquivos);
     areaDeSoltar(qs('#materiais'), adicionarAoProjeto);

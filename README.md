@@ -79,6 +79,7 @@ Recursos de edição, com os nomes de parâmetro no `timeline.json`:
 - **Materiais**: a aba ao lado do player lista os arquivos do projeto, com as pastas e subpastas de onde vieram, mais as narrações das outras timelines. Os arquivos ficam todos em `assets/` do projeto e a pasta é o campo `pasta` de cada material. Arrastar para uma trilha adiciona; soltar sobre um clipe substitui o arquivo dele e mantém lugar, efeitos e animações; o botão ⇄ substitui em todos os clipes.
 - **Formato**: 9:16, 16:9, 1:1 e 4:5 na barra da timeline. Posições, textos e larguras acompanham o quadro novo.
 - **Desativar** (`desativado`): V liga e desliga os clipes selecionados. O clipe fica na timeline, mais escuro, mas some da prévia, do render, do Filmcraft (vai como clipe desligado) e da transcrição.
+- **Faixas**: botão direito no cabeçalho de uma faixa (ou num espaço vazio dela) cria uma faixa nova do mesmo tipo logo acima ou logo abaixo, como no Premiere, ou exclui a faixa (com clipes, pede confirmação).
 - **Ferramentas**: selecionar (A), ripple (B), roll (N), slip (Y), slide (U), velocidade (R) e navalha (C).
 
 ## Filmcraft

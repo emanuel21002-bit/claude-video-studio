@@ -1225,3 +1225,31 @@ body.movendo-itens, body.movendo-itens * { cursor: grabbing !important; }
 /* Marcadores na régua (M) */
 .tl-marcador { position: absolute; top: 0; width: 10px; height: 10px; margin-left: -5px; background: #6fd08c; clip-path: polygon(0 0, 100% 0, 100% 60%, 50% 100%, 0 60%); cursor: pointer; z-index: 2; }
 .tl-marcador:hover { background: #a6f0bd; }
+
+/* ---------- Propriedades como os Controles de efeito do Premiere ---------- */
+.pr-cabecalho { padding: 2px 0 8px; border-bottom: 1px solid var(--borda); margin-bottom: 4px; }
+.pr-titulo { margin: 0 0 2px; }
+.pr-origem { font-size: 11px; color: var(--fraco); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pr-grupo { border-bottom: 1px solid var(--borda); }
+.pr-grupo > summary { display: flex; align-items: center; gap: 6px; padding: 6px 2px; cursor: pointer; font-size: 12px; font-weight: 600; user-select: none; list-style: none; }
+.pr-grupo > summary::-webkit-details-marker { display: none; }
+.pr-grupo > summary::before { content: '▸'; font-size: 10px; color: var(--fraco); width: 10px; transition: transform 0.12s; }
+.pr-grupo[open] > summary::before { transform: rotate(90deg); }
+.pr-fx { font: italic 700 10px/1 Georgia, serif; color: var(--acento); border: 1px solid var(--acento); border-radius: 3px; padding: 1px 3px; }
+.pr-nome { flex: 1; min-width: 0; }
+.pr-redefinir { width: auto; flex: none; margin: 0; padding: 0 6px; height: 20px; font-size: 13px; background: transparent; border-color: transparent; color: var(--fraco); }
+.pr-redefinir:hover { border-color: var(--borda); color: inherit; }
+.pr-corpo { padding: 0 2px 8px 16px; }
+.pr-corpo.ins-secao { margin-top: 0; padding-top: 0; border-top: 0; }
+/* Uma linha por propriedade: nome à esquerda, valor e keyframes à direita. */
+.pr-corpo > label { display: grid; grid-template-columns: minmax(0, 1fr) minmax(70px, 120px) auto; align-items: center; column-gap: 6px; margin-top: 4px; }
+.pr-corpo > label > textarea, .pr-corpo > label > select[multiple] { grid-column: 1 / -1; }
+.pr-corpo > label > input[type='number'] { text-align: right; color: #6fb6ff; }
+.materiais-botoes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+#projeto { padding: 8px; }
+/* Os botões pequenos dos painéis não seguem a largura total de ".inspetor button". */
+.inspetor .pr-redefinir, .inspetor .tr-cat, .inspetor .tr-dir, .inspetor .tr-acoes button { width: auto; margin-top: 0; }
+.inspetor .tr-cat { padding: 3px 10px; }
+.inspetor .tr-dir { width: 26px; padding: 0; }
+.inspetor .tr-acoes button { padding: 3px 10px; }
+.inspetor .pr-redefinir { padding: 0 6px; }
