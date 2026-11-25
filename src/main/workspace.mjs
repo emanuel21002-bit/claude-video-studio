@@ -119,7 +119,10 @@ function copiarSkills(onLinha) {
   const origem = carregar().skillsOrigem;
   const destino = path.join(dirs().ws, '.claude', 'skills');
   if (!origem || !fs.existsSync(origem)) {
-    onLinha?.(`Pasta de skills não encontrada (${origem}); seguindo sem as skills.`);
+    // O agente também lê as skills do usuário (~/.claude/skills); só avisa se nem essas existirem.
+    const doUsuario = path.join(os.homedir(), '.claude', 'skills');
+    if (fs.existsSync(doUsuario)) onLinha?.('Usando as skills do usuário (~/.claude/skills).');
+    else onLinha?.(`Pasta de skills não encontrada (${origem}); seguindo sem as skills.`);
     return;
   }
   fs.mkdirSync(destino, { recursive: true });

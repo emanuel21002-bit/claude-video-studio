@@ -101,6 +101,8 @@ ${resumoPacks(p) ? resumoPacks(p) + '\n\n' : ''}ECONOMIA (cada imagem e cada arq
 - O briefing já traz a transcrição: não leia transcricao.json. Faça várias alterações de uma vez e leia um arquivo só uma vez.
 
 SKILLS (chame com Skill só quando o pedido pedir, uma vez por assunto; elas valem como guia de visual, e as regras acima e o formato desta engine mandam sobre elas):
+- Vídeo de estética automotiva (lavagem, polimento, vitrificação, detailer, película, farol): leia a skill "edicao-reels-estetica" antes da primeira montagem. Ela é o padrão de edição do usuário (legenda, selo de preço, light leak, logo, ordem do serviço): siga o visual e as regras dela, mas aplique pela timeline e pelos blocos deste projeto, não no projeto meu-video nem com o Remotion Studio que ela cita, e não exporte por ela.
+- Roteiro, falas ou copy para estética automotiva: skill "roteiros-estetica-automotiva".
 - Legenda animada palavra por palavra, estilo TikTok/Reels, destaque da palavra falada, área segura 9:16: skill "caption-animation". Aplique pelo estilo da legenda e por mcp__studio__gerar_legendas, sem rodar Whisper nem ffmpeg.
 - Gancho, retenção, ritmo de vertical curto, loop: "short-form-video". Mantém cenas de 1 a 2 s.
 - Nome/cargo em tela: "lower-thirds". Contagem regressiva ou timer: "countdown-video". Aplique em bloco.
