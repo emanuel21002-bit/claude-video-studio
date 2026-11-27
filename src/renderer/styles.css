@@ -1310,3 +1310,56 @@ body.arrastando-valor, body.arrastando-valor * { cursor: ew-resize !important; u
 #barra-excluir input[type=checkbox] { margin: 0; }
 .pasta-cab .pasta-txt { flex: 1 1 auto; min-width: 0; }
 .lista-projetos { user-select: none; }
+
+/* ---------- Editor compacto: menos altura em barras e cabeçalhos, mais espaço para prévia e timeline ---------- */
+/* Cabeçalho do projeto numa linha só: nome, abas das timelines e botões. O estilo e o formato ficam no nome (title). */
+/* Em tela estreita os botões descem para uma segunda linha, em vez de esconder as abas. */
+.vista.editor .cab-editor { padding: 3px 10px; gap: 4px 12px; flex-wrap: wrap; }
+.vista.editor .cab-editor > div:first-child { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto; }
+.vista.editor .cab-editor .linha-botoes { margin-left: auto; }
+.vista.editor .cab-editor h2 { margin: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px; flex: 0 1 auto; }
+.vista.editor .cab-editor #ed-info { display: none; }
+.vista.editor .abas-timeline-linha { margin: 0; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.vista.editor .aba-timeline, .vista.editor .aba-acao { padding: 2px 9px; font-size: 11.5px; flex: none; }
+.vista.editor .cab-editor .linha-botoes { gap: 6px; flex-wrap: nowrap; flex: none; }
+.vista.editor .cab-editor .linha-botoes button { padding: 3px 10px; font-size: 12px; }
+.vista.editor .cab-editor .barra-render { gap: 6px; }
+.vista.editor .cab-editor .progresso { width: 160px; height: 24px; border-radius: 4px; }
+.vista.editor .cab-editor #prog-txt { line-height: 22px; padding: 0 8px; }
+.vista.editor .cab-editor .segmentado button { padding: 2px 10px; font-size: 12px; }
+.vista.editor .sel-workspace { padding: 2px 6px; font-size: 12px; max-width: 160px; }
+
+/* Painéis encaixáveis: abas mais baixas e menos margem entre eles. */
+.dock-raiz { padding: 2px; }
+.dock-split.row > .dock-divisor { width: 3px; }
+.dock-split.col > .dock-divisor { height: 3px; }
+.dock-abas { height: 24px; padding: 0 4px; }
+.dock-aba { padding: 0 8px; font-size: 11.5px; }
+.dock-aba.ativo::after { left: 8px; right: 8px; bottom: 3px; }
+.dock-painel > .inspetor > .painel-aba { padding: 6px 8px; }
+.materiais-botoes { gap: 4px; }
+.materiais-botoes button { padding: 3px 6px; font-size: 12px; }
+
+/* Prévia e Claude */
+.renders > summary { padding: 3px 8px; font-size: 12px; }
+.cab-chat { padding: 4px 8px; gap: 6px; font-size: 12px; }
+.cab-chat select { padding: 2px 6px; font-size: 12px; }
+.mensagens { padding: 8px; gap: 6px; }
+.msg { padding: 6px 9px; font-size: 12.5px; }
+.form-chat { padding: 6px 8px; gap: 5px; }
+.form-chat textarea { padding: 5px 8px; font-size: 12.5px; }
+.form-chat .linha-botoes button { padding: 3px 12px; }
+.atalhos { gap: 4px; }
+.atalhos button { padding: 2px 8px; font-size: 11.5px; }
+
+/* Timeline: barra de ferramentas e cabeçalho das faixas menores. */
+.tl-barra { padding: 3px 6px; gap: 3px; }
+.tl-barra button { padding: 2px 6px; font-size: 11.5px; }
+.tl-barra select { padding: 2px 4px; font-size: 11.5px; max-width: 118px; }
+.tl-barra .tl-tocar { width: 30px; }
+.tl-barra .segmentado button { padding: 2px 6px; }
+.tl-regua-linha { height: 20px; }
+.tl-cab, .tl-canto { width: 112px; }
+.tl-barra input[type="range"] { width: 90px; }
+.tl-cab { font-size: 11.5px; }
+.tl-codigo { min-width: 22px; height: 18px; font-size: 10.5px; }

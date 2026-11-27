@@ -1075,6 +1075,8 @@ async function abrirProjeto(id) {
   await TL.fechar();
   $('#ed-nome').textContent = p.nome;
   $('#ed-info').textContent = `${p.estiloNome} · ${p.engine === 'remotion' ? 'Remotion' : 'HyperFrames'} · ${p.largura}x${p.altura}`;
+  // No editor compacto a linha de informações fica escondida: aparece ao passar o mouse no nome.
+  $('#ed-nome').title = `${p.nome}\n${$('#ed-info').textContent}\nClique duplo para renomear`;
   $('#mensagens').innerHTML = '';
   estado.rotulo = p.rotulo;
   for (const m of p.chat) addMsg(m.de, m.texto, m.tl);

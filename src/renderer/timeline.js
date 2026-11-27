@@ -2,7 +2,7 @@
 // o mesmo que o Claude edita e que o render lê.
 
 const TL = (() => {
-  const LARGURA_CAB = 120;
+  const LARGURA_CAB = 112; // igual a .tl-cab e .tl-canto no CSS
   // Como no Filmcraft e no CapCut: faixas de vídeo (V1 embaixo, as de cima cobrem as de baixo) e de áudio (A1, A2…).
   // Qualquer item visual cabe em qualquer faixa de vídeo. sobreposicao e legenda são tipos antigos, tratados como vídeo.
   // ajuste: camada de ajuste, sem arquivo; os efeitos dela valem para tudo o que está nas faixas de vídeo abaixo.
@@ -10,7 +10,8 @@ const TL = (() => {
   const ACEITA = { video: VISUAIS, sobreposicao: VISUAIS, legenda: VISUAIS, audio: ['audio'] };
   const ehAudio = (tr) => tr.tipo === 'audio';
   // Faixa com vídeo ou imagem mostra miniaturas: fica mais alta que as de texto e legenda.
-  const alturaPadrao = (tr) => (ehAudio(tr) ? 44 : tr.itens.some((i) => i.tipo === 'video' || i.tipo === 'imagem') ? 54 : tr.itens.length ? 36 : 40);
+  // Faixas mais baixas que antes (44/54/36/40): cabe mais faixa na tela sem rolar. Quem arrastou a altura mantém a sua.
+  const alturaPadrao = (tr) => (ehAudio(tr) ? 36 : tr.itens.some((i) => i.tipo === 'video' || i.tipo === 'imagem') ? 44 : tr.itens.length ? 28 : 30);
   // "altura" na faixa é só da tela: o usuário muda arrastando a borda de baixo do cabeçalho.
   const ALTURA_MIN = 22;
   const ALTURA_MAX = 200;
