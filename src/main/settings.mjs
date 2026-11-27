@@ -32,6 +32,7 @@ export const PADRAO = {
   renderFps: 0, // 0 = o do projeto
   renderPasta: '', // vazio = renders/ da timeline
   renderSemAudio: false,
+  renderNormalizar: false, // padroniza o volume em −14 LUFS no fim da exportação
 };
 
 // Arquivo próprio do app, ao lado das configurações.

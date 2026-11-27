@@ -60,6 +60,11 @@
               <strong>Decupar áudios</strong>
               <span>Corta as pausas e sobrepõe as emendas</span>
             </button>
+            <button id="btn-premiere" class="cartao">
+              <span class="cartao-icone">Pr</span>
+              <strong>Painel no Premiere</strong>
+              <span>Instala o chat do MovAi no Premiere Pro para editar a sequência dele</span>
+            </button>
           </div>
           <div class="inicio-colunas">
             <div class="inicio-col" id="bloco-rascunhos" hidden>
@@ -515,6 +520,7 @@
               <button id="tl-inicio" title="Ir ao início (Home)">⏮</button>
               <button id="tl-tocar" class="tl-tocar" title="Tocar / pausar (Espaço)">▶</button>
               <span class="tl-tempo"><span id="tl-tempo">00:00.00</span> / <span id="tl-total">00:00.00</span></span>
+              <button id="tl-quadro" title="Salvar o quadro do cursor como imagem (PNG)">📷</button>
               <span class="tl-sep"></span>
               <div id="tl-ferramentas" class="segmentado tl-ferramentas">
                 <button data-f="selecao" title="Selecionar, mover e aparar (A)">➤</button>
@@ -626,6 +632,7 @@
           <label>Taxa de quadros <select id="exp-fps"></select></label>
           <label>Espaço de cores <span class="exp-fixo">Rec. 709 SDR</span></label>
           <label class="exp-marca"><input type="checkbox" id="render-sem-audio" /> Sem áudio</label>
+          <label class="exp-marca" title="Mede o som do vídeo pronto e ajusta para −14 LUFS, o volume em que Reels, TikTok e YouTube tocam (pico até −1 dB). O vídeo não é recodificado."><input type="checkbox" id="render-normalizar" /> Padronizar volume para as redes (−14 LUFS)</label>
           <hr />
           <div class="exp-linha" id="exp-linha-motor">Montar com
             <div class="segmentado" id="seg-motor" title="Quem monta o vídeo final. Rápido: o ffmpeg monta tudo de uma vez, na placa de vídeo; o que ele não cobre (transições especiais, keyframes em clipes, camada de ajuste) vai para o Filmcraft. Se o Filmcraft falhar, o app usa o Remotion.">

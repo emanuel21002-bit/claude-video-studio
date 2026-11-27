@@ -186,6 +186,55 @@ async function carregarProjetos() {
       carregarProjetos();
     };
     cab.onclick = () => abrirProjeto(primeiro.id);
+    // Seleção para excluir: a lixeira liga o modo; com ele ligado, cada projeto ganha uma caixinha, e arrastar com o
+    // botão apertado por cima dos projetos marca (ou desmarca) vários de uma vez.
+    const sel = estado.selecaoExcluir;
+    if (sel) {
+      const caixa = document.createElement('input');
+      caixa.type = 'checkbox';
+      caixa.className = 'pasta-check';
+      caixa.checked = sel.has(f.id);
+      const marcar = (v) => {
+        caixa.checked = v;
+        if (v) sel.add(f.id);
+        else sel.delete(f.id);
+        atualizarBarraExcluir();
+      };
+      caixa.onclick = (ev) => ev.stopPropagation();
+      cab.onmousedown = (ev) => {
+        if (ev.button !== 0) return;
+        ev.preventDefault();
+        estado.arrasteMarca = !caixa.checked;
+        marcar(estado.arrasteMarca);
+      };
+      cab.onmouseenter = () => estado.arrasteMarca != null && marcar(estado.arrasteMarca);
+      cab.onclick = null;
+      cab.prepend(caixa);
+    } else {
+      const lixo = document.createElement('button');
+      lixo.className = 'pasta-excluir';
+      lixo.textContent = '🗑';
+      lixo.title = 'Excluir projetos (marque um ou vários)';
+      lixo.onclick = (ev) => {
+        ev.stopPropagation();
+        estado.selecaoExcluir = new Set([f.id]);
+        carregarProjetos();
+      };
+      cab.append(lixo);
+      // Arrastar com o botão apertado de um projeto para outro já entra na seleção, marcando os dois.
+      cab.onmousedown = (ev) => {
+        if (ev.button !== 0 || ev.target.closest('button')) return;
+        ev.preventDefault();
+        estado.arrasteInicio = f.id;
+      };
+      cab.onmouseenter = () => {
+        if (!estado.arrasteInicio || estado.arrasteInicio === f.id) return;
+        estado.selecaoExcluir = new Set([estado.arrasteInicio, f.id]);
+        estado.arrasteMarca = true;
+        estado.arrasteInicio = null;
+        carregarProjetos();
+      };
+    }
     if (n > 1 && aberta) {
       const itens = document.createElement('div');
       itens.className = 'pasta-itens';
@@ -202,7 +251,59 @@ async function carregarProjetos() {
     }
     ul.append(li);
   }
+  atualizarBarraExcluir();
   renderAbasTimeline(lista);
+}
+
+addEventListener('mouseup', () => {
+  estado.arrasteMarca = null;
+  estado.arrasteInicio = null;
+});
+addEventListener('keydown', (ev) => ev.key === 'Escape' && estado.selecaoExcluir && sairDaSelecao());
+
+function sairDaSelecao() {
+  estado.selecaoExcluir = null;
+  carregarProjetos();
+}
+
+// Barra em cima da lista enquanto escolhe o que excluir.
+function atualizarBarraExcluir() {
+  const ul = $('#lista-projetos');
+  let barra = $('#barra-excluir');
+  const sel = estado.selecaoExcluir;
+  if (!sel) return barra?.remove();
+  if (!barra) {
+    barra = document.createElement('div');
+    barra.id = 'barra-excluir';
+    barra.innerHTML = '<label><input type="checkbox" class="todos"> Todos</label><span class="conta"></span><button class="cancelar">Cancelar</button><button class="excluir">Excluir</button>';
+    ul.before(barra);
+    barra.querySelector('.cancelar').onclick = sairDaSelecao;
+    barra.querySelector('.todos').onchange = (ev) => {
+      estado.selecaoExcluir.clear();
+      if (ev.target.checked) for (const p of estado.listaProjetos ?? []) estado.selecaoExcluir.add(p.grupo?.id ?? p.id);
+      carregarProjetos();
+    };
+    barra.querySelector('.excluir').onclick = async () => {
+      const ids = [...estado.selecaoExcluir];
+      if (!ids.length) return;
+      try {
+        const r = await api.excluirProjeto(ids);
+        if (!r?.excluidos && !r?.falhas?.length) return;
+        const abertoSaiu = (estado.listaProjetos ?? []).some((p) => p.id === estado.projetoId && ids.includes(p.grupo?.id ?? p.id));
+        if (abertoSaiu) irParaInicio();
+        if (r.falhas?.length) alert(`Não consegui excluir:\n${r.falhas.join('\n')}`);
+        sairDaSelecao();
+      } catch (e) {
+        alert(String(e.message ?? e).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''));
+      }
+    };
+  }
+  const n = sel.size;
+  barra.querySelector('.conta').textContent = n ? `${n} selecionado${n > 1 ? 's' : ''} · arraste para marcar vários` : 'Marque os projetos';
+  barra.querySelector('.excluir').disabled = !n;
+  barra.querySelector('.excluir').textContent = n ? `Excluir ${n}` : 'Excluir';
+  barra.querySelector('.todos').checked = n > 0 && n === new Set((estado.listaProjetos ?? []).map((p) => p.grupo?.id ?? p.id)).size;
+  for (const li of ul.querySelectorAll('li.pasta')) li.classList.toggle('marcada', !!li.querySelector('.pasta-check')?.checked);
 }
 
 // Abas com as timelines do projeto aberto, no topo do editor.
@@ -1059,6 +1160,8 @@ api.aoAgente(async (e) => {
     if (e.tipo === 'fila') {
       estado.trabalhando.add(alvo);
       estado.naFila.add(alvo);
+      // Criado por fora da janela (pelo painel do Premiere): a lista ainda não tem.
+      if (!(estado.listaProjetos ?? []).some((p) => p.id === alvo)) carregarProjetos();
     }
     if (e.tipo === 'inicio') {
       estado.trabalhando.add(alvo);
@@ -1158,6 +1261,7 @@ function escolhasExportar() {
     resolucao: Number($('#render-resolucao').value),
     fps: Number($('#exp-fps').value),
     semAudio: $('#render-sem-audio').checked,
+    normalizar: $('#render-normalizar').checked,
   };
 }
 
@@ -1189,6 +1293,7 @@ async function abrirExportar({ lote }) {
   $('#exp-formato').value = primeira ? 'mov' : c.renderFormato;
   $('#render-qualidade').value = primeira || c.renderQualidade === 'media' ? 'recomendado' : c.renderQualidade;
   $('#render-sem-audio').checked = !!c.renderSemAudio;
+  $('#render-normalizar').checked = !!c.renderNormalizar;
   $('#exp-fps').replaceChildren(new Option(`Original (${p.fps} fps)`, '0'), ...[24, 25, 30, 50, 60].filter((f) => f !== p.fps).map((f) => new Option(`${f} fps`, String(f))));
   $('#exp-fps').value = [...$('#exp-fps').options].some((o) => Number(o.value) === c.renderFps) ? String(c.renderFps) : '0';
   $('#exp-linha-motor').hidden = !estado.ambiente?.filmcraft;
@@ -1222,7 +1327,7 @@ async function confirmarExportar() {
   const e = escolhasExportar();
   // A próxima exportação começa com as mesmas escolhas.
   estado.config = await api.salvarConfig({
-    renderCodec: e.codec, renderFormato: e.formato, renderQualidade: e.qualidade, renderResolucao: e.resolucao, renderFps: e.fps, renderSemAudio: e.semAudio, renderPasta: pasta,
+    renderCodec: e.codec, renderFormato: e.formato, renderQualidade: e.qualidade, renderResolucao: e.resolucao, renderFps: e.fps, renderSemAudio: e.semAudio, renderNormalizar: e.normalizar, renderPasta: pasta,
   });
   aoFecharExportar?.({ ...e, nome: $('#exp-nome').value, pastaSaida: pasta || null, modo: estado.config.renderModo, motor: estado.config.renderMotor });
 }
@@ -1732,6 +1837,21 @@ async function iniciarDecupar() {
 
 function ligarDecupar() {
   $('#btn-decupar').onclick = abrirDecupar;
+  $('#btn-premiere').onclick = async () => {
+    const b = $('#btn-premiere');
+    b.disabled = true;
+    try {
+      const r = await api.instalarPremiere();
+      alert(
+        'Painel instalado. No Premiere, abra Janela → Extensões → MovAi (reabra o Premiere se ele já estava aberto). Deixe o MovAi aberto enquanto usa o painel.' +
+          (r.depuracao ? '' : '\n\nAtenção: o Premiere só carrega extensões sem assinatura com o PlayerDebugMode do CSXS ligado no registro (HKCU\\Software\\Adobe\\CSXS.12). Sem isso o painel não aparece.'),
+      );
+    } catch (e) {
+      alert(String(e.message ?? e).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''));
+    } finally {
+      b.disabled = false;
+    }
+  };
   $('#btn-sel-decupar').onclick = async () => adicionarDecupar(await api.escolher({ tipo: 'decupar', multiplos: true }));
   $('#btn-sel-decupar-pastas').onclick = async () => adicionarDecupar(await api.escolherPastas());
   const numero = (id, chave, min, max) => {

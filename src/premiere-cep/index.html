@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="estilo.css" />
+  </head>
+  <body>
+    <div id="topo">
+      <span id="ponto"></span>
+      <span id="situacao">Conectando ao MovAi…</span>
+      <button id="abrir-novo" title="Material, narração e estilo: o MovAi monta e cria a sequência aqui">Novo vídeo</button>
+      <button id="novo" title="Começa uma conversa nova">Novo chat</button>
+    </div>
+
+    <div id="form" hidden>
+      <label>Nome<input id="f-nome" placeholder="Ex.: Clean Car Amarok 27.11" /></label>
+      <div class="grupo">
+        <div class="cab">Material <span id="f-mat-conta"></span></div>
+        <div class="linha"><button data-escolher="materiais" data-tipo="arquivos">Arquivos</button><button data-escolher="materiais" data-tipo="pasta">Pasta</button><button data-limpar="materiais">Limpar</button></div>
+        <div id="f-materiais" class="lista"></div>
+      </div>
+      <div class="grupo">
+        <div class="cab">Narração <span class="dica">(cada arquivo ou pasta vira um vídeo)</span></div>
+        <div class="linha"><button data-escolher="narracoes" data-tipo="arquivos">Arquivos</button><button data-escolher="narracoes" data-tipo="pasta">Pasta</button><button data-limpar="narracoes">Limpar</button></div>
+        <div id="f-narracoes" class="lista"></div>
+      </div>
+      <div class="linha2">
+        <label>Estilo<select id="f-estilo"></select></label>
+        <label>Formato<select id="f-formato"></select></label>
+      </div>
+      <div id="f-estilo-desc" class="dica"></div>
+      <label>Pedido ou briefing (opcional)<textarea id="f-briefing" rows="3" placeholder="Ex.: valorizar o antes e depois, preço R$ 350"></textarea></label>
+      <div id="botoes-form"><button id="f-cancelar">Voltar</button><button id="f-criar">Criar e editar</button></div>
+    </div>
+
+    <div id="mensagens"></div>
+    <div id="rodape">
+      <textarea id="entrada" rows="3" placeholder="Peça uma edição na sequência aberta… (Ctrl+Enter envia)"></textarea>
+      <div id="botoes">
+        <button id="cancelar" hidden>Parar</button>
+        <button id="enviar">Enviar</button>
+      </div>
+    </div>
+    <!-- config.js é gravado pelo MovAi na instalação (porta e token). -->
+    <script src="config.js"></script>
+    <script src="executor.js"></script>
+    <script src="painel.js"></script>
+  </body>
+</html>

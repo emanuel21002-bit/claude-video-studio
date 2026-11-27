@@ -1,6 +1,6 @@
 // Pré-render em segundo plano, como o Premiere faz com as prévias: um tempo depois da última edição, com o app sem
 // render, prepara o que o export vai precisar, em prioridade baixa. Primeiro a mídia otimizada (ver otimizada.mjs),
-// depois a camada de textos do Remotion. Começar um render ou editar de novo cancela na hora; o que já ficou pronto
+// depois a camada de textos do Remotion e, por fim, os trechos de vídeo do motor rápido. Começar um render ou editar de novo cancela na hora; o que já ficou pronto
 // fica guardado e o export só aproveita.
 
 import { trabalhoPesado } from './proc.mjs';
@@ -42,7 +42,12 @@ async function rodar(id, onLinha) {
     if (sinal.aborted) return;
     const { renderizarCamadas } = await import('./filmcraft.mjs');
     await renderizarCamadas(id, t, (l) => onLinha?.(`Segundo plano: ${l}`), { sinal, baixa: true });
-    if (!sinal.aborted) onLinha?.('Segundo plano: tudo pronto para o export.');
+    if (sinal.aborted) return;
+    // Por último, os trechos de vídeo com as escolhas da última exportação: exportar sem mudar nada vira juntar e pôr
+    // o som (medido: 104 s → 2 s num vídeo de 28 s).
+    const { preRenderizarTrechos } = await import('./render.mjs');
+    const trechos = await preRenderizarTrechos(id, { sinal, onLinha: (l) => onLinha?.(`Segundo plano: ${l}`) });
+    if (!sinal.aborted) onLinha?.(trechos ? 'Segundo plano: vídeo pré-renderizado, o export só vai juntar os trechos.' : 'Segundo plano: tudo pronto para o export.');
   } catch (e) {
     if (!sinal.aborted) onLinha?.(`Segundo plano parou: ${String(e.message ?? e).split('\n')[0]}`);
   } finally {

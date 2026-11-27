@@ -44,7 +44,8 @@ function ligarTudo(de, para) {
       await renderStill({
         composition: { ...composition, width: o.timeline.largura, height: o.timeline.altura },
         serveUrl: o.pacote, frame: Math.min(frame, composition.durationInFrames - 1), inputProps,
-        output: path.join(o.saida, `q${String(frame).padStart(6, '0')}.jpg`), imageFormat: 'jpeg', jpegQuality: 80,
+        output: path.join(o.saida, `q${String(frame).padStart(6, '0')}.${o.formato === 'png' ? 'png' : 'jpg'}`),
+        ...(o.formato === 'png' ? { imageFormat: 'png' } : { imageFormat: 'jpeg', jpegQuality: 80 }),
         scale: o.escala, puppeteerInstance: browser, timeoutInMilliseconds: 120000, overwrite: true,
       });
     }

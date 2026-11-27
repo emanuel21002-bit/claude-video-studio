@@ -1290,3 +1290,23 @@ body.transformando, body.transformando * { user-select: none; }
 .pr-linha .kf-controles[hidden] { display: none; }
 body.arrastando-valor, body.arrastando-valor * { cursor: ew-resize !important; user-select: none; }
 .inspetor .pr-linha .kf-curva { width: 64px; margin: 0; padding: 1px 2px; font-size: 11px; }
+
+.pasta-cab { position: relative; }
+.pasta-txt { flex: 1; min-width: 0; }
+.pasta-excluir { flex: none; background: none; border: 0; color: var(--fraco); cursor: pointer; padding: 2px 6px; border-radius: 6px; opacity: 0; font-size: 13px; }
+.pasta-cab:hover .pasta-excluir { opacity: 1; }
+.pasta-excluir:hover { background: #4a2328; color: #ff8a8a; }
+
+.pasta-check { flex: none; margin: 3px 2px 0 0; accent-color: #e05a5a; cursor: pointer; }
+.lista-projetos li.pasta.marcada .pasta-cab { background: #3a2226; }
+#barra-excluir { display: flex; align-items: center; gap: 8px; padding: 6px 10px; margin-bottom: 6px; border: 1px solid #5a2a30; border-radius: 8px; background: #2a1a1d; font-size: 12px; user-select: none; }
+#barra-excluir label { display: flex; gap: 4px; align-items: center; cursor: pointer; }
+#barra-excluir .conta { flex: 1; color: var(--fraco); }
+#barra-excluir button { width: auto; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--borda); background: var(--painel-2); color: inherit; cursor: pointer; }
+#barra-excluir .excluir { background: #a8323c; border-color: #c2414b; color: #fff; }
+#barra-excluir .excluir:disabled { opacity: .5; cursor: default; }
+/* A caixinha não herda o estilo dos campos de texto (largura 100%, padding). */
+.pasta-cab input.pasta-check, #barra-excluir input[type=checkbox] { width: 14px; height: 14px; min-width: 0; padding: 0; margin: 3px 0 0; flex: 0 0 14px; }
+#barra-excluir input[type=checkbox] { margin: 0; }
+.pasta-cab .pasta-txt { flex: 1 1 auto; min-width: 0; }
+.lista-projetos { user-select: none; }

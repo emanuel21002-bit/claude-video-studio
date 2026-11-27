@@ -59,15 +59,34 @@ export function hashDaCamada(id, soGraficos) {
 // multiplicar/tela ({ arquivo, duracao, modo }), da de baixo para a de cima.
 // intervalo [de, ate]: só esse pedaço da timeline (o pré-render refaz só os trechos que mudaram). A camada começa em
 // `de`: quem usa desconta `inicio` do tempo.
-export async function renderizarCamadas(id, t, onLinha, { intervalo = null, sinal, baixa = false } = {}) {
-  const fundo = await renderizarCamada(id, t, onLinha, { parte: 'fundo', intervalo, sinal, baixa });
+// mov: o Filmcraft e o Premiere recebem a camada como vídeo (ProRes 4444 com transparência); o export rápido lê a
+// sequência de PNG direto (ver renderizarCamada).
+export async function renderizarCamadas(id, t, onLinha, { intervalo = null, sinal, baixa = false, mov = false } = {}) {
+  const pronta = async (c) => (c && mov ? camadaEmVideo(c, { sinal, baixa, onLinha }) : c);
+  const fundo = await pronta(await renderizarCamada(id, t, onLinha, { parte: 'fundo', intervalo, sinal, baixa }));
   const mescla = [];
   for (const [parte, { modo }] of Object.entries(CAMADAS_MESCLA)) {
-    const c = await renderizarCamada(id, t, onLinha, { parte, intervalo, sinal, baixa });
+    const c = await pronta(await renderizarCamada(id, t, onLinha, { parte, intervalo, sinal, baixa }));
     if (c) mescla.push({ ...c, modo });
   }
-  const frente = await renderizarCamada(id, t, onLinha, { parte: 'frente', intervalo, sinal, baixa });
+  const frente = await pronta(await renderizarCamada(id, t, onLinha, { parte: 'frente', intervalo, sinal, baixa }));
   return { frente, fundo, mescla };
+}
+
+// A sequência de PNG vira um .mov ao lado (uma vez só; depois é reaproveitado). Camadas antigas já são .mov.
+export async function camadaEmVideo(c, { sinal, baixa = false, onLinha } = {}) {
+  if (!c?.sequencia) return c;
+  const mov = c.arquivo + '.mov';
+  if (!fs.existsSync(mov)) {
+    onLinha?.('Convertendo a camada de textos em vídeo (ProRes 4444)…');
+    const parcial = c.arquivo + '.tmp.mov';
+    await rodarOuFalhar(carregar().ffmpegPath, [
+      '-y', '-hide_banner', '-loglevel', 'error', '-framerate', String(c.fps), '-i', path.join(c.arquivo, 'q%06d.png'),
+      '-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le', '-vendor', 'apl0', parcial,
+    ], { sinal, baixa });
+    fs.renameSync(parcial, mov);
+  }
+  return { ...c, arquivo: mov, sequencia: false };
 }
 
 const NOME_PARTE = { fundo: 'o fundo (gráficos por baixo dos vídeos)', multiplicar: 'os gráficos em multiplicar', tela: 'os gráficos em tela' };
@@ -88,27 +107,42 @@ export async function renderizarCamada(id, t, onLinha, { parte = 'frente', inter
   const itens = soGraficos.trilhas.flatMap((tr) => tr.itens).filter((i) => i.inicio < ate - 0.0005 && i.inicio + i.duracao > de + 0.0005);
   if (!itens.length) return null;
   const hash = crypto.createHash('sha1').update(hashDaCamada(id, soGraficos)).update(JSON.stringify(intervalo)).digest('hex');
-  const saida = path.join(pasta(id), `camada-${hash.slice(0, 12)}.mov`);
+  // A camada sai como sequência de PNG (q000000.png… a partir do quadro de "de"): sem montar o ProRes no fim, o render
+  // fica cerca de um terço mais rápido (medido: 25 s contra 38 s em 803 quadros) e o ffmpeg lê os PNG em menos da
+  // metade do tempo. O .mov só é feito quando o Filmcraft ou o Premiere pedem (camadaEmVideo).
+  const saida = path.join(pasta(id), `camada-${hash.slice(0, 12)}`);
+  const antiga = saida + '.mov';
   const fimDosGraficos = Math.max(...itens.map((i) => i.inicio + i.duracao));
   const fim = Math.min(ate, fimDosGraficos);
   const duracao = fim - de;
-  if (fs.existsSync(saida)) {
+  const marca = path.join(saida, '.pronta');
+  const pronta = fs.existsSync(marca) ? { arquivo: saida, sequencia: true, fps: t.fps, duracao, inicio: de } : fs.existsSync(antiga) ? { arquivo: antiga, duracao, inicio: de } : null;
+  if (pronta) {
     // Mesmo texto, legenda e efeito de antes: nada a renderizar. Marca o uso para o arquivo não ser descartado.
-    fs.utimesSync(saida, new Date(), new Date());
+    fs.utimesSync(pronta.sequencia ? marca : antiga, new Date(), new Date());
     onLinha?.(NOME_PARTE[parte] ? `Camada com ${NOME_PARTE[parte]} igual à da última vez: reaproveitando a camada pronta.` : 'Textos, legendas e efeitos iguais aos da última vez: reaproveitando a camada pronta.');
-    return { arquivo: saida, duracao, inicio: de };
+    return pronta;
   }
   if (soSePronta) return null;
   // Guarda as últimas camadas: voltar a uma versão anterior (desfazer uma troca de cor, por exemplo) não renderiza de novo.
-  const antigas = fs.readdirSync(pasta(id)).filter((n) => /^camada-.*\.mov$/.test(n))
-    .map((n) => ({ n, t: fs.statSync(path.join(pasta(id), n)).mtimeMs })).sort((a, b) => b.t - a.t);
-  for (const { n } of antigas.slice(CAMADAS_GUARDADAS - 1)) fs.rmSync(path.join(pasta(id), n), { force: true });
+  // Pastas de PNG (com o .mov ao lado, se foi feito) e camadas antigas em .mov; a data é a do último uso.
+  const usoDe = (n) => {
+    const c = path.join(pasta(id), n);
+    return fs.statSync(fs.existsSync(path.join(c, '.pronta')) ? path.join(c, '.pronta') : c).mtimeMs;
+  };
+  const antigas = fs.readdirSync(pasta(id)).filter((n) => /^camada-[0-9a-f]{12}(\.mov)?$/.test(n))
+    .map((n) => ({ n, t: usoDe(n) })).sort((a, b) => b.t - a.t);
+  for (const { n } of antigas.slice(CAMADAS_GUARDADAS - 1)) {
+    fs.rmSync(path.join(pasta(id), n), { recursive: true, force: true });
+    if (!n.endsWith('.mov')) fs.rmSync(path.join(pasta(id), n + '.mov'), { force: true });
+  }
   const props = path.join(pasta(id), 'camada-props.json');
   fs.writeFileSync(props, JSON.stringify({ timeline: soGraficos }));
   onLinha?.(NOME_PARTE[parte] ? `Renderizando ${NOME_PARTE[parte]} para o Filmcraft…` : 'Renderizando textos, legendas e efeitos para o Filmcraft…');
   const s = carregar();
   const { ws } = dirs();
-  const parcial = saida + '.tmp.mov';
+  // Sem extensão: o Remotion recusa pasta de sequência com ponto no nome.
+  const parcial = saida + '-parcial';
   const tmp = path.join(pasta(id), 'tmp');
   let soltar = () => {};
   try {
@@ -120,18 +154,25 @@ export async function renderizarCamada(id, t, onLinha, { parte = 'frente', inter
       path.join(ws, 'node_modules', '@remotion', 'cli', 'remotion-cli.js'), 'render',
       ent.entrada, 'Main', parcial,
       ...ent.publicDir, `--props=${props}`, `--concurrency=${paraleloCamada()}`, '--timeout=120000',
-      '--codec=prores', '--prores-profile=4444', '--pixel-format=yuva444p10le', '--image-format=png', '--gl=angle',
+      '--sequence', '--image-format=png', '--gl=angle',
       `--frames=${Math.round(de * t.fps)}-${Math.max(Math.round(de * t.fps), Math.ceil(fim * t.fps) - 1)}`,
     ], { cwd: ws, env: { TEMP: tmp, TMP: tmp }, sinal, baixa });
+    // O Remotion numera pelo quadro da composição, com zeros conforme o total: renomeia para q000000.png… em ordem.
+    const pngs = fs.readdirSync(parcial).filter((n) => n.endsWith('.png'))
+      .sort((a, b) => Number(a.match(/(\d+)\.png$/)[1]) - Number(b.match(/(\d+)\.png$/)[1]));
+    if (!pngs.length) throw new Error('O Remotion não gerou os quadros da camada.');
+    pngs.forEach((n, k) => fs.renameSync(path.join(parcial, n), path.join(parcial, `q${String(k).padStart(6, '0')}.png`)));
+    fs.writeFileSync(path.join(parcial, '.pronta'), '');
+    fs.rmSync(saida, { recursive: true, force: true });
     fs.renameSync(parcial, saida);
   } catch (e) {
-    fs.rmSync(parcial, { force: true });
+    fs.rmSync(parcial, { recursive: true, force: true });
     throw e;
   } finally {
     soltar();
     fs.rmSync(tmp, { recursive: true, force: true });
   }
-  return { arquivo: saida, duracao, inicio: de };
+  return { arquivo: saida, sequencia: true, fps: t.fps, duracao, inicio: de };
 }
 
 const estado = (p) => p.filmcraft ?? {};
@@ -178,7 +219,7 @@ export async function prepararProjetoFilmcraft(id, destino, onLinha) {
   escreverModelo(projeto);
   const t = semDesativados(lerTimeline(id));
   fs.mkdirSync(pasta(id), { recursive: true });
-  const { frente: camada, fundo: camadaFundo, mescla: camadasMescla } = await renderizarCamadas(id, t, onLinha);
+  const { frente: camada, fundo: camadaFundo, mescla: camadasMescla } = await renderizarCamadas(id, t, onLinha, { mov: true });
   const comTam = await comTamanhos(projeto, t);
   const { otio, avisos } = paraOtio(t, comTam, { assets: caminhoAssets(id), camada, camadaFundo, camadasMescla, hdr: comTam.hdr });
   const arqOtio = path.join(pasta(id), 'ida.otio');
@@ -188,6 +229,18 @@ export async function prepararProjetoFilmcraft(id, destino, onLinha) {
   return { avisos };
 }
 
+// A mesma conversão, para o Premiere: o OTIO da timeline (sem os itens desativados) com as camadas do Remotion
+// (textos, legendas, selos) já renderizadas por cima. Devolve { otio, avisos, largura, altura, fps }.
+export async function otioDaTimeline(id, onLinha) {
+  const projeto = lerProjeto(id);
+  const t = semDesativados(lerTimeline(id));
+  fs.mkdirSync(pasta(id), { recursive: true });
+  const { frente: camada, fundo: camadaFundo, mescla: camadasMescla } = await renderizarCamadas(id, t, onLinha, { mov: true });
+  const comTam = await comTamanhos(projeto, t);
+  const { otio, avisos } = paraOtio(t, comTam, { assets: caminhoAssets(id), camada, camadaFundo, camadasMescla, hdr: comTam.hdr });
+  return { otio, avisos, largura: t.largura, altura: t.altura, fps: t.fps };
+}
+
 export async function abrirNoFilmcraft(id, { descartar = false } = {}, onLinha) {
   if (!filmcraftDisponivel()) throw new Error('O Filmcraft não está em recursos\\filmcraft.');
   if (!descartar && editadoLa(id)) return { pendente: true };
@@ -195,7 +248,7 @@ export async function abrirNoFilmcraft(id, { descartar = false } = {}, onLinha) 
   escreverModelo(projeto);
   const t = lerTimeline(id);
   fs.mkdirSync(pasta(id), { recursive: true });
-  const { frente: camada, fundo: camadaFundo, mescla: camadasMescla } = await renderizarCamadas(id, t, onLinha);
+  const { frente: camada, fundo: camadaFundo, mescla: camadasMescla } = await renderizarCamadas(id, t, onLinha, { mov: true });
   const comTam = await comTamanhos(projeto, t);
   const { otio, avisos } = paraOtio(t, comTam, { assets: caminhoAssets(id), camada, camadaFundo, camadasMescla, hdr: comTam.hdr });
   const arqOtio = path.join(pasta(id), 'ida.otio');

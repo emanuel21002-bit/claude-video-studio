@@ -9,7 +9,7 @@ import { todosEstilos, excluirEstilo, FORMATOS } from './presets.mjs';
 import { listarMateriais,
   workspacePronto, prepararWorkspace, criarProjeto, novaTimeline, videosNarrados, timelineEmBranco, duplicarTimeline, renomearTimeline, renomearProjeto, excluirTimeline,
   listarProjetos, lerProjeto, gravarProjeto, escreverBriefing, caminhoProjeto, tipoDe, resolverNarracoes, EXT_DECUPAR, EXT_DECUPAR_AUDIO, ehVideoDoDecupar, atualizarDocumentacao, dirs,
-  adicionarRoteiros, removerRoteiro, timelinesDoProjeto, caminhoAssets,
+  adicionarRoteiros, removerRoteiro, timelinesDoProjeto, caminhoAssets, caminhoTimeline,
 } from './workspace.mjs';
 import { migrarProjetos, haProjetosAntigos, PASTA_ANTIGOS } from './migracao.mjs';
 import { decuparAudio } from './decupar.mjs';
@@ -19,7 +19,8 @@ import { conferir, trechosSemAudio } from './conferir-nucleo.mjs';
 import { whisperDisponivel, transcrever, transcreverArquivo } from './transcricao.mjs';
 import { listarTranscricoes, transcreverVideo } from './transcricao-video.mjs';
 import { transcreverTimeline, lerTranscricaoDaTimeline } from './transcricao-timeline.mjs';
-import { agendarSegundoPlano } from './segundo-plano.mjs';
+import { agendarSegundoPlano, pararSegundoPlano } from './segundo-plano.mjs';
+import { iniciarPontePremiere, instalarPainelPremiere, configurarPremiere, notificarPremiere, aoTerminarMontagem } from './premiere.mjs';
 import { fontesDoSistema, minhasFontes, adicionarFontes, removerFonte, prepararFonte } from './fontes.mjs';
 import { renderizar, estimarRender } from './render.mjs';
 import { conversar, cancelar, ocupado, chatOcupado, primeiraMensagem, claudeExe } from './agente.mjs';
@@ -27,7 +28,8 @@ import { rodar } from './proc.mjs';
 import { abrirNoFilmcraft, trazerDoFilmcraft, filmcraftDisponivel } from './filmcraft.mjs';
 import { encoderGpu, infoVideo, transcodificar } from './transcodificar.mjs';
 import { codificadoresDisponiveis } from './codificadores.mjs';
-import { lerTimeline, gravarTimeline, gerarLegendas, resumoLegendas, prepararPrevia, midiaDoArquivo, gerarProxyDe, importarParaProjeto } from './timeline.mjs';
+import { lerTimeline, gravarTimeline, gerarLegendas, resumoLegendas, prepararPrevia, midiaDoArquivo, gerarProxyDe, importarParaProjeto, congelarQuadro } from './timeline.mjs';
+import { salvarQuadro } from './ferramentas.mjs';
 
 const aqui = path.dirname(fileURLToPath(import.meta.url));
 // O nome do app mudou, mas as configurações, a chave de API e os estilos continuam na pasta de antes.
@@ -38,6 +40,7 @@ const rendersManuais = new Map(); // id -> AbortController
 
 function enviar(canal, dados) {
   if (janela && !janela.isDestroyed()) janela.webContents.send(canal, dados);
+  notificarPremiere(canal, dados);
 }
 
 function criarJanela() {
@@ -284,6 +287,8 @@ function rodarFila() {
         ativos.delete(id);
         preparando.delete(id);
         rodarFila();
+        // Vídeo pedido pelo painel do Premiere: vira sequência lá.
+        aoTerminarMontagem(id);
       });
   }
 }
@@ -339,8 +344,9 @@ async function montarProjeto(id) {
 }
 
 // Um projeto só, com os materiais uma vez; uma timeline por narração (sem narração ou só motion, uma timeline).
-ipcMain.handle('projeto:criar', async (_e, dados) => {
-  const log = (l) => enviar('log', l);
+ipcMain.handle('projeto:criar', (_e, dados) => criarComFila(dados, (l) => enviar('log', l)));
+
+async function criarComFila(dados, log) {
   let narracoes = dados.narracoes?.length ? dados.narracoes : [null];
   const total = narracoes.length;
   const projetoId = await criarProjeto({ ...dados, nome: dados.nome || (total > 1 ? `Projeto ${new Date().toLocaleDateString('pt-BR')}` : '') }, log);
@@ -375,11 +381,70 @@ ipcMain.handle('projeto:criar', async (_e, dados) => {
     criados.push(projeto);
   }
   criados.forEach((p) => entrarNaFila(p.id));
-  return criados.map((p) => lerProjeto(p.id));
-});
+  const lista = criados.map((p) => lerProjeto(p.id));
+  return lista;
+}
 
 // Timelines dentro de um projeto, sem o Claude e sem copiar materiais.
 const emUso = (id) => ocupado(id) || fila.includes(id) || preparando.has(id) || rendersManuais.has(id);
+
+// Exclui um projeto inteiro (todas as timelines, materiais copiados, renders, prévias e cache) para liberar espaço.
+// Os arquivos originais que foram importados ficam onde estavam: só a pasta do projeto sai.
+function tamanhoDaPasta(p) {
+  let total = 0;
+  for (const e of fs.readdirSync(p, { withFileTypes: true })) {
+    const f = path.join(p, e.name);
+    try {
+      total += e.isDirectory() ? tamanhoDaPasta(f) : fs.statSync(f).size;
+    } catch {}
+  }
+  return total;
+}
+const formatarBytes = (b) => (b >= 1e9 ? `${(b / 1e9).toFixed(1).replace('.', ',')} GB` : `${Math.max(1, Math.round(b / 1e6))} MB`);
+
+// Aceita um id ou uma lista: uma confirmação só, com o tamanho somado.
+ipcMain.handle('projeto:excluir', async (_e, lista) => {
+  const projetos = [];
+  for (const projetoId of [lista].flat()) {
+    if (!/^[^\\/.][^\\/]*$/.test(projetoId)) throw new Error('Projeto inválido.');
+    const pasta = path.join(dirs().projetos, projetoId);
+    if (!fs.existsSync(pasta)) continue;
+    let ids = [];
+    let nome = projetoId;
+    try {
+      ids = timelinesDoProjeto(`${projetoId}/x`).map((t) => t.id);
+      nome = lerProjeto(ids[0]).grupo?.nome ?? projetoId;
+    } catch {}
+    if (ids.some(emUso)) throw new Error(`"${nome}" está montando ou renderizando. Espere terminar ou cancele antes de excluir.`);
+    projetos.push({ pasta, nome, bytes: tamanhoDaPasta(pasta) });
+  }
+  if (!projetos.length) return { excluidos: 0 };
+  const tamanho = formatarBytes(projetos.reduce((a, p) => a + p.bytes, 0));
+  const um = projetos.length === 1;
+  const nomes = projetos.slice(0, 12).map((p) => `• ${p.nome} (${formatarBytes(p.bytes)})`).join('\n') + (projetos.length > 12 ? `\n• e mais ${projetos.length - 12}` : '');
+  const { response } = await dialog.showMessageBox(janela, {
+    type: 'warning',
+    title: um ? 'Excluir projeto' : 'Excluir projetos',
+    message: um ? `Excluir "${projetos[0].nome}"?` : `Excluir ${projetos.length} projetos (${tamanho})?`,
+    detail: `${um ? '' : nomes + '\n\n'}Sai a pasta inteira de ${um ? 'projeto' : 'cada um'} (${tamanho}): timelines, materiais copiados, renders, prévias e cache.\nOs arquivos originais que você importou não são tocados.\n\n"Apagar de vez" libera o espaço na hora e não tem volta.`,
+    buttons: ['Cancelar', 'Mover para a Lixeira', 'Apagar de vez'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  });
+  if (response === 0) return { excluidos: 0 };
+  pararSegundoPlano();
+  const falhas = [];
+  for (const p of projetos) {
+    try {
+      if (response === 1) await shell.trashItem(p.pasta);
+      else fs.rmSync(p.pasta, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
+    } catch (e) {
+      falhas.push(`${p.nome}: ${e.message}`);
+    }
+  }
+  return { excluidos: projetos.length - falhas.length, falhas, tamanho, lixeira: response === 1 };
+});
 
 ipcMain.handle('timeline:nova', (_e, id) => timelineEmBranco(id));
 ipcMain.handle('timeline:duplicar', (_e, id) => duplicarTimeline(id));
@@ -485,14 +550,24 @@ ipcMain.handle('timeline:ler', (_e, id) => lerTimeline(id));
 ipcMain.handle('filmcraft:abrir', (_e, { id, descartar }) => abrirNoFilmcraft(id, { descartar }, (l) => enviar('log', l)));
 ipcMain.handle('filmcraft:trazer', (_e, id) => trazerDoFilmcraft(id, (l) => enviar('log', l)));
 ipcMain.handle('timeline:salvar', (_e, { id, timeline }) => {
-  const r = gravarTimeline(id, timeline);
-  // Pré-render em segundo plano: mídia otimizada e camada de textos ficam prontas para o export.
-  agendarSegundoPlano(id, (l) => enviar('log', l));
-  return r;
+  // Pré-render em segundo plano: mídia otimizada e camada de textos ficam prontas para o export. Gravar sem mudança
+  // (desfazer e refazer de volta ao mesmo ponto, um campo redigitado igual) não cancela o que já está rodando.
+  if (gravarTimeline(id, timeline)) agendarSegundoPlano(id, (l) => enviar('log', l));
 });
 ipcMain.handle('timeline:previa', (_e, id) => prepararPrevia(id));
 ipcMain.handle('timeline:midia', (_e, { id, arquivo, extras }) => midiaDoArquivo(id, arquivo, { extras }));
 ipcMain.handle('timeline:proxy', (_e, { id, arquivo }) => gerarProxyDe(id, arquivo).catch(() => null));
+ipcMain.handle('timeline:congelar', (_e, { id, arquivo, segundo }) => congelarQuadro(id, arquivo, segundo));
+// Salva o quadro do cursor em PNG: pergunta onde, começando na pasta de exportação.
+ipcMain.handle('timeline:salvarQuadro', async (_e, { id, segundo, nome }) => {
+  const s = carregar();
+  const pasta = s.renderPasta || path.join(caminhoTimeline(id), 'renders');
+  const seg = Math.floor(segundo);
+  const sugestao = `${(nome || 'quadro').replace(/[<>:"/\\|?*]+/g, '-')} - ${String(Math.floor(seg / 60)).padStart(2, '0')}m${String(seg % 60).padStart(2, '0')}s.png`;
+  const r = await dialog.showSaveDialog(janela, { title: 'Salvar quadro como imagem', defaultPath: path.join(pasta, sugestao), filters: [{ name: 'PNG', extensions: ['png'] }] });
+  if (r.canceled || !r.filePath) return null;
+  return salvarQuadro(id, segundo, r.filePath);
+});
 ipcMain.handle('timeline:legendas', (_e, { id, opcoes }) => resumoLegendas(gerarLegendas(id, opcoes)));
 ipcMain.handle('roteiro:adicionar', (_e, { id, caminhos }) => adicionarRoteiros(id, caminhos));
 ipcMain.handle('roteiro:remover', (_e, { id, arquivo }) => removerRoteiro(id, arquivo));
@@ -723,5 +798,14 @@ app.whenReady().then(async () => {
   await reorganizarProjetos().catch((e) => dialog.showErrorBox('Não consegui reorganizar os projetos', e.message));
   atualizarDocumentacao();
   criarJanela();
+  // Painel do Premiere: o app atende o chat dele enquanto estiver aberto.
+  configurarPremiere({
+    // Narrações: cada arquivo ou pasta escolhida no painel vira um vídeo, como no "Novo projeto".
+    criarVideo: async (d, log) => criarComFila({ ...d, narracoes: d.narracoes?.length ? await resolverNarracoes(d.narracoes) : [] }, log),
+    estilos: () => ({ estilos: todosEstilos().map((e) => ({ id: e.id, nome: e.nome, descricao: e.descricao, engine: e.engine, formato: e.formato })), formatos: Object.keys(FORMATOS) }),
+  });
+  iniciarPontePremiere((l) => enviar('log', l));
 });
+
+ipcMain.handle('premiere:instalar', () => instalarPainelPremiere(path.join(app.getAppPath(), 'src', 'premiere-cep')));
 app.on('window-all-closed', () => app.quit());

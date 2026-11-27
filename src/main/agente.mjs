@@ -35,7 +35,7 @@ Itens com o mesmo "vinculo" são o vídeo e o áudio do mesmo trecho (o usuário
 Todo item tem: id único, tipo, inicio, duracao.
 - video: arquivo, corteInicio (segundo do arquivo onde começa), velocidade, volume (0 a 1; use 0 quando houver narração), ajuste (cover|contain).
 - imagem: arquivo, ajuste, largura (px; sem ela ocupa o quadro).
-- audio: arquivo, corteInicio, velocidade, volume, fadeIn, fadeOut.
+- audio: arquivo, corteInicio, velocidade, volume, fadeIn, fadeOut, abaixar (0 a 1: a música desce para esse volume enquanto a narração ou a fala do vídeo toca e volta nas pausas; use na trilha de fundo, ex.: 0.3, em vez de cortar o volume à mão).
 - texto: texto, estilo. legenda: texto, palavras [{texto, inicio, fim}] (tempos relativos ao início da legenda), estilo.
 - ajuste: camada de ajuste, sem arquivo, numa faixa de vídeo. Os efeitos dela (cor/Lumetri com LUT, desfoque, pb, inverter; vinheta desenhada por cima) valem para tudo o que está nas faixas de vídeo abaixo, no trecho dela. Use para corrigir a cor de vários clipes de uma vez. Com ela o render sai pelo Remotion.
 - bloco: componente, props. Para o que os outros tipos não fazem (selo animado, light leak, gráfico): escreva o componente React em ${rel}/src/blocos.tsx e registre em "blocos". Só blocos.tsx é seu; os outros arquivos de src/ são do app.

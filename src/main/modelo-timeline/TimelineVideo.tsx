@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useMemo } from 'react';
+import React, { createContext, useContext, useLayoutEffect, useMemo } from 'react';
 import {
   AbsoluteFill, Audio, Img, OffthreadVideo, Sequence, staticFile, interpolate, spring, useCurrentFrame, useVideoConfig, delayRender, continueRender,
 } from 'remotion';
@@ -52,6 +52,46 @@ export const semDesativados = (t: any) =>
 export const duracaoTimeline = (t: any): number =>
   Math.max(1, ...t.trilhas.flatMap((tr: any) => tr.itens.map((i: any) => i.inicio + i.duracao)));
 
+// ---------- música sob a voz ----------
+// Mesma conta de abaixar-nucleo.mjs (export rápido): um áudio com "abaixar" (0 a 1) desce para esse volume enquanto
+// algum outro som longo (narração, fala do vídeo) toca, com rampa para descer e subir.
+const VOZ_MINIMA = 1.5;
+const JUNTAR = 0.5;
+const RAMPA = 0.3;
+
+export function intervalosDeVoz(t: any): number[][] {
+  const brutos: number[][] = [];
+  for (const tr of t?.trilhas ?? []) {
+    const audio = tr.tipo === 'audio';
+    if (audio ? tr.muda : tr.oculta) continue;
+    for (const i of tr.itens ?? []) {
+      if (i.desativado || i.abaixar != null || !(i.duracao >= VOZ_MINIMA)) continue;
+      const vol = i.tipo === 'audio' ? i.volume ?? 1 : i.tipo === 'video' ? i.volume ?? 0 : 0;
+      if (vol > 0.05) brutos.push([i.inicio, i.inicio + i.duracao]);
+    }
+  }
+  brutos.sort((a, b) => a[0] - b[0]);
+  const juntos: number[][] = [];
+  for (const [a, b] of brutos) {
+    const ultimo = juntos[juntos.length - 1];
+    if (ultimo && a - ultimo[1] < JUNTAR) ultimo[1] = Math.max(ultimo[1], b);
+    else juntos.push([a, b]);
+  }
+  return juntos;
+}
+
+const prender = (x: number) => Math.max(0, Math.min(1, x));
+function ganhoAbaixado(vozes: number[][], T: number, nivel: number) {
+  let w = 0;
+  for (const [a, b] of vozes) {
+    if (a - RAMPA > T) break;
+    w = Math.max(w, prender((T - (a - RAMPA)) / RAMPA) * prender((b + RAMPA - T) / RAMPA));
+  }
+  return 1 - (1 - nivel) * w;
+}
+
+const VozesCtx = createContext<number[][]>([]);
+
 // ---------- keyframes ----------
 // { t (segundos desde o início do item), v, curva: linear|hold|bezier|easeIn|easeOut }.
 // A curva vale para o trecho que sai do keyframe, como no Filmcraft.
@@ -76,8 +116,11 @@ function facilitar(a: any, b: any, u: number) {
   return bezierY(1 / 3, sai ? 0 : 1 / 3, 2 / 3, chega ? 1 : 2 / 3, u);
 }
 
+// Chamado em todo quadro, para cada parâmetro animado: só copia e ordena quando os keyframes não estão em ordem.
+const emOrdem = (k: any[]) => (k.every((x, n) => !n || k[n - 1].t <= x.t) ? k : [...k].sort((a, b) => a.t - b.t));
+
 export function valorEm(kfs: any[], t: number) {
-  const k = [...kfs].sort((a, b) => a.t - b.t);
+  const k = emOrdem(kfs);
   if (t <= k[0].t) return k[0].v;
   if (t >= k[k.length - 1].t) return k[k.length - 1].v;
   const i = k.findIndex((x) => x.t > t);
@@ -448,6 +491,7 @@ function CamadaAjuste({ item }: { item: any }) {
 
 function Item({ item, fps, url, volumeTrilha, proxies, atraso = 0, ajustes = [] }: { item: any; fps: number; url: (a: string) => string; volumeTrilha: number; proxies?: Record<string, string | null>; atraso?: number; ajustes?: any[] }) {
   const quadro = useCurrentFrame();
+  const vozes = useContext(VozesCtx);
   if (item.tipo === 'ajuste') return <CamadaAjuste item={item} />;
   const tAbs = item.inicio - atraso + quadro / fps;
   const luts = item.tipo === 'video' || item.tipo === 'imagem' ? lutsDe(item, ajustes, tAbs, url) : [];
@@ -460,7 +504,8 @@ function Item({ item, fps, url, volumeTrilha, proxies, atraso = 0, ajustes = [] 
       const fo = (item.fadeOut ?? 0) * fps;
       const entrada = fi > 0 ? Math.min(1, f / fi) : 1;
       const saida = fo > 0 ? Math.min(1, (durFrames - f) / fo) : 1;
-      return Math.max(0, (item.volume ?? 1) * volumeTrilha * entrada * saida);
+      const abaixar = item.abaixar != null ? ganhoAbaixado(vozes, item.inicio + f / fps, item.abaixar) : 1;
+      return Math.max(0, (item.volume ?? 1) * volumeTrilha * entrada * saida * abaixar);
     };
     return <Audio src={url(item.arquivo)} trimBefore={trim} volume={volume} playbackRate={velocidade} />;
   }
@@ -615,11 +660,14 @@ export const TimelineVideo: React.FC<{ timeline: any; baseAssets?: string; proxi
     const visiveis = timeline.trilhas.map((tr: any) => (tr.tipo !== 'audio' && !tr.oculta ? tr.itens.filter((i: any) => i.tipo === 'ajuste' && i.efeitos) : []));
     return timeline.trilhas.map((_: any, k: number) => visiveis.slice(k + 1).flat());
   }, [timeline]);
+  const vozes = useMemo(() => (timeline.trilhas.some((tr: any) => tr.itens.some((i: any) => i.abaixar != null)) ? intervalosDeVoz(timeline) : []), [timeline]);
   return (
+    <VozesCtx.Provider value={vozes}>
     <AbsoluteFill data-comp-raiz="" style={{ backgroundColor: timeline.fundo ?? '#000' }}>
       {timeline.trilhas.map((trilha: any, k: number) =>
         trilha.oculta ? null : <Componente key={trilha.id} trilha={trilha} fps={fps} url={url} proxies={proxies} ajustes={trilha.tipo === 'audio' ? undefined : ajustesAcima[k]} />,
       )}
     </AbsoluteFill>
+    </VozesCtx.Provider>
   );
 };

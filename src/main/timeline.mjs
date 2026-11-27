@@ -160,12 +160,30 @@ export function validarTimeline(id, t) {
   return erros;
 }
 
+// Grava só o que mudou (devolve false quando o arquivo já estava igual) e por um arquivo temporário: um app fechado no
+// meio da gravação não deixa timeline.json pela metade. Sem regravar, a data do arquivo fica e o "nada mudou desde o
+// último render" e o pré-render em segundo plano continuam valendo.
 export function gravarTimeline(id, t) {
   migrarTimeline(t);
   garantirFontes(id, t);
   const erros = validarTimeline(id, t);
   if (erros.length) throw new Error(erros.join('\n'));
-  fs.writeFileSync(arquivoTimeline(id), JSON.stringify(t, null, 2));
+  const destino = arquivoTimeline(id);
+  const texto = JSON.stringify(t, null, 2);
+  let anterior = null;
+  try {
+    anterior = fs.readFileSync(destino, 'utf8');
+  } catch {}
+  if (anterior === texto) return false;
+  const tmp = `${destino}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(tmp, texto);
+    fs.renameSync(tmp, destino);
+  } catch {
+    // Arquivo preso por outro processo (o Claude lendo, o antivírus): grava direto.
+    fs.rmSync(tmp, { force: true });
+    fs.writeFileSync(destino, texto);
+  }
   // O formato pode mudar pela timeline: o projeto acompanha.
   const p = lerProjeto(id);
   if (p.largura !== t.largura || p.altura !== t.altura) {
@@ -174,6 +192,27 @@ export function gravarTimeline(id, t) {
     p.formato = Object.keys(FORMATOS).find((f) => FORMATOS[f].largura === t.largura && FORMATOS[f].altura === t.altura) ?? p.formato;
     gravarProjeto(p);
   }
+  return true;
+}
+
+// Congelar quadro (o "Adicionar quadro congelado" do Premiere): o quadro do segundo pedido do arquivo vira um PNG em
+// assets/, no espaço SDR da prévia (HDR passa pelo tonemap). O mesmo quadro já tirado é reaproveitado.
+export async function congelarQuadro(id, arquivo, segundo) {
+  const assets = caminhoAssets(id);
+  const origem = path.join(assets, arquivo);
+  if (!fs.existsSync(origem)) throw new Error(`${arquivo} não está em assets/.`);
+  const info = await infoVideo(origem);
+  // Perto do fim do arquivo o ffmpeg não acha quadro: recua um pouco.
+  const t = Math.max(0, Math.min(segundo, (info.duracao || segundo + 1) - 0.05));
+  const base = path.parse(arquivo).name.replace(/[^\w.-]+/g, '-').slice(0, 40);
+  const nome = `congelado-${base}-${Math.round(t * 1000)}.png`;
+  const destino = path.join(assets, nome);
+  if (!fs.existsSync(destino)) {
+    const vf = info.hdr ? `${TONEMAP},format=rgb24` : 'format=rgb24';
+    const r = await rodar(carregar().ffmpegPath, ['-y', '-hide_banner', '-loglevel', 'error', '-ss', String(t), '-i', origem, '-frames:v', '1', '-vf', vf, destino]);
+    if (r.codigo !== 0 || !fs.existsSync(destino)) throw new Error(`Não consegui tirar o quadro de ${arquivo}.\n${r.cauda.slice(-300)}`);
+  }
+  return nome;
 }
 
 // Primeira versão: materiais em sequência e narração. O Claude refaz os cortes e põe as legendas.

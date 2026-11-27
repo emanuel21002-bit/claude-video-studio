@@ -10,6 +10,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { intervalosDeVoz, expressaoAbaixar } from './abaixar-nucleo.mjs';
 
 const MESCLAGENS = new Set([undefined, null, 'normal', 'screen', 'multiply']);
 // Transições que a prévia não desenha como dissolve: ficam para o Filmcraft. As outras (cross_dissolve e as que só
@@ -220,7 +221,11 @@ export function planoFfmpeg(t, { infos = {}, assets, camada = null, camadaFundo 
   let n = 0;
   const audios = [];
   // Num trecho, a camada começa no mesmo ponto (ProRes: todo quadro é chave, o corte é exato).
-  const entradaCamada = (cam) => entrada(cam.desde ? ['-ss', String(num(cam.desde)), '-t', String(num(D + 0.1)), '-i', cam.arquivo] : ['-i', cam.arquivo]);
+  // Camada em sequência de PNG (q000000.png…): o trecho começa no quadro "desde" dela. Em .mov (antiga): busca por -ss.
+  const entradaCamada = (cam) =>
+    entrada(cam.sequencia
+      ? ['-framerate', String(cam.fps ?? fps), '-start_number', String(Math.max(0, Math.round((cam.desde ?? 0) * (cam.fps ?? fps)))), '-t', String(num(D + 0.1)), '-i', path.join(cam.arquivo, 'q%06d.png')]
+      : cam.desde ? ['-ss', String(num(cam.desde)), '-t', String(num(D + 0.1)), '-i', cam.arquivo] : ['-i', cam.arquivo]);
   // Gráficos por baixo de todos os vídeos (papel, cor de fundo): sobre a cor de fundo, antes das mídias.
   if (camadaFundo && so !== 'audio') {
     const fi = entradaCamada(camadaFundo);
@@ -422,6 +427,7 @@ export function planoFfmpeg(t, { infos = {}, assets, camada = null, camadaFundo 
     }
   }
   const ra = [];
+  const vozes = audios.some(({ i }) => i.abaixar != null) ? intervalosDeVoz(t) : [];
   audios.forEach(({ i, rotuloEntrada, vol, vel, ini, total }, a) => {
     // Tudo em 48 kHz estéreo antes de contar o tempo pelas amostras (N/SR): o tempo de origem de alguns arquivos às vezes
     // vinha inválido (AV_NOPTS), o atrim nunca via o fim e o som ficava sendo montado sem parar.
@@ -438,6 +444,9 @@ export function planoFfmpeg(t, { infos = {}, assets, camada = null, camadaFundo 
     }
     if (Math.abs(v - 1) > 1e-6) f.push(`atempo=${num(v)}`);
     f.push(`atrim=duration=${num(total)}`, `volume=${num(vol)}`);
+    // Música sob a voz: desce para "abaixar" enquanto houver voz (ver abaixar-nucleo.mjs).
+    const abaixar = i.abaixar != null ? expressaoAbaixar(vozes, ini, total, i.abaixar) : null;
+    if (abaixar) f.push(`volume='${abaixar}':eval=frame`);
     if (i.fadeIn > 0) f.push(`afade=t=in:st=0:d=${num(i.fadeIn)}`);
     if (i.fadeOut > 0) f.push(`afade=t=out:st=${num(Math.max(0, total - i.fadeOut))}:d=${num(i.fadeOut)}`);
     f.push(`adelay=${Math.round(ini * 1000)}:all=1`);

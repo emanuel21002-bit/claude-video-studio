@@ -47,30 +47,56 @@ export async function folhaDeQuadros(id, segundos) {
     return saida;
   }
 
-  escreverModelo(projeto);
   const t = lerTimeline(id);
+  const quadros = [...new Set(segundos.map((s) => Math.round(s * t.fps)))];
+  // Até dois quadros: maiores, para conferir detalhe. Mais que isso: quarto do tamanho, ainda legível.
+  await tirarQuadros(id, quadros, { escala: quadros.length <= 2 ? 0.5 : 0.25, saida: pasta });
+  const ordem = quadros.slice().sort((a, b) => a - b);
+  for (const [n, q] of ordem.entries()) fs.renameSync(path.join(pasta, `q${String(q).padStart(6, '0')}.jpg`), path.join(pasta, `f${String(n + 1).padStart(3, '0')}.jpg`));
+  const saida = path.join(pasta, 'folha.jpg');
+  await grade(pasta, 'f%03d.jpg', Math.min(COLUNAS, ordem.length), ordem.length, saida);
+  return saida;
+}
+
+// Desenha quadros da composição (sem renderizar o vídeo) em saida/qNNNNNN.jpg (ou .png).
+// timeline: uma versão recortada, para não preparar cópias de clipes que não aparecem nos quadros.
+async function tirarQuadros(id, quadros, { escala, saida, formato = 'jpeg', timeline = null }) {
+  const projeto = lerProjeto(id);
+  const dir = caminhoTimeline(id);
+  const previa = path.join(dir, '.previa');
+  escreverModelo(projeto);
+  const t = timeline ?? lerTimeline(id);
   const ws = dirs().ws;
   const pacote = path.join(previa, 'pacote');
   const marca = path.join(previa, 'pacote.marca');
   const versao = String(maisRecente(path.join(dir, 'src')));
   const refazer = !fs.existsSync(marca) || fs.readFileSync(marca, 'utf8') !== versao;
   const publica = await pastaPublica(id, t, path.join(previa, 'publico'));
-  const quadros = [...new Set(segundos.map((s) => Math.round(s * t.fps)))];
   const config = path.join(previa, 'quadros.json');
-  fs.writeFileSync(config, JSON.stringify({
-    ws, entrada: path.join(dir, 'src', 'index.ts'), publica, pacote, refazer, timeline: t, quadros,
-    // Até dois quadros: maiores, para conferir detalhe. Mais que isso: quarto do tamanho, ainda legível.
-    escala: quadros.length <= 2 ? 0.5 : 0.25, saida: pasta,
-  }));
+  fs.writeFileSync(config, JSON.stringify({ ws, entrada: path.join(dir, 'src', 'index.ts'), publica, pacote, refazer, timeline: t, quadros, escala, saida, formato }));
   const r = await rodar(carregar().nodePath, [path.join(aqui, 'quadros-still.cjs'), config], { cwd: ws });
   fs.rmSync(publica, { recursive: true, force: true });
   if (r.codigo !== 0) throw new Error(resumirErro(r.cauda));
   fs.writeFileSync(marca, versao);
-  const ordem = quadros.slice().sort((a, b) => a - b);
-  for (const [n, q] of ordem.entries()) fs.renameSync(path.join(pasta, `q${String(q).padStart(6, '0')}.jpg`), path.join(pasta, `f${String(n + 1).padStart(3, '0')}.jpg`));
-  const saida = path.join(pasta, 'folha.jpg');
-  await grade(pasta, 'f%03d.jpg', Math.min(COLUNAS, ordem.length), ordem.length, saida);
-  return saida;
+}
+
+// O quadro do cursor em PNG, no tamanho do projeto: capa do Reels, miniatura do YouTube, prova para o cliente.
+export async function salvarQuadro(id, segundo, destino) {
+  if (!lerProjeto(id).timeline) throw new Error('Este projeto não tem timeline.');
+  const t = lerTimeline(id);
+  const pasta = path.join(caminhoTimeline(id), '.previa', 'quadro');
+  fs.rmSync(pasta, { recursive: true, force: true });
+  fs.mkdirSync(pasta, { recursive: true });
+  const quadro = Math.max(0, Math.round(segundo * t.fps));
+  // Só o que está perto do cursor (as transições usam o clipe vizinho): num projeto 4K HDR, cada clipe na pasta do
+  // render ganha uma cópia SDR, e preparar todos para um quadro só levava minutos. Os tempos ficam os mesmos.
+  const perto = (i) => i.inicio < segundo + 3 && i.inicio + i.duracao > segundo - 3;
+  const recortada = { ...t, trilhas: t.trilhas.map((tr) => ({ ...tr, itens: tr.itens.filter(perto) })) };
+  await tirarQuadros(id, [quadro], { escala: 1, saida: pasta, formato: 'png', timeline: recortada });
+  fs.mkdirSync(path.dirname(destino), { recursive: true });
+  fs.copyFileSync(path.join(pasta, fs.readdirSync(pasta).find((n) => n.endsWith('.png'))), destino);
+  fs.rmSync(pasta, { recursive: true, force: true });
+  return destino;
 }
 
 // Uma imagem com todos os materiais numerados. Substitui dezenas de leituras de quadros soltos.

@@ -30,7 +30,7 @@ const LIMITE_SEM_SAIDA = 10 * 60 * 1000;
 // Quanto cada etapa do render levou (em segundos): mostra onde o tempo e a CPU vão. Um render por vez, então vale um vetor só.
 let temposAtual = [];
 
-async function etapa(nome, cmd, args, { cwd, env, onEvento, sinal, peso = [0, 1], limiteSemSaida = LIMITE_SEM_SAIDA, duracao = 0 }) {
+async function etapa(nome, cmd, args, { cwd, env, onEvento, sinal, peso = [0, 1], limiteSemSaida = LIMITE_SEM_SAIDA, duracao = 0, baixa = false }) {
   const inicioEtapa = Date.now();
   onEvento?.({ etapa: nome, progresso: peso[0] });
   const vigia = new AbortController();
@@ -48,6 +48,7 @@ async function etapa(nome, cmd, args, { cwd, env, onEvento, sinal, peso = [0, 1]
   const r = await rodar(cmd, args, {
     cwd,
     env,
+    baixa,
     sinal: vigia.signal,
     onLinha: (l) => {
       rearmar();
@@ -179,7 +180,7 @@ function escalaDoRender(projeto, resolucao) {
 // Tudo o que muda o resultado. Igual ao do último render, o arquivo já existente serve.
 function impressao(id, projeto, modo, formato, ext) {
   const dir = caminhoTimeline(id);
-  const h = crypto.createHash('sha1').update(`${modo}|${formato}|${projeto.engine}|${ext.motor}|${ext.codec}|${ext.fps}|${ext.resolucao}|${ext.qualidade}|${ext.semAudio}`);
+  const h = crypto.createHash('sha1').update(`${modo}|${formato}|${projeto.engine}|${ext.motor}|${ext.codec}|${ext.fps}|${ext.resolucao}|${ext.qualidade}|${ext.semAudio}|${ext.normalizar}`);
   const incluir = (pasta) => {
     for (const e of fs.readdirSync(pasta, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       const c = path.join(pasta, e.name);
@@ -250,6 +251,7 @@ export function renderizar(id, opcoes = {}, onEvento, sinal) {
     resolucao: opcoes.resolucao ?? s.renderResolucao ?? 0,
     qualidade: opcoes.qualidade ?? s.renderQualidade ?? 'alta',
     semAudio: opcoes.semAudio ?? s.renderSemAudio ?? false,
+    normalizar: opcoes.normalizar ?? s.renderNormalizar ?? false,
   };
   const pastaSaida = opcoes.pastaSaida ?? null;
   const nome = limparNome(opcoes.nome) || null;
@@ -279,7 +281,38 @@ export function renderizar(id, opcoes = {}, onEvento, sinal) {
     }
     trabalhoPesado.renders++;
     pararSegundoPlano();
-    return executarRender(id, { modo, formato, marca, pastaSaida, nome, ...ext }, onEvento, sinal).finally(() => {
+    // Registro do último export em renders/ultimo-export.log: etapas, tempos e por que um motor caiu para outro
+    // (antes isso só passava pela tela e se perdia). O andamento do ffmpeg (frame=…) fica de fora.
+    const registro = [`${new Date().toISOString()} ${modo} ${formato} ${JSON.stringify(ext)}`];
+    const inicioReg = Date.now();
+    // Cada etapa entra uma vez (dois trechos montados juntos alternam o andamento na tela).
+    const etapasVistas = new Set();
+    const comRegistro = (e) => {
+      const seg = ((Date.now() - inicioReg) / 1000).toFixed(1).padStart(6);
+      if (e.etapa && !etapasVistas.has(e.etapa)) {
+        etapasVistas.add(e.etapa);
+        registro.push(`${seg}  ${e.etapa}`);
+      }
+      if (e.log && /falhou|não cobre|Filmcraft|Remotion|mídia otimizada|reaproveit|pré-render|Erro|Error/i.test(e.log) && !/^\s*(frame=|size=|Input #|comment|encoder)/.test(e.log)) registro.push(`${seg}    ${e.log.slice(0, 500)}`);
+      onEvento?.(e);
+    };
+    const gravarRegistro = (fim) => {
+      try {
+        const pasta = path.join(caminhoTimeline(id), 'renders');
+        fs.mkdirSync(pasta, { recursive: true });
+        fs.writeFileSync(path.join(pasta, 'ultimo-export.log'), [...registro, fim].join('\n') + '\n');
+      } catch {}
+    };
+    return executarRender(id, { modo, formato, marca, pastaSaida, nome, ...ext }, comRegistro, sinal).then(
+      (r) => {
+        gravarRegistro(`Pronto em ${r.segundos} s pelo motor ${lerProjeto(id).renders[0]?.motor ?? '?'}: ${r.arquivo}`);
+        return r;
+      },
+      (e) => {
+        gravarRegistro(`Falhou: ${String(e.message ?? e).slice(0, 1500)}`);
+        throw e;
+      },
+    ).finally(() => {
       trabalhoPesado.renders--;
     });
   });
@@ -308,7 +341,7 @@ function limparPrevias(pasta) {
   } catch {}
 }
 
-async function exportarPeloFfmpeg(id, saida, { modo, codec, escala, semAudio, fps, kbps, tmp, encoderId }, opts) {
+async function exportarPeloFfmpeg(id, saida, { modo, codec, escala, semAudio, fps, kbps, tmp, encoderId, soTrechos = false }, opts) {
   const { renderizarCamadas, hashDaCamada } = await import('./filmcraft.mjs');
   // Chave de um trecho: tudo o que aparece nele (clipes, efeitos, textos que o cruzam, inteiros), o código da
   // composição, os arquivos usados (tamanho e data) e as escolhas de exportação.
@@ -369,7 +402,13 @@ async function exportarPeloFfmpeg(id, saida, { modo, codec, escala, semAudio, fp
   // Tentativas, da mais rápida para a mais segura: decodifica na placa e reduz, corta e faz o tone mapping nela
   // também (libplacebo); só decodifica na placa; decodifica na CPU (2 threads por clipe: medido, gasta menos memória e
   // é mais rápido que o padrão) e codifica na placa; tudo na CPU.
+  // Mídia otimizada já pronta para todos os vídeos: o H.264 leve decodifica mais rápido na CPU, com a placa só
+  // codificando (medido num trecho de 8 s com 6 clipes: 12,5 s contra 14,9 s decodificando na placa).
+  const trocas = faltam.length ? await otimizadasProntas(id, t) : {};
+  const videosDe = (tk) => [...new Set(tk.trilhas.flatMap((tr) => tr.itens).filter((i) => i.tipo === 'video' && i.arquivo).map((i) => i.arquivo))];
+  const leve = videosDe(t).every((a) => trocas[a]);
   const tentativas = [
+    ...(naGpu && leve ? [{ dec: ['-threads', '2'], enc: encoderId, nome: `mídia otimizada + ${ENCODERS_GPU[encoderId].nome}` }] : []),
     ...(naGpu ? [{ dec: ['-hwaccel', 'd3d11va'], naPlaca: true, enc: encoderId, nome: `GPU: decodifica, reduz e codifica (${ENCODERS_GPU[encoderId].nome})` }] : []),
     ...(naGpu ? [{ dec: ['-hwaccel', 'd3d11va'], enc: encoderId, nome: `GPU: decodifica e codifica (${ENCODERS_GPU[encoderId].nome})` }] : []),
     ...(naGpu ? [{ dec: ['-threads', '2'], enc: encoderId, nome: `ffmpeg + ${ENCODERS_GPU[encoderId].nome}` }] : []),
@@ -388,7 +427,7 @@ async function exportarPeloFfmpeg(id, saida, { modo, codec, escala, semAudio, fp
         ...extras(plano), ...argsVideo({ codec, encoderId: tent.enc, kbps }), destino,
       ];
       try {
-        await etapa(`${nome} (${tent.nome})`, s.ffmpegPath, args, { ...opts, cwd: pasta, peso, duracao: plano.duracao });
+        await etapa(`${nome} (${tent.nome})`, s.ffmpegPath, args, { ...opts, cwd: pasta, peso, duracao: plano.duracao, baixa: soTrechos });
         return plano;
       } catch (e) {
         fs.rmSync(destino, { force: true });
@@ -401,14 +440,16 @@ async function exportarPeloFfmpeg(id, saida, { modo, codec, escala, semAudio, fp
   const camadaDe = (c, a) => c && { ...c, desde: a - (c.inicio ?? 0) };
 
   // Mídia otimizada já pronta (feita em segundo plano): os trechos leem a cópia SDR menor em vez do 4K HDR.
-  const trocas = faltam.length ? await otimizadasProntas(id, t) : {};
   if (Object.keys(trocas).length) opts.onEvento?.({ log: `Usando a mídia otimizada de ${Object.keys(trocas).length} vídeo(s).` });
 
   // Em trechos: cada um com poucos clipes abertos, depois emendados sem recodificar e com o som montado à parte.
   const total = trechos.at(-1)[1];
   const partes = [];
   fs.mkdirSync(pastaPrevias, { recursive: true });
-  for (const [k, [a, b]] of trechos.entries()) {
+  // Com a mídia otimizada cada ffmpeg abre arquivos leves: dois trechos ao mesmo tempo usam melhor a CPU (medido: 18 %
+  // mais rápido; três juntos já ficam mais lentos). Com os originais 4K, um por vez, pela memória da placa.
+  const montar = async (k) => {
+    const [a, b] = trechos[k];
     if (opts.sinal?.aborted) throw new Error('Render cancelado.');
     const peso = [0.3 + (0.6 * a) / total, 0.3 + (0.6 * b) / total];
     if (prontas[k]) {
@@ -416,8 +457,8 @@ async function exportarPeloFfmpeg(id, saida, { modo, codec, escala, semAudio, fp
       fs.utimesSync(prontas[k], new Date(), new Date());
       opts.onEvento?.({ etapa: `Trecho ${k + 1} de ${trechos.length}: pré-renderizado`, progresso: peso[1] });
       temposAtual.push([`Trecho ${k + 1} de ${trechos.length}: pré-renderizado`, 0]);
-      partes.push(prontas[k]);
-      continue;
+      partes[k] = prontas[k];
+      return;
     }
     const pasta = path.join(trab, `trecho-${k}`);
     fs.mkdirSync(pasta, { recursive: true });
@@ -432,9 +473,16 @@ async function exportarPeloFfmpeg(id, saida, { modo, codec, escala, semAudio, fp
     try {
       fs.copyFileSync(destino, previa);
     } catch {}
-    partes.push(destino);
-  }
+    partes[k] = destino;
+  };
+  const juntos = leve ? 2 : 1;
+  let proximo = 0;
+  await Promise.all(Array.from({ length: Math.min(juntos, trechos.length) }, async () => {
+    while (proximo < trechos.length) await montar(proximo++);
+  }));
   limparPrevias(pastaPrevias);
+  // Segundo plano: os trechos ficam guardados em .previas/ e o export só junta e põe o som.
+  if (soTrechos) return;
   let som = null;
   if (!semAudio) {
     const planoSom = planoFfmpeg(t, { infos, assets, so: 'audio' });
@@ -454,7 +502,62 @@ async function exportarPeloFfmpeg(id, saida, { modo, codec, escala, semAudio, fp
   ], { ...opts, cwd: trab, peso: [0.97, 1] });
 }
 
+// Pré-render dos trechos em segundo plano, com as escolhas da última exportação (as da janela Exportar): exportar
+// depois sem mudar nada só junta os trechos e monta o som. Só no motor rápido e quando ele cobre a timeline.
+export async function preRenderizarTrechos(id, { sinal, onLinha } = {}) {
+  const s = carregar();
+  const projeto = lerProjeto(id);
+  if (projeto.engine !== 'remotion' || !projeto.timeline || (s.renderMotor ?? 'rapido') !== 'rapido' || !s.renderCodec) return false;
+  const t = lerTimeline(id);
+  if (motivosSemFfmpeg(t).length || t.trilhas.some((tr) => tr.itens.some((i) => i.tipo === 'ajuste'))) return false;
+  const { codec, formato } = normalizarSaida({ codec: s.renderCodec, formato: s.renderFormato });
+  const encoderId = await encoderGpu();
+  const modo = ENCODERS_GPU[encoderId] ? s.renderModo : 'cpu';
+  const escala = escalaDoRender(projeto, s.renderResolucao ?? 0);
+  const fps = s.renderFps && s.renderFps !== projeto.fps ? s.renderFps : 0;
+  const kbps = kbpsDe({ codec, qualidade: s.renderQualidade ?? 'alta', largura: projeto.largura * escala, altura: projeto.altura * escala, fps: fps || projeto.fps });
+  // Pasta própria: o render apaga a .tmp inteira quando começa (e para o segundo plano antes).
+  const raiz = path.join(dirs().ws, '.tmp-fundo');
+  fs.mkdirSync(raiz, { recursive: true });
+  const tmp = fs.mkdtempSync(path.join(raiz, 'trechos-'));
+  let ultima = '';
+  const onEvento = (e) => {
+    if (e.etapa && e.etapa !== ultima && !/pré-renderizado/.test(e.etapa)) onLinha?.((ultima = e.etapa));
+  };
+  try {
+    await exportarPeloFfmpeg(id, path.join(tmp, `nada.${formato}`), { modo, codec, escala, semAudio: true, fps, kbps, tmp, encoderId, soTrechos: true }, { cwd: dirs().ws, env: { TEMP: tmp, TMP: tmp }, onEvento, sinal });
+    return true;
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 // Composição e decodificação na GPU, em um passo só; textos, legendas e blocos vêm do Remotion como camada.
+// O Filmcraft mixa o som pelo OTIO, que não leva a música sob a voz ("abaixar"): com ela, o som do vídeo pronto é
+// trocado pelo do ffmpeg, montado igual ao do motor rápido (o vídeo é copiado, sem recodificar).
+async function somDoAbaixar(id, saida, tmp, opts) {
+  const t = lerTimeline(id);
+  if (!t.trilhas.some((tr) => tr.itens.some((i) => i.abaixar != null && !i.desativado))) return;
+  const s = carregar();
+  const assets = caminhoAssets(id);
+  const infos = {};
+  for (const i of t.trilhas.flatMap((tr) => tr.itens)) if (i.tipo === 'video' && i.arquivo && !infos[i.arquivo]) infos[i.arquivo] = await infoVideo(path.join(assets, i.arquivo));
+  const plano = planoFfmpeg(t, { infos, assets, so: 'audio' });
+  if (!plano.temAudio) return;
+  const grafo = path.join(tmp, 'grafo-abaixar.txt');
+  fs.writeFileSync(grafo, plano.grafo);
+  const ext = path.extname(saida).toLowerCase();
+  const destino = path.join(tmp, 'com-abaixar' + ext);
+  await etapa('Montando o som (música sob a voz)', s.ffmpegPath, [
+    // O vídeo pronto entra por último: o grafo conta as entradas a partir de 0.
+    '-y', '-hide_banner', '-stats', ...plano.entradas.flat(), '-i', saida, '-/filter_complex', grafo,
+    '-map', `${plano.entradas.length}:v`, '-map', '[aout]', '-c:v', 'copy', '-t', String(plano.duracao),
+    ...(ext === '.webm' ? ['-c:a', 'libopus', '-b:a', '256k'] : ['-c:a', 'aac', '-b:a', '320k']),
+    ...(ext === '.mp4' || ext === '.mov' ? ['-movflags', '+faststart'] : []), destino,
+  ], { ...opts, cwd: tmp, peso: [0.97, 0.99], duracao: plano.duracao });
+  fs.copyFileSync(destino, saida);
+}
+
 async function exportarPeloFilmcraft(id, saida, { modo, codec, formato, escala, semAudio, fps, kbps, tmp, codificarFinal }, opts) {
   const { prepararProjetoFilmcraft, cli } = await import('./filmcraft.mjs');
   const projetoFc = path.join(path.dirname(opts.env.TEMP), `${path.basename(opts.env.TEMP)}.fcproj`);
@@ -487,7 +590,7 @@ async function exportarPeloFilmcraft(id, saida, { modo, codec, formato, escala, 
   }
 }
 
-async function executarRender(id, { modo, formato, codec, motor: motorPedido, fps, marca, pastaSaida, nome, resolucao, qualidade, semAudio }, onEvento, sinal) {
+async function executarRender(id, { modo, formato, codec, motor: motorPedido, fps, marca, pastaSaida, nome, resolucao, qualidade, semAudio, normalizar }, onEvento, sinal) {
   temposAtual = [];
   const s = carregar();
   const encoderId = await encoderGpu();
@@ -576,6 +679,7 @@ async function executarRender(id, { modo, formato, codec, motor: motorPedido, fp
       try {
         await exportarPeloFilmcraft(id, saida, { modo, codec, formato, escala, semAudio, fps: fpsNovo, kbps, tmp, codificarFinal }, opts);
         motor = 'filmcraft';
+        if (!semAudio) await somDoAbaixar(id, saida, tmp, opts);
       } catch (e) {
         if (sinal?.aborted) {
           fs.rmSync(tmp, { recursive: true, force: true });
@@ -669,6 +773,7 @@ async function executarRender(id, { modo, formato, codec, motor: motorPedido, fp
       ], { ...opts, peso: [0.95, 1] });
       fs.copyFileSync(ajustado, saida);
     }
+    if (normalizar && !semAudio) await normalizarVolume(saida, tmp, opts);
   } finally {
     soltarPublica();
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -687,6 +792,36 @@ async function executarRender(id, { modo, formato, codec, motor: motorPedido, fp
   gravarProjeto(atual);
   onEvento?.({ etapa: 'Pronto', progresso: 1 });
   return { arquivo: saida, preview, segundos, etapas: temposAtual };
+}
+
+// Volume padronizado das redes (Reels, TikTok, YouTube tocam a −14 LUFS): mede o som inteiro e aplica o ganho numa
+// segunda passada, sem mexer no vídeo (copiado). Com pico máximo de −1 dBTP, para não distorcer no celular.
+export const ALVO_LUFS = -14;
+export async function normalizarVolume(arquivo, tmp, opts) {
+  const s = carregar();
+  if (!(await infoVideo(arquivo).catch(() => null))?.temAudio) return;
+  const alvo = `I=${ALVO_LUFS}:TP=-1:LRA=11`;
+  opts.onEvento?.({ etapa: 'Medindo o volume', progresso: 0.99 });
+  const medida = await rodar(s.ffmpegPath, ['-hide_banner', '-nostats', '-i', arquivo, '-vn', '-af', `loudnorm=${alvo}:print_format=json`, '-f', 'null', '-'], { sinal: opts.sinal });
+  const json = medida.cauda.slice(medida.cauda.lastIndexOf('{'), medida.cauda.lastIndexOf('}') + 1);
+  let m;
+  try {
+    m = JSON.parse(json);
+  } catch {
+    opts.onEvento?.({ log: 'Não consegui medir o volume: o vídeo saiu sem padronizar.' });
+    return;
+  }
+  // Mudo (ou quase): não há o que padronizar.
+  if (!Number.isFinite(Number(m.input_i)) || Number(m.input_i) < -70) return;
+  const filtro = `loudnorm=${alvo}:measured_I=${m.input_i}:measured_TP=${m.input_tp}:measured_LRA=${m.input_lra}:measured_thresh=${m.input_thresh}:offset=${m.target_offset}:linear=true,aresample=48000`;
+  const ext = path.extname(arquivo).toLowerCase();
+  const destino = path.join(tmp, 'volume' + ext);
+  await etapa(`Padronizando o volume (${ALVO_LUFS} LUFS)`, s.ffmpegPath, [
+    '-y', '-hide_banner', '-i', arquivo, '-map', '0:v?', '-map', '0:a:0', '-c:v', 'copy', '-af', filtro,
+    ...(ext === '.webm' ? ['-c:a', 'libopus', '-b:a', '256k'] : ['-c:a', 'aac', '-b:a', '320k']),
+    ...(ext === '.mp4' || ext === '.mov' ? ['-movflags', '+faststart'] : []), destino,
+  ], { ...opts, peso: [0.99, 1] });
+  fs.copyFileSync(destino, arquivo);
 }
 
 // Extrai quadros do último render para o Claude conferir o resultado visualmente.

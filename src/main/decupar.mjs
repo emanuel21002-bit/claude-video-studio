@@ -40,6 +40,28 @@ export async function decuparAudio(entrada, opcoes = {}, onProgresso, sinal) {
   }
 }
 
+// Só os trechos que ficam (em segundos do arquivo), sem gerar o áudio: o painel do Premiere monta os cortes na sequência.
+export async function trechosDaDecupagem(entrada, opcoes = {}, sinal) {
+  const o = { ...PADRAO, ...opcoes };
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cvs-trechos-'));
+  try {
+    const bruto = path.join(tmp, 'analise.f32');
+    const ra = await rodar(carregar().ffmpegPath, ['-y', '-hide_banner', '-nostats', '-loglevel', 'error', '-i', entrada, '-map', '0:a:0', '-vn', '-af', `highpass=f=100,lowpass=f=3800,aresample=${TAXA_ANALISE}`, '-ac', '1', '-f', 'f32le', bruto], { sinal });
+    if (ra.codigo !== 0) throw new Error(/matches no streams/i.test(ra.cauda) ? 'Este arquivo não tem faixa de áudio.' : `O ffmpeg não conseguiu ler o som:\n${ra.cauda}`);
+    const buf = fs.readFileSync(bruto);
+    const amostras = new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.length / 4));
+    if (amostras.length < TAXA_ANALISE / 10) throw new Error('Não achei som neste arquivo.');
+    const duracao = amostras.length / TAXA_ANALISE;
+    const analise = analisarVoz(amostras, TAXA_ANALISE, o);
+    o.ruidoMedido = analise.ruido;
+    o.vozMedida = analise.voz;
+    const segs = calcularSegmentos(analise.silencios, duracao, o);
+    return { duracao, trechos: segs.map(([a, b]) => [Number(a.toFixed(3)), Number(b.toFixed(3))]), sobreposicoes: segs.sobreposicoes ?? [] };
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 async function decuparUm(entrada, opcoes, onProgresso, sinal, tmp, grupo) {
   const o = { ...PADRAO, formato: 'wav', ...opcoes };
   const codec = FORMATOS_DECUPAGEM[o.formato];

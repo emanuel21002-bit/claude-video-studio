@@ -200,10 +200,14 @@ const TL = (() => {
   }
 
   // Toda edição passa por aqui: guarda o estado anterior, aplica, atualiza a tela e a prévia, grava.
+  // Ação que não mudou nada (alinhar o que já está alinhado, colar fora de lugar) não entra no desfazer, não grava e não
+  // refaz a prévia: só redesenha, pela seleção que pode ter mudado.
   function alterar(fn) {
     if (s.bloqueada) return;
-    guardarEstado();
+    const antes = JSON.stringify(s.t);
     fn();
+    if (JSON.stringify(s.t) === antes) return desenhar();
+    empilharDesfazer(antes);
     aposAlterar();
   }
 
@@ -865,6 +869,9 @@ const TL = (() => {
   // ---------- keyframes ----------
   // { t (segundos desde o início do item), v, curva }. Mesma conta da composição em TimelineVideo.tsx.
 
+  // Os keyframes já ficam em ordem: só copia e ordena quando não estão (antes ordenava a cada leitura).
+  const emOrdem = (k) => (k.every((x, n) => !n || k[n - 1].t <= x.t) ? k : [...k].sort((a, b) => a.t - b.t));
+
   function bezierY(x1, y1, x2, y2, x) {
     let lo = 0;
     let hi = 1;
@@ -879,7 +886,7 @@ const TL = (() => {
   }
 
   function valorEm(kfs, t) {
-    const k = [...kfs].sort((a, b) => a.t - b.t);
+    const k = emOrdem(kfs);
     if (t <= k[0].t) return k[0].v;
     if (t >= k.at(-1).t) return k.at(-1).v;
     const i = k.findIndex((x) => x.t > t);
@@ -1788,6 +1795,73 @@ const TL = (() => {
       s.sel = null;
       s.selecao = new Set();
     });
+  }
+
+  // Congelar quadro, como o "Adicionar quadro congelado" do Premiere: do cursor até o fim do clipe, a imagem fica
+  // parada no quadro do cursor. O trecho vira uma imagem (PNG tirado do arquivo) com o mesmo enquadramento e efeitos;
+  // nada muda de lugar na timeline, então narração e música continuam no tempo.
+  async function congelarQuadro(item) {
+    const c = noQuadro(s.tempo);
+    if (s.bloqueada || item.tipo !== 'video' || c >= item.inicio + item.duracao - 0.001) return;
+    const desde = Math.max(c, item.inicio);
+    const segundo = (item.corteInicio ?? 0) + (desde - item.inicio) * (item.velocidade ?? 1);
+    avisar('Congelando o quadro…');
+    let png;
+    try {
+      png = await api.congelarQuadro({ id: s.id, arquivo: item.arquivo, segundo });
+    } catch (e) {
+      avisar('Não congelou: ' + e.message.split('\n').at(-1));
+      return;
+    }
+    avisar('');
+    const trilha = trilhaDe(item.id);
+    // A timeline mudou enquanto o quadro era tirado (o clipe sumiu ou saiu do cursor).
+    if (!trilha || !(desde >= item.inicio && desde < item.inicio + item.duracao - 0.001)) return;
+    alterar(() => {
+      const parado = dividirItem(item, trilha, desde) ? trilha.itens[trilha.itens.indexOf(item) + 1] : item;
+      parado.tipo = 'imagem';
+      parado.arquivo = png;
+      parado.ajuste = item.ajuste ?? 'cover';
+      for (const k of ['corteInicio', 'velocidade', 'volume']) delete parado[k];
+      s.sel = parado.id;
+      s.selecao = new Set([parado.id]);
+    });
+  }
+
+  // Fecha os vãos entre os clipes da faixa (o "Fechar lacuna" do Premiere). O que está vinculado em outras faixas
+  // (o áudio do mesmo trecho) anda junto.
+  const vaosDe = (trilha) => {
+    const itens = [...trilha.itens].sort((a, b) => a.inicio - b.inicio);
+    return itens.slice(1).some((i, k) => i.inicio > itens[k].inicio + itens[k].duracao + 0.001);
+  };
+  function fecharVaos(trilha) {
+    alterar(() => {
+      const itens = [...trilha.itens].sort((a, b) => a.inicio - b.inicio);
+      let fim = itens[0]?.inicio ?? 0;
+      let recuo = 0;
+      for (const i of itens) {
+        if (i.inicio - recuo > fim + 0.001) recuo = i.inicio - fim;
+        if (recuo > 0) {
+          i.inicio = arredondar(i.inicio - recuo);
+          if (i.vinculo) for (const o of todosItens()) if (o !== i && o.vinculo === i.vinculo && !trilha.itens.includes(o)) o.inicio = arredondar(Math.max(0, o.inicio - recuo));
+        }
+        fim = i.inicio + i.duracao;
+      }
+    });
+  }
+
+  // Salva o quadro do cursor em PNG, no tamanho do projeto (capa do Reels, miniatura).
+  async function salvarQuadroAtual() {
+    if (!s.t) return;
+    await salvarAgora();
+    avisar('Salvando o quadro…');
+    try {
+      const salvo = await api.salvarQuadro({ id: s.id, segundo: noQuadro(s.tempo), nome: s.nome });
+      avisar(salvo ? `Quadro salvo: ${salvo.split(/[\\/]/).pop()}` : '');
+      if (salvo) setTimeout(() => qs('#tl-aviso').textContent.startsWith('Quadro salvo') && avisar(''), 5000);
+    } catch (e) {
+      avisar('Não salvou o quadro: ' + e.message.split('\n').at(-1));
+    }
   }
 
   // V: desativa os clipes selecionados (somem da prévia e do render, mas ficam na timeline, mais escuros).
@@ -2829,6 +2903,7 @@ const TL = (() => {
     ['ferramenta.slide', 'Ferramentas', 'Slide', ['U'], () => escolherFerramenta('slide')],
     ['ferramenta.taxa', 'Ferramentas', 'Velocidade pela duração', ['R'], () => escolherFerramenta('taxa')],
     ['ferramenta.navalha', 'Ferramentas', 'Navalha', ['C'], () => escolherFerramenta('navalha')],
+    ['salvarQuadro', 'App', 'Salvar o quadro do cursor como imagem', ['Ctrl+Shift+E'], () => salvarQuadroAtual()],
     ['atalhos', 'App', 'Atalhos de teclado', ['Ctrl+Alt+K'], () => abrirAtalhos()],
   ];
   // Valem com o mouse sobre a janela de Origem (têm prioridade sobre os da timeline ali). Esc fecha, sempre.
@@ -2890,6 +2965,7 @@ const TL = (() => {
     ['#tl-desfazer', 'desfazer', 'Desfazer'],
     ['#tl-refazer', 'refazer', 'Refazer'],
     ['#tl-tocar', 'tocar', 'Tocar / pausar'],
+    ['#tl-quadro', 'salvarQuadro', 'Salvar o quadro do cursor como imagem (PNG)'],
   ];
   function atualizarDicas() {
     for (const [sel, id, base] of DICAS) {
@@ -3491,7 +3567,7 @@ const TL = (() => {
   const CAMPOS = {
     video: [['corteInicio', 'Corte no arquivo', 'num', 0.1], ['velocidade', 'Velocidade', 'num', 0.1, 1], ['volume', 'Volume', 'faixa', 0], ['ajuste', 'Ajuste', ['cover', 'contain']], ...COMUNS_VISUAIS],
     imagem: [['ajuste', 'Ajuste', ['contain', 'cover']], ['largura', 'Largura (px)', 'num'], ...COMUNS_VISUAIS],
-    audio: [['corteInicio', 'Corte no arquivo', 'num', 0.1], ['volume', 'Volume', 'faixa', 1], ['fadeIn', 'Fade de entrada (s)', 'num', 0.1], ['fadeOut', 'Fade de saída (s)', 'num', 0.1]],
+    audio: [['corteInicio', 'Corte no arquivo', 'num', 0.1], ['volume', 'Volume', 'faixa', 1], ['fadeIn', 'Fade de entrada (s)', 'num', 0.1], ['fadeOut', 'Fade de saída (s)', 'num', 0.1], ['abaixar', 'Abaixar sob a voz', 'abaixar']],
     texto: [['texto', 'Texto', 'area'], ...ESTILO, ...COMUNS_VISUAIS],
     legenda: [['texto', 'Texto', 'area'], ...ESTILO, ['estilo.corDestaque', 'Cor da palavra falada', 'cor'], ['x', 'Posição X', 'num'], ['y', 'Posição Y', 'num']],
     bloco: [['props', 'Propriedades (JSON)', 'json'], ...COMUNS_VISUAIS],
@@ -3752,12 +3828,26 @@ const TL = (() => {
         aoEditarCampo(item, caminho, Math.round(Math.max(0, Math.min(100, n))) / 100);
         return;
       }
+      // Música sob a voz: "" desliga; o número é o volume (0 a 1) enquanto alguém fala.
+      if (tipo === 'abaixar') return aoEditarCampo(item, caminho, bruto === '' ? '' : Number(bruto));
       const numerico = tipo === 'num' || caminho === 'estilo.peso';
       aoEditarCampo(item, caminho, numerico && bruto !== '' ? Number(bruto) : bruto === false ? '' : bruto);
     };
     if (tipo === 'fonte') {
       entrada = document.createElement('select');
       preencherFontes(entrada, atual);
+    } else if (tipo === 'abaixar') {
+      entrada = document.createElement('select');
+      const opcoes = [['', 'Não'], ['0.5', 'Para 50 %'], ['0.3', 'Para 30 %'], ['0.2', 'Para 20 %'], ['0.1', 'Para 10 %']];
+      if (atual != null && !opcoes.some(([v]) => Number(v) === atual && v !== '')) opcoes.push([String(atual), `Para ${Math.round(atual * 100)} %`]);
+      for (const [v, t] of opcoes) {
+        const op = document.createElement('option');
+        op.value = v;
+        op.textContent = t;
+        entrada.append(op);
+      }
+      entrada.value = atual == null ? '' : opcoes.find(([v]) => v !== '' && Number(v) === atual)[0];
+      rotulo.title = 'Enquanto a narração ou a fala do vídeo toca, este áudio desce para esse volume e volta depois (sons com menos de 1,5 s não contam).';
     } else if (Array.isArray(tipo)) {
       entrada = document.createElement('select');
       for (const o of tipo) {
@@ -3815,7 +3905,7 @@ const TL = (() => {
     ['Opacidade', ['opacidade', 'mesclagem']],
     ['Animação de entrada e saída', ['entrada', 'saida']],
     ['Remapeamento de tempo', ['velocidade', 'corteInicio']],
-    ['Áudio', ['volume', 'fadeIn', 'fadeOut']],
+    ['Áudio', ['volume', 'fadeIn', 'fadeOut', 'abaixar']],
   ];
 
   function apagarCampo(item, caminho) {
@@ -4641,6 +4731,11 @@ const TL = (() => {
       { rotulo: 'Excluir e fechar o vão', atalho: teclaDe('excluirFechar'), acao: () => excluir(true), desativado: travada },
       'sep',
       { rotulo: 'Dividir no cursor', atalho: teclaDe('dividir'), acao: dividir, desativado: travada || !noCursor },
+      alvos.length === 1 && alvos[0].tipo === 'video' && {
+        rotulo: 'Congelar quadro a partir do cursor',
+        acao: () => congelarQuadro(alvos[0]),
+        desativado: travada || !(s.tempo < alvos[0].inicio + alvos[0].duracao - 0.001),
+      },
       alvos.length > 1 && !vinculados && { rotulo: 'Vincular', acao: () => vincular(ids), desativado: travada },
       vinculados && { rotulo: 'Desvincular', acao: () => desvincular(ids), desativado: travada },
       'sep',
@@ -4696,6 +4791,7 @@ const TL = (() => {
       { rotulo: `Nova faixa de ${nome} abaixo de ${codigoDe(trilha)}`, acao: criar('abaixo'), desativado: travada },
       { rotulo: audio ? 'Nova faixa de vídeo (no topo)' : 'Nova faixa de áudio (no fim)', acao: () => alterar(() => (audio ? novaFaixa('video', { acimaDeTudo: true }) : novaFaixa('audio'))), desativado: travada },
       'sep',
+      { rotulo: `Fechar os vãos de ${codigoDe(trilha)}`, acao: () => fecharVaos(trilha), desativado: travada || !vaosDe(trilha) },
       { rotulo: `Excluir a faixa ${codigoDe(trilha)}`, acao: () => excluirFaixa(trilha), desativado: travada || s.t.trilhas.filter((x) => ehAudio(x) === audio).length < 2 },
     ];
   }
@@ -4787,6 +4883,7 @@ const TL = (() => {
     qs('#tl-regua-linha').addEventListener('pointerdown', arrastarCursor);
     qs('#tl-tocar').onclick = tocarOuPausar;
     qs('#tl-inicio').onclick = () => irPara(0);
+    qs('#tl-quadro').onclick = salvarQuadroAtual;
     qs('#tl-dividir').onclick = dividir;
     qs('#tl-excluir').onclick = () => excluir(false);
     qs('#tl-copiar').onclick = copiarSelecao;
@@ -4953,6 +5050,7 @@ const TL = (() => {
     await fechar();
     s.id = p.id;
     s.projetoId = p.projetoId ?? null;
+    s.nome = p.nome ?? null;
     s.selecao = new Set();
     s.midia = {};
     s.midiaPedida = new Set();
