@@ -1393,3 +1393,12 @@ body.arrastando-valor, body.arrastando-valor * { cursor: ew-resize !important; u
 .dock-abas #ed-abas.no-painel .aba-timeline.ativo { background: #2f6bdf; border-color: #2f6bdf; color: #fff; }
 .dock-abas #ed-abas.no-painel .aba-renomear { height: 19px; padding: 0 6px; font-size: 11px; width: 160px; }
 .tl-cab .chave-bloqueada { filter: grayscale(1); }
+
+/* Sequência aninhada aberta: abas de sequência no topo da timeline, como no Premiere. */
+.tl-aninhadas { display: flex; align-items: center; gap: 4px; padding: 3px 6px; background: #17251e; border-bottom: 1px solid #2f6b4f; flex: none; }
+.tl-aninhadas[hidden] { display: none; }
+.tl-aninhada-aba { padding: 1px 9px; font-size: 11.5px; border-radius: 3px; background: #222; border-color: #3a3a3a; color: var(--fraco); }
+.tl-aninhada-aba.ativo { background: #2f6b4f; border-color: #2f6b4f; color: #fff; cursor: default; }
+.tl-aninhada-seta { color: var(--fraco); font-size: 12px; }
+.tl-aninhada-fechar { margin-left: 4px; padding: 0 7px; font-size: 13px; line-height: 18px; background: transparent; border: none; color: var(--fraco); }
+.tl-aninhada-fechar:hover:not(:disabled) { color: var(--texto); background: #333; }

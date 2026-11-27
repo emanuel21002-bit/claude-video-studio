@@ -179,7 +179,7 @@ const TL = (() => {
     clearTimeout(s.timerSalvar);
     s.timerSalvar = null;
     try {
-      await api.salvarTimeline({ id: s.id, timeline: s.t });
+      await api.salvarTimeline({ id: s.id, timeline: raiz() });
       avisar('');
     } catch (e) {
       avisar('Não salvou: ' + e.message.split('\n').at(-1));
@@ -198,7 +198,128 @@ const TL = (() => {
   }
 
   function guardarEstado() {
-    empilharDesfazer(JSON.stringify(s.t));
+    empilharDesfazer(foto());
+  }
+
+  // ---------- sequência aninhada aberta (como a aba de sequência do Premiere) ----------
+  // s.raiz é a timeline inteira e s.pilha os ids das aninhadas abertas, de fora para dentro. Dentro de uma, s.t é uma
+  // vista: as faixas e os marcadores são os da aninhada (mexer nelas mexe dentro dela) e o resto (formato, fontes,
+  // fundo) é o da timeline inteira. Gravar e desfazer usam sempre a timeline inteira.
+  const raiz = () => s.raiz ?? s.t;
+
+  function vistaDe(r, pilha) {
+    let trilhas = r.trilhas;
+    let n = null;
+    for (const id of pilha) {
+      n = trilhas.flatMap((tr) => tr.itens).find((i) => i.id === id && i.tipo === 'aninhada');
+      if (!n) return null;
+      trilhas = n.trilhas ??= [];
+    }
+    if (!n) return r;
+    const v = {};
+    for (const k of new Set([...Object.keys(r), 'fontes', 'fundo'])) {
+      if (k === 'trilhas' || k === 'marcadores') continue;
+      Object.defineProperty(v, k, { get: () => r[k], set: (x) => (r[k] = x), enumerable: true, configurable: true });
+    }
+    Object.defineProperty(v, 'trilhas', { get: () => n.trilhas, set: (x) => (n.trilhas = x), enumerable: true });
+    Object.defineProperty(v, 'marcadores', { get: () => n.marcadores, set: (x) => (n.marcadores = x), enumerable: true });
+    return v;
+  }
+
+  // O estado para desfazer: a timeline inteira e o que estava aberto.
+  const foto = () => (s.pilha?.length ? JSON.stringify({ __raiz: s.raiz, __pilha: s.pilha, __tempos: s.temposPilha }) : JSON.stringify(s.t));
+
+  // Põe a timeline inteira de volta, tentando manter aberta a mesma aninhada (se ela ainda existir).
+  function usarRaiz(r, pilha = s.pilha ?? [], tempos = s.temposPilha ?? []) {
+    const v = pilha.length ? vistaDe(r, pilha) : null;
+    if (v) {
+      s.raiz = r;
+      s.pilha = [...pilha];
+      s.temposPilha = [...tempos];
+      s.t = v;
+    } else {
+      s.raiz = null;
+      s.pilha = [];
+      s.temposPilha = [];
+      s.t = r;
+    }
+  }
+
+  function restaurarFoto(texto) {
+    const o = JSON.parse(texto);
+    if (o.__raiz) usarRaiz(o.__raiz, o.__pilha, o.__tempos);
+    else usarRaiz(o, []);
+  }
+
+  // Clique duplo numa aninhada abre ela no lugar da timeline; o cursor vai para o mesmo ponto lá dentro.
+  function abrirAninhada(n) {
+    if (n?.tipo !== 'aninhada') return;
+    const tempoFora = s.tempo;
+    const dentro = Math.max(0, Math.min(n.duracao, s.tempo - n.inicio)) + (n.corteInicio ?? 0);
+    const r = raiz();
+    const pilha = [...(s.pilha ?? []), n.id];
+    if (!vistaDe(r, pilha)) return;
+    usarRaiz(r, pilha, [...(s.temposPilha ?? []), tempoFora]);
+    s.sel = null;
+    s.selecao = new Set();
+    atualizarPrevia();
+    desenhar();
+    irPara(dentro);
+    ajustarNaTela();
+  }
+
+  // Volta para o nível pedido (0 = a timeline inteira), com o cursor onde estava ao entrar.
+  function sairDaAninhada(nivel = (s.pilha?.length ?? 1) - 1) {
+    if (!s.pilha?.length || nivel >= s.pilha.length) return;
+    const tempo = s.temposPilha[nivel];
+    usarRaiz(raiz(), s.pilha.slice(0, nivel), s.temposPilha.slice(0, nivel));
+    s.sel = null;
+    s.selecao = new Set();
+    atualizarPrevia();
+    desenhar();
+    irPara(tempo ?? 0);
+  }
+
+  // Abas de sequência no topo da barra da timeline: a timeline inteira e cada aninhada aberta (× fecha a última).
+  function desenharAbasAninhadas() {
+    let barra = qs('#tl-aninhadas');
+    if (!barra) {
+      barra = document.createElement('div');
+      barra.id = 'tl-aninhadas';
+      barra.className = 'tl-aninhadas';
+      qs('.tl-barra').before(barra);
+    }
+    const pilha = s.pilha ?? [];
+    barra.hidden = !pilha.length;
+    barra.innerHTML = '';
+    if (!pilha.length) return;
+    const nomes = [s.nome ?? 'Timeline'];
+    let trilhas = s.raiz.trilhas;
+    for (const id of pilha) {
+      const n = trilhas.flatMap((tr) => tr.itens).find((i) => i.id === id);
+      nomes.push(`⧉ ${n?.nome ?? 'Sequência aninhada'}`);
+      trilhas = n?.trilhas ?? [];
+    }
+    nomes.forEach((nome, k) => {
+      const b = document.createElement('button');
+      b.className = 'tl-aninhada-aba' + (k === nomes.length - 1 ? ' ativo' : '');
+      b.textContent = nome;
+      b.title = k === nomes.length - 1 ? 'Editando esta sequência aninhada' : 'Voltar para esta sequência';
+      if (k < nomes.length - 1) b.onclick = () => sairDaAninhada(k);
+      barra.append(b);
+      if (k < nomes.length - 1) {
+        const seta = document.createElement('span');
+        seta.className = 'tl-aninhada-seta';
+        seta.textContent = '›';
+        barra.append(seta);
+      }
+    });
+    const fechar = document.createElement('button');
+    fechar.className = 'tl-aninhada-fechar';
+    fechar.textContent = '×';
+    fechar.title = 'Fechar a sequência aninhada (volta um nível)';
+    fechar.onclick = () => sairDaAninhada();
+    barra.append(fechar);
   }
 
   // Toda edição passa por aqui: guarda o estado anterior, aplica, atualiza a tela e a prévia, grava.
@@ -206,9 +327,9 @@ const TL = (() => {
   // refaz a prévia: só redesenha, pela seleção que pode ter mudado.
   function alterar(fn) {
     if (s.bloqueada) return;
-    const antes = JSON.stringify(s.t);
+    const antes = foto();
     fn();
-    if (JSON.stringify(s.t) === antes) return desenhar();
+    if (foto() === antes) return desenhar();
     empilharDesfazer(antes);
     aposAlterar();
   }
@@ -238,8 +359,8 @@ const TL = (() => {
 
   function trocarEstado(de, para) {
     if (s.bloqueada || !de.length) return;
-    para.push(JSON.stringify(s.t));
-    s.t = JSON.parse(de.pop());
+    para.push(foto());
+    restaurarFoto(de.pop());
     if (!itemSel()) s.sel = null;
     aposAlterar();
   }
@@ -578,6 +699,7 @@ const TL = (() => {
 
   function desenhar() {
     if (!s.t) return;
+    desenharAbasAninhadas();
     normalizarSelecao();
     const larguraConteudo = LARGURA_CAB + duracaoTotal() * s.pps + 400;
     const conteudo = qs('#tl-conteudo');
@@ -846,6 +968,10 @@ const TL = (() => {
     el.append(rotulo, esq, dir);
     for (const t of temposKeyframe(item)) el.append(desenharMarcaKf(item, t));
     el.addEventListener('pointerdown', (e) => iniciarArraste(e, item, trilha, e.target === esq ? 'esq' : e.target === dir ? 'dir' : 'mover'));
+    if (item.tipo === 'aninhada') {
+      el.addEventListener('dblclick', () => abrirAninhada(item));
+      el.title = 'Clique duplo para abrir e editar dentro';
+    }
     el.addEventListener('contextmenu', (e) => menuDoItem(e, item));
     return el;
   }
@@ -987,7 +1113,7 @@ const TL = (() => {
       if (s.bloqueada) return;
       m.setPointerCapture(e.pointerId);
       const x0 = e.clientX;
-      const antes = JSON.stringify(s.t);
+      const antes = foto();
       const donos = Object.values(item.keyframes).flat().filter((k) => k.t === t);
       let atual = t;
       const mover = (ev) => {
@@ -1658,7 +1784,7 @@ const TL = (() => {
     const el = e.currentTarget;
     el.setPointerCapture(e.pointerId);
     const x0 = e.clientX;
-    const antes = JSON.stringify(s.t);
+    const antes = foto();
     const inicial = clonar(trilha.itens);
     const pontos = pontosDeImã(item.id);
     const fimOriginal = item.inicio + item.duracao;
@@ -1741,7 +1867,7 @@ const TL = (() => {
     el.setPointerCapture(e.pointerId);
     const x0 = e.clientX;
     const original = { inicio: item.inicio, duracao: item.duracao, corteInicio: item.corteInicio };
-    const antes = JSON.stringify(s.t);
+    const antes = foto();
     const pontos = pontosDeImã(item.id);
     const vel = item.velocidade ?? 1;
     const temFonte = comCorte(item);
@@ -3684,7 +3810,7 @@ const TL = (() => {
       guardarEstado();
       try {
         const resumo = await api.legendasTimeline({ id: s.id, opcoes: { daTimeline: true } });
-        s.t = await api.lerTimeline(s.id);
+        usarRaiz(await api.lerTimeline(s.id));
         s.sel = null;
         atualizarPrevia();
         desenhar();
@@ -3702,7 +3828,7 @@ const TL = (() => {
     guardarEstado();
     try {
       const resumo = await api.legendasTimeline({ id: s.id });
-      s.t = await api.lerTimeline(s.id);
+      usarRaiz(await api.lerTimeline(s.id));
       s.sel = null;
       atualizarPrevia();
       desenhar();
@@ -4931,6 +5057,7 @@ const TL = (() => {
       alvos.length > 1 && !vinculados && { rotulo: 'Vincular', acao: () => vincular(ids), desativado: travada },
       vinculados && { rotulo: 'Desvincular', acao: () => desvincular(ids), desativado: travada },
       { rotulo: 'Aninhar (sequência aninhada)', atalho: teclaDe('aninhar'), acao: aninhar, desativado: travada || !visuais.length },
+      alvos.length === 1 && alvos[0].tipo === 'aninhada' && { rotulo: 'Abrir a sequência aninhada', acao: () => abrirAninhada(alvos[0]) },
       alvos.length === 1 && alvos[0].tipo === 'aninhada' && { rotulo: 'Desaninhar', acao: () => desaninhar(alvos[0]), desativado: travada },
       'sep',
       visuais.length && { rotulo: 'Adicionar efeito', sub: menuEfeitos, desativado: travada },
@@ -5257,6 +5384,9 @@ const TL = (() => {
     s.refazer = [];
     s.tempo = 0;
     s.tocando = false;
+    s.raiz = null;
+    s.pilha = [];
+    s.temposPilha = [];
     s.t = await api.lerTimeline(p.id);
     if (s.id !== p.id) return;
     qs('#tl').hidden = false;
@@ -5311,9 +5441,9 @@ const TL = (() => {
     }
     if (s.id !== id) return;
     const duracaoAntes = duracaoTotal();
-    if (JSON.stringify(nova) !== JSON.stringify(s.t)) {
-      empilharDesfazer(JSON.stringify(s.t));
-      s.t = nova;
+    if (JSON.stringify(nova) !== JSON.stringify(raiz())) {
+      empilharDesfazer(foto());
+      usarRaiz(nova);
       if (!itemSel()) s.sel = null;
     }
     await carregarMateriais();

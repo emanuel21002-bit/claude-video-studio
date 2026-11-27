@@ -61,6 +61,12 @@ function criarJanela() {
       offscreen: !!process.env.CVS_SCREENSHOT,
     },
   });
+  // Sem a barra de menu padrão do Electron: escondida (autoHideMenuBar), cada Alt a mostrava e empurrava a tela para
+  // baixo (e Alt é usado nos atalhos da timeline). O app não usa esse menu; F12 continua abrindo as ferramentas.
+  janela.removeMenu();
+  janela.webContents.on('before-input-event', (e, input) => {
+    if (input.type === 'keyDown' && input.key === 'F12') janela.webContents.toggleDevTools();
+  });
   janela.loadFile(path.join(aqui, '..', 'renderer', 'index.html'));
 
   // Para testes: CVS_SCREENSHOT=<arquivo.png> salva uma captura da janela e fecha o app.
