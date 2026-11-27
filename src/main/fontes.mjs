@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { dirs, caminhoAssets } from './workspace.mjs';
 import { nomesDoArquivo, FONTE_DE_SIMBOLOS } from './fontes-nucleo.mjs';
+import { itensProfundos } from './aninhada-nucleo.mjs';
 
 const EXT = new Set(['.ttf', '.otf', '.ttc', '.otc']);
 
@@ -111,7 +112,7 @@ export function prepararFonte(id, familia) {
 export function garantirFontes(id, t) {
   const minhas = minhasFontes();
   if (!minhas.length) return;
-  const usadas = new Set(t.trilhas.flatMap((tr) => tr.itens.map((i) => i.estilo?.fonte).filter(Boolean)));
+  const usadas = new Set(itensProfundos(t).map((i) => i.estilo?.fonte).filter(Boolean));
   for (const familia of usadas) {
     if (t.fontes?.[familia] && fs.existsSync(path.join(caminhoAssets(id), t.fontes[familia]))) continue;
     const nome = prepararFonte(id, familia);

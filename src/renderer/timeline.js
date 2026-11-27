@@ -2,11 +2,12 @@
 // o mesmo que o Claude edita e que o render lê.
 
 const TL = (() => {
-  const LARGURA_CAB = 112; // igual a .tl-cab e .tl-canto no CSS
+  const LARGURA_CAB = 150; // igual a .tl-cab e .tl-canto no CSS
   // Como no Filmcraft e no CapCut: faixas de vídeo (V1 embaixo, as de cima cobrem as de baixo) e de áudio (A1, A2…).
   // Qualquer item visual cabe em qualquer faixa de vídeo. sobreposicao e legenda são tipos antigos, tratados como vídeo.
   // ajuste: camada de ajuste, sem arquivo; os efeitos dela valem para tudo o que está nas faixas de vídeo abaixo.
-  const VISUAIS = ['video', 'imagem', 'texto', 'bloco', 'legenda', 'ajuste'];
+  // aninhada: sequência aninhada, com as próprias faixas dentro (Aninhar, como no Premiere).
+  const VISUAIS = ['video', 'imagem', 'texto', 'bloco', 'legenda', 'ajuste', 'aninhada'];
   const ACEITA = { video: VISUAIS, sobreposicao: VISUAIS, legenda: VISUAIS, audio: ['audio'] };
   const ehAudio = (tr) => tr.tipo === 'audio';
   // Faixa com vídeo ou imagem mostra miniaturas: fica mais alta que as de texto e legenda.
@@ -661,35 +662,80 @@ const TL = (() => {
     return { faixas, total: Math.max(1, fins.length) };
   }
 
+  // Liga ou desliga uma chave da faixa (bloqueada, oculta, muda, solo, semAlvo); com Shift, em todas do mesmo tipo.
+  function alternarFaixas(trilha, prop, todas) {
+    const novo = !trilha[prop];
+    const alvos = todas ? s.t.trilhas.filter((tr) => ehAudio(tr) === ehAudio(trilha)) : [trilha];
+    alterar(() => {
+      for (const tr of alvos) {
+        if (novo) tr[prop] = true;
+        else delete tr[prop];
+      }
+    });
+  }
+
+  function renomearFaixa(trilha, el) {
+    if (s.bloqueada) return;
+    const campo = document.createElement('input');
+    campo.className = 'tl-nome-campo';
+    campo.value = el.textContent;
+    el.replaceWith(campo);
+    campo.focus();
+    campo.select();
+    let feito = false;
+    const sair = (gravar) => {
+      if (feito) return;
+      feito = true;
+      const v = campo.value.trim();
+      if (gravar && v !== el.textContent) alterar(() => (v ? (trilha.nome = v) : delete trilha.nome));
+      else desenhar();
+    };
+    campo.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') sair(true);
+      if (e.key === 'Escape') sair(false);
+    });
+    campo.addEventListener('blur', () => sair(true));
+  }
+
+  const travado = (i) => !!trilhaDe(i.id)?.bloqueada;
+
   function desenharTrilha(trilha) {
     const { faixas, total } = distribuirFaixas(trilha.itens);
     const alturaFaixa = alturaDe(trilha);
     const linha = document.createElement('div');
-    linha.className = `tl-linha tipo-${ehAudio(trilha) ? 'audio' : 'video'}`;
+    linha.className = `tl-linha tipo-${ehAudio(trilha) ? 'audio' : 'video'}` + (trilha.bloqueada ? ' travada' : '');
     linha.style.height = alturaFaixa * total + 'px';
 
+    // Como o cabeçalho de faixa do Premiere: destino (V1/A1), bloquear, saída (olho) no vídeo, M (mudo) e S (solo)
+    // no áudio, e o nome. Shift+clique num botão vale para todas as faixas do mesmo tipo.
     const cab = document.createElement('div');
     cab.className = 'tl-cab';
     const audio = ehAudio(trilha);
-    const codigo = document.createElement('span');
-    codigo.className = 'tl-codigo' + (audio ? ' audio' : '');
+    const tipoNome = audio ? 'áudio' : 'vídeo';
+    const codigo = document.createElement('button');
+    codigo.className = 'tl-codigo' + (audio ? ' audio' : '') + (trilha.semAlvo ? ' sem-alvo' : '');
     codigo.textContent = codigoDe(trilha);
+    codigo.title = `Faixa de destino: colar e as setas ↑ ↓ (pontos de edição) usam as faixas marcadas.\nShift+clique: todas as faixas de ${tipoNome}.`;
+    codigo.onclick = (e) => alternarFaixas(trilha, 'semAlvo', e.shiftKey);
+    const chave = (prop, ligado, desligado, dica) => {
+      const b = document.createElement('button');
+      b.className = 'tl-chave' + (trilha[prop] ? ' ligada' : '') + ` chave-${prop}`;
+      b.textContent = trilha[prop] ? ligado : desligado;
+      b.title = `${dica}\nShift+clique: todas as faixas de ${tipoNome}.`;
+      b.onclick = (e) => alternarFaixas(trilha, prop, e.shiftKey);
+      return b;
+    };
     const nome = document.createElement('span');
     nome.className = 'tl-nome';
     nome.textContent = trilha.nome ?? (audio ? 'Áudio ' : 'Vídeo ') + codigo.textContent.slice(1);
-    nome.title = nome.textContent;
-    const botao = document.createElement('button');
-    const desligada = audio ? trilha.muda : trilha.oculta;
-    botao.textContent = audio ? (desligada ? '🔇' : '🔊') : desligada ? '🚫' : '👁';
-    botao.title = audio ? 'Silenciar trilha' : 'Ocultar trilha';
-    botao.onclick = () =>
-      alterar(() => {
-        if (audio) trilha.muda = !trilha.muda;
-        else trilha.oculta = !trilha.oculta;
-      });
-    cab.append(codigo, nome, botao);
+    nome.title = `${nome.textContent} (clique duplo para renomear)`;
+    nome.addEventListener('dblclick', () => renomearFaixa(trilha, nome));
+    const chaves = audio
+      ? [chave('bloqueada', '🔒', '🔓', 'Bloquear a faixa: os clipes dela não são selecionados nem editados'), chave('muda', 'M', 'M', 'Silenciar a faixa (M)'), chave('solo', 'S', 'S', 'Solo: só as faixas em solo tocam (S)')]
+      : [chave('bloqueada', '🔒', '🔓', 'Bloquear a faixa: os clipes dela não são selecionados nem editados'), chave('oculta', '⊘', '👁', 'Mostrar ou esconder a faixa na prévia e no render')];
+    cab.append(codigo, ...chaves, nome);
     cab.addEventListener('contextmenu', (e) => menuDoCabecalho(e, trilha));
-    cab.title = 'Botão direito: nova faixa acima ou abaixo, excluir faixa';
     // A borda de baixo do cabeçalho muda a altura da faixa; clique duplo volta ao tamanho padrão.
     const borda = document.createElement('div');
     borda.className = 'tl-redim';
@@ -764,6 +810,9 @@ const TL = (() => {
       pista.append(marca);
     }
     linha.append(cab, pista);
+    // Apagada na tela: vídeo escondido, áudio mudo ou fora do solo (outra faixa de áudio está em solo).
+    const algumSolo = s.t.trilhas.some((tr) => ehAudio(tr) && tr.solo);
+    const desligada = audio ? trilha.muda || (algumSolo && !trilha.solo) : trilha.oculta;
     linha.classList.toggle('desligada', !!desligada);
     return linha;
   }
@@ -771,6 +820,7 @@ const TL = (() => {
   function rotuloItem(item) {
     if (item.tipo === 'bloco') return `✦ ${item.componente}`;
     if (item.tipo === 'ajuste') return '◐ Camada de ajuste';
+    if (item.tipo === 'aninhada') return `⧉ ${item.nome ?? 'Sequência aninhada'}`;
     if (item.texto != null) return item.texto;
     return item.arquivo ?? item.tipo;
   }
@@ -1043,13 +1093,26 @@ const TL = (() => {
     atualizarCamposKf();
     const texto = formatarTempo(s.tempo);
     if (tempoEl.textContent !== texto) tempoEl.textContent = texto;
-    // Tocando, a timeline acompanha o cursor.
     agendarCaixa();
+    manterCursorAVista();
+  }
+
+  // O cursor não some da timeline, como no Premiere ("Rolagem de página"): tocando, quando ele chega na borda
+  // direita a timeline vira a página e ele volta para a esquerda; arrastando o cursor além da borda, ela rola junto;
+  // indo para um ponto fora da tela (setas, Home/End, marcadores), ela centraliza nele.
+  function manterCursorAVista() {
+    const corpo = qs('#tl-corpo');
+    if (!corpo || !corpo.clientWidth) return;
+    const x = LARGURA_CAB + s.tempo * s.pps;
+    const esq = corpo.scrollLeft + LARGURA_CAB;
+    const dir = corpo.scrollLeft + corpo.clientWidth;
+    const util = corpo.clientWidth - LARGURA_CAB;
     if (s.tocando) {
-      const corpo = qs('#tl-corpo');
-      const x = LARGURA_CAB + s.tempo * s.pps;
-      if (x > corpo.scrollLeft + corpo.clientWidth - 40) corpo.scrollLeft = x - LARGURA_CAB - 60;
-    }
+      if (x > dir - 16 || x < esq) corpo.scrollLeft = x - LARGURA_CAB - 16;
+    } else if (s.arrastandoCursor) {
+      if (x > dir - 16) corpo.scrollLeft = x - corpo.clientWidth + 40;
+      else if (x < esq + 4) corpo.scrollLeft = x - LARGURA_CAB - 40;
+    } else if (x > dir - 4 || x < esq) corpo.scrollLeft = x - LARGURA_CAB - util / 2;
   }
 
   function tempoDoEvento(e) {
@@ -1059,7 +1122,8 @@ const TL = (() => {
 
   // A seleção pode ter vários itens: s.sel é o principal (o do inspetor) e s.selecao guarda todos.
   function normalizarSelecao() {
-    const existentes = new Set(todosItens().map((i) => i.id));
+    // Itens de faixa bloqueada saem da seleção.
+    const existentes = new Set(todosItens().filter((i) => !travado(i)).map((i) => i.id));
     for (const id of [...s.selecao]) if (!existentes.has(id)) s.selecao.delete(id);
     if (s.sel && !existentes.has(s.sel)) s.sel = null;
     if (s.sel && !s.selecao.has(s.sel)) s.selecao = new Set([s.sel]);
@@ -1094,6 +1158,7 @@ const TL = (() => {
   }
 
   function selecionarVarios(ids) {
+    ids = [...ids].filter((id) => !trilhaDe(id)?.bloqueada);
     const chave = [...ids].sort().join('|');
     if (chave === [...s.selecao].sort().join('|')) return;
     s.selecao = new Set(ids);
@@ -1429,12 +1494,16 @@ const TL = (() => {
   }
 
   // Cola na mesma trilha de onde veio; se ela não existe aqui, na primeira do mesmo tipo que aceite o item.
+  // Como no Premiere: cola nas faixas de destino (as marcadas no cabeçalho), nunca numa bloqueada.
   function trilhaParaColar(c) {
-    const aceita = (tr) => ACEITA[tr.tipo].includes(c.item.tipo);
+    const pode = (tr) => ACEITA[tr.tipo].includes(c.item.tipo) && !tr.bloqueada;
+    const marcada = (tr) => pode(tr) && !tr.semAlvo;
     return (
-      s.t.trilhas.find((tr) => tr.id === c.trilhaId && aceita(tr)) ??
-      s.t.trilhas.find((tr) => tr.tipo === c.trilhaTipo && aceita(tr)) ??
-      s.t.trilhas.find(aceita)
+      s.t.trilhas.find((tr) => tr.id === c.trilhaId && marcada(tr)) ??
+      s.t.trilhas.find((tr) => tr.tipo === c.trilhaTipo && marcada(tr)) ??
+      s.t.trilhas.find(marcada) ??
+      s.t.trilhas.find((tr) => tr.id === c.trilhaId && pode(tr)) ??
+      s.t.trilhas.find(pode)
     );
   }
 
@@ -1495,7 +1564,12 @@ const TL = (() => {
   }
 
   // Quanto do arquivo ainda existe depois do corte, em segundos da timeline.
+  // Duração do que está dentro de uma sequência aninhada.
+  const duracaoDentro = (n) => Math.max(0, ...(n.trilhas ?? []).flatMap((tr) => tr.itens.map((i) => i.inicio + i.duracao)));
+  const comCorte = (i) => i.tipo === 'video' || i.tipo === 'audio' || i.tipo === 'aninhada';
+
   function limiteFonte(item) {
+    if (item.tipo === 'aninhada') return duracaoDentro(item) - (item.corteInicio ?? 0);
     const m = s.midia[item.arquivo];
     const dur = m?.duracao;
     if (!dur || (item.tipo !== 'video' && item.tipo !== 'audio')) return Infinity;
@@ -1514,13 +1588,13 @@ const TL = (() => {
   const prende = (x, min, max) => Math.max(min, Math.min(max, x));
   const umQuadro = () => 1 / fps();
   const sobraNoFim = (i) => (limiteFonte(i) === Infinity ? Infinity : limiteFonte(i) - i.duracao);
-  const sobraNoInicio = (i) => (i.tipo === 'video' || i.tipo === 'audio' ? (i.corteInicio ?? 0) / (i.velocidade ?? 1) : Infinity);
+  const sobraNoInicio = (i) => (comCorte(i) ? (i.corteInicio ?? 0) / (i.velocidade ?? 1) : Infinity);
 
   // Muda o começo do item mantendo o resto no lugar: é o que aparar à esquerda faz com arquivo e keyframes.
   function moverComeco(i, d) {
     i.inicio = arredondar(i.inicio + d);
     i.duracao = arredondar(i.duracao - d);
-    if (i.tipo === 'video' || i.tipo === 'audio') i.corteInicio = arredondar((i.corteInicio ?? 0) + d * (i.velocidade ?? 1));
+    if (comCorte(i)) i.corteInicio = arredondar((i.corteInicio ?? 0) + d * (i.velocidade ?? 1));
     deslocarKeyframes(i, -d);
   }
 
@@ -1630,6 +1704,7 @@ const TL = (() => {
   function iniciarArraste(e, item, trilha, modo) {
     if (e.button !== 0) return;
     e.stopPropagation();
+    if (trilha.bloqueada) return;
     // Ctrl ou Shift + clique liga e desliga o item na seleção.
     if (e.ctrlKey || e.metaKey || e.shiftKey) return selecionar(item.id, { alternar: true });
     // Alt + clique pega só este item, sem o vídeo ou o áudio vinculado.
@@ -1669,7 +1744,7 @@ const TL = (() => {
     const antes = JSON.stringify(s.t);
     const pontos = pontosDeImã(item.id);
     const vel = item.velocidade ?? 1;
-    const temFonte = item.tipo === 'video' || item.tipo === 'audio';
+    const temFonte = comCorte(item);
     let mudou = false;
 
     // Aqui só as pontas (aparar); mover é arrastarMover.
@@ -1724,9 +1799,11 @@ const TL = (() => {
   }
 
   function arrastarCursor(e) {
+    s.arrastandoCursor = true;
     irPara(tempoDoEvento(e));
     const mover = (ev) => irPara(tempoDoEvento(ev));
     const soltar = () => {
+      s.arrastandoCursor = false;
       window.removeEventListener('pointermove', mover);
       window.removeEventListener('pointerup', soltar);
     };
@@ -1744,7 +1821,7 @@ const TL = (() => {
     novo.inicio = arredondar(c);
     novo.duracao = arredondar(item.duracao - offset);
     item.duracao = arredondar(offset);
-    if (item.tipo === 'video' || item.tipo === 'audio') {
+    if (comCorte(item)) {
       novo.corteInicio = arredondar((item.corteInicio ?? 0) + offset * (item.velocidade ?? 1));
     }
     if (item.palavras) {
@@ -1768,7 +1845,7 @@ const TL = (() => {
   // Divide o item selecionado; sem seleção, tudo o que está sob o cursor.
   function dividir() {
     const c = s.tempo;
-    const noCursor = (i) => i.inicio < c && i.inicio + i.duracao > c;
+    const noCursor = (i) => i.inicio < c && i.inicio + i.duracao > c && !travado(i);
     const selecionados = todosItens().filter((i) => s.selecao.has(i.id) && noCursor(i));
     const alvos = selecionados.length
       ? selecionados.map((i) => [i, trilhaDe(i.id)])
@@ -1865,6 +1942,102 @@ const TL = (() => {
     }
   }
 
+  // Aninhar (como no Premiere): os selecionados viram uma sequência aninhada no lugar deles, na faixa de vídeo mais
+  // baixa entre as deles. Cada faixa que tinha algo selecionado vira uma faixa dentro dela, na mesma ordem.
+  function aninhar() {
+    if (s.bloqueada) return;
+    const alvos = todosItens().filter((i) => s.selecao.has(i.id) && !travado(i));
+    const destino = s.t.trilhas.find((tr) => !ehAudio(tr) && tr.itens.some((i) => alvos.includes(i)));
+    if (!destino) return avisar('Para aninhar, selecione pelo menos um clipe de vídeo, imagem ou gráfico.');
+    const ini = Math.min(...alvos.map((i) => i.inicio));
+    const fim = Math.max(...alvos.map((i) => i.inicio + i.duracao));
+    const existentes = new Set(itensProfundos().filter((i) => i.tipo === 'aninhada').map((i) => i.nome));
+    let k = 1;
+    while (existentes.has(`Sequência aninhada ${String(k).padStart(2, '0')}`)) k++;
+    const nome = `Sequência aninhada ${String(k).padStart(2, '0')}`;
+    alterar(() => {
+      const ids = new Set(alvos.map((i) => i.id));
+      const trilhas = [];
+      for (const tr of s.t.trilhas) {
+        const itens = tr.itens.filter((i) => ids.has(i.id));
+        if (!itens.length) continue;
+        const dentro = (tr.transicoes ?? []).filter((x) => (!x.de || ids.has(x.de)) && (!x.para || ids.has(x.para)));
+        tr.itens = tr.itens.filter((i) => !ids.has(i.id));
+        // Transição entre um que entrou e um que ficou: o lado que saiu deixa de existir aqui fora.
+        if (tr.transicoes) {
+          tr.transicoes = tr.transicoes.filter((x) => !dentro.includes(x));
+          for (const x of tr.transicoes) {
+            if (ids.has(x.de)) delete x.de;
+            if (ids.has(x.para)) delete x.para;
+          }
+          tr.transicoes = tr.transicoes.filter((x) => x.de || x.para);
+          if (!tr.transicoes.length) delete tr.transicoes;
+        }
+        trilhas.push({ id: novoId(), tipo: ehAudio(tr) ? 'audio' : 'video', ...(tr.nome ? { nome: tr.nome } : {}), itens: itens.map((i) => ({ ...i, inicio: arredondar(i.inicio - ini) })), ...(dentro.length ? { transicoes: dentro } : {}) });
+      }
+      const n = { id: novoId(), tipo: 'aninhada', nome, inicio: arredondar(ini), duracao: arredondar(fim - ini), corteInicio: 0, trilhas };
+      destino.itens.push(n);
+      s.sel = n.id;
+      s.selecao = new Set([n.id]);
+    });
+    avisar(`${nome}: clique com o botão direito nela para desaninhar.`);
+  }
+
+  // Recorta um item ao trecho [a, b] de dentro da aninhada (mesma conta de aninhada-nucleo.mjs).
+  function recortarItem(i, a, b) {
+    const ini = Math.max(i.inicio, a);
+    const fim = Math.min(i.inicio + i.duracao, b);
+    if (fim - ini < 0.0005) return null;
+    const d = ini - i.inicio;
+    const novo = { ...clonar(i), inicio: arredondar(ini - a), duracao: arredondar(fim - ini) };
+    if (d > 0.0005) {
+      if (comCorte(i)) novo.corteInicio = arredondar((i.corteInicio ?? 0) + d * (i.velocidade ?? 1));
+      if (novo.palavras) novo.palavras = novo.palavras.map((p) => ({ ...p, inicio: p.inicio - d, fim: p.fim - d })).filter((p) => p.fim > 0);
+      if (novo.keyframes) for (const k of Object.keys(novo.keyframes)) novo.keyframes[k] = novo.keyframes[k].map((x) => ({ ...x, t: arredondar(x.t - d) }));
+      delete novo.entrada;
+    }
+    if (fim < i.inicio + i.duracao - 0.0005) delete novo.saida;
+    return novo;
+  }
+
+  // Desaninhar: o conteúdo volta para a timeline no lugar da aninhada, cada faixa de dentro na primeira faixa do mesmo
+  // tipo (a partir da dela) que estiver livre nesse trecho; sem nenhuma, numa nova. O que era da aninhada (movimento,
+  // efeitos) não passa para os clipes.
+  function desaninhar(n) {
+    const tr = trilhaDe(n.id);
+    if (!tr || s.bloqueada) return;
+    alterar(() => {
+      tr.itens.splice(tr.itens.indexOf(n), 1);
+      const a = n.corteInicio ?? 0;
+      const b = a + n.duracao;
+      // Livre onde os clipes de dentro caem (não no trecho inteiro da aninhada).
+      const livre = (faixa, itens) => !faixa.bloqueada && !faixa.itens.some((i) => itens.some((o) => i.inicio < o.inicio + o.duracao - 0.001 && i.inicio + i.duracao > o.inicio + 0.001));
+      let desde = s.t.trilhas.indexOf(tr);
+      let ultimaAudio = -1;
+      for (const sub of n.trilhas ?? []) {
+        const itens = sub.itens.map((i) => recortarItem(i, a, b)).filter(Boolean).map((i) => ({ ...i, inicio: arredondar(i.inicio + n.inicio) }));
+        if (!itens.length) continue;
+        const ids = new Set(itens.map((i) => i.id));
+        const transicoes = (sub.transicoes ?? []).filter((x) => (!x.de || ids.has(x.de)) && (!x.para || ids.has(x.para)));
+        const audio = sub.tipo === 'audio';
+        const inicioBusca = audio ? ultimaAudio + 1 : desde;
+        let k = s.t.trilhas.findIndex((x, j) => j >= inicioBusca && ehAudio(x) === audio && livre(x, itens));
+        if (k < 0) {
+          const nova = { id: novoId(), tipo: audio ? 'audio' : 'video', itens: [] };
+          k = audio ? s.t.trilhas.length : Math.max(desde, s.t.trilhas.findLastIndex((x) => !ehAudio(x))) + 1;
+          s.t.trilhas.splice(k, 0, nova);
+        }
+        const faixa = s.t.trilhas[k];
+        faixa.itens.push(...itens);
+        if (transicoes.length) faixa.transicoes = [...(faixa.transicoes ?? []), ...transicoes];
+        if (audio) ultimaAudio = k;
+        else desde = k + 1;
+      }
+      s.sel = null;
+      s.selecao = new Set();
+    });
+  }
+
   // V: desativa os clipes selecionados (somem da prévia e do render, mas ficam na timeline, mais escuros).
   // Se algum ainda está ativo, desativa todos; se todos já estão desativados, ativa de volta.
   function alternarDesativados() {
@@ -1883,7 +2056,10 @@ const TL = (() => {
 
   // Pontos de edição (começo e fim de cada clipe, em todas as faixas): ↑ e ↓ andam entre eles.
   function irParaPonto(sentido) {
-    const pontos = [...new Set([0, ...todosItens().flatMap((i) => [i.inicio, i.inicio + i.duracao]).map(arredondar)])].sort((a, b) => a - b);
+    // Só as faixas de destino, como no Premiere (sem nenhuma marcada, todas).
+    const marcadas = s.t.trilhas.filter((tr) => !tr.semAlvo);
+    const itens = (marcadas.length ? marcadas : s.t.trilhas).flatMap((tr) => tr.itens);
+    const pontos = [...new Set([0, ...itens.flatMap((i) => [i.inicio, i.inicio + i.duracao]).map(arredondar)])].sort((a, b) => a - b);
     const alvo = sentido > 0 ? pontos.find((p) => p > s.tempo + 0.001) : [...pontos].reverse().find((p) => p < s.tempo - 0.001);
     if (alvo != null) irPara(alvo);
   }
@@ -1916,7 +2092,7 @@ const TL = (() => {
   // Vale para os selecionados sob o cursor; sem eles, para tudo o que está sob o cursor.
   function apararNoCursor(lado) {
     const c = s.tempo;
-    const noCursor = (i) => i.inicio < c - 0.001 && i.inicio + i.duracao > c + 0.001;
+    const noCursor = (i) => i.inicio < c - 0.001 && i.inicio + i.duracao > c + 0.001 && !travado(i);
     const sel = todosItens().filter((i) => s.selecao.has(i.id) && noCursor(i));
     const alvos = sel.length ? sel : todosItens().filter(noCursor);
     if (!alvos.length) return;
@@ -1944,7 +2120,7 @@ const TL = (() => {
   // Ctrl+Shift+K: divide todas as faixas no cursor, com ou sem seleção.
   function dividirTudo() {
     const c = s.tempo;
-    const alvos = s.t.trilhas.flatMap((tr) => tr.itens.filter((i) => i.inicio < c && i.inicio + i.duracao > c).map((i) => [i, tr]));
+    const alvos = s.t.trilhas.filter((tr) => !tr.bloqueada).flatMap((tr) => tr.itens.filter((i) => i.inicio < c && i.inicio + i.duracao > c).map((i) => [i, tr]));
     if (alvos.length) alterar(() => alvos.forEach(([i, tr]) => dividirItem(i, tr, c)));
   }
 
@@ -2897,6 +3073,7 @@ const TL = (() => {
     ['marcadorAntes', 'Reprodução', 'Marcador anterior', ['Ctrl+Shift+M'], () => irParaMarcador(-1)],
     ['marcadorDepois', 'Reprodução', 'Próximo marcador', ['Shift+M'], () => irParaMarcador(1)],
     ['desativar', 'Timeline', 'Desativar / ativar os clipes selecionados', ['V'], () => alternarDesativados()],
+    ['aninhar', 'Timeline', 'Aninhar os selecionados (sequência aninhada)', ['Alt+N'], () => aninhar()],
     ['ferramenta.selecao', 'Ferramentas', 'Selecionar', ['A'], () => escolherFerramenta('selecao')],
     ['ferramenta.ripple', 'Ferramentas', 'Ripple', ['B'], () => escolherFerramenta('ripple')],
     ['ferramenta.roll', 'Ferramentas', 'Roll', ['N'], () => escolherFerramenta('roll')],
@@ -3573,6 +3750,7 @@ const TL = (() => {
     legenda: [['texto', 'Texto', 'area'], ...ESTILO, ['estilo.corDestaque', 'Cor da palavra falada', 'cor'], ['x', 'Posição X', 'num'], ['y', 'Posição Y', 'num']],
     bloco: [['props', 'Propriedades (JSON)', 'json'], ...COMUNS_VISUAIS],
     ajuste: [],
+    aninhada: [['nome', 'Nome', 'area'], ['corteInicio', 'Corte dentro da aninhada', 'num', 0.1], ...COMUNS_VISUAIS],
   };
 
   // Liga-se o efeito pela marca; os campos só aparecem com ele ligado.
@@ -3688,6 +3866,13 @@ const TL = (() => {
 
   const lerCampo = (item, caminho) => caminho.split('.').reduce((o, k) => o?.[k], item);
 
+  // Com vários itens selecionados, o painel mostra o principal e o que mudar vale para todos os que têm a mesma
+  // propriedade (como o Propriedades do Premiere com vários clipes). Texto, nome e JSON de efeito ficam só no principal.
+  function alvosDoCampo(item, caminho) {
+    if (s.selecao.size < 2 || !s.selecao.has(item.id) || /^(texto|nome|props|palavras)$/.test(caminho)) return [item];
+    return todosItens().filter((i) => s.selecao.has(i.id) && !travado(i) && (i === item || (CAMPOS[i.tipo] ?? []).some(([c]) => c === caminho)));
+  }
+
   function gravarCampo(item, caminho, valor) {
     const partes = caminho.split('.');
     const ultimo = partes.pop();
@@ -3733,7 +3918,7 @@ const TL = (() => {
       atualizarCamposKf();
       return;
     }
-    gravarCampo(item, caminho, valor);
+    for (const alvo of alvosDoCampo(item, caminho)) gravarCampo(alvo, caminho, valor);
     atualizarPrevia();
     salvarDepois();
     const rotulo = document.querySelector(`.tl-item[data-id="${item.id}"] .tl-rotulo`);
@@ -3955,11 +4140,13 @@ const TL = (() => {
     const d = cabecalhoGrupo(nome, true, () =>
       alterar(() => {
         for (const [c] of campos) {
-          if (c === 'texto' || c === 'props') continue;
-          apagarCampo(item, c);
-          if (item.keyframes) delete item.keyframes[c];
+          if (c === 'texto' || c === 'props' || c === 'nome') continue;
+          for (const alvo of alvosDoCampo(item, c)) {
+            apagarCampo(alvo, c);
+            if (alvo.keyframes) delete alvo.keyframes[c];
+            limparKeyframes(alvo);
+          }
         }
-        limparKeyframes(item);
       }),
     );
     const corpo = document.createElement('div');
@@ -4218,10 +4405,12 @@ const TL = (() => {
     redefinir.onclick = () =>
       alterar(() => {
         for (const [c] of defs) {
-          apagarCampo(item, c);
-          if (item.keyframes) delete item.keyframes[c];
+          for (const alvo of alvosDoCampo(item, c)) {
+            apagarCampo(alvo, c);
+            if (alvo.keyframes) delete alvo.keyframes[c];
+            limparKeyframes(alvo);
+          }
         }
-        limparKeyframes(item);
       });
     linha.append(redefinir);
     return linha;
@@ -4248,19 +4437,21 @@ const TL = (() => {
     box.innerHTML = '';
     box.dataset.item = String(s.sel);
     s.camposKf = [];
-    if (s.selecao.size > 1) {
-      box.dataset.item = 'varios';
-      box.innerHTML = '<h4>' + s.selecao.size + ' itens selecionados</h4><dl class="tl-atalhos"><dt>Arrastar</dt><dd>move todos juntos</dd><dt>Ctrl+C / X / V</dt><dd>copiar, recortar, colar no cursor</dd><dt>Del</dt><dd>excluir todos</dd><dt>Ctrl+clique</dt><dd>liga ou desliga um item</dd><dt>Ctrl+A</dt><dd>seleciona tudo</dd></dl>';
-      return;
-    }
     const item = itemSel();
+    if (s.selecao.size > 1 && item) {
+      // Vários selecionados: mostra o principal; o que mudar vale para todos (ver alvosDoCampo).
+      const aviso = document.createElement('div');
+      aviso.className = 'pr-varios';
+      aviso.textContent = `${s.selecao.size} itens selecionados. Os valores são os de "${rotuloItem(item)}"; o que você mudar aqui vale para todos que têm a propriedade.`;
+      box.append(aviso);
+    }
     if (!item) {
       box.innerHTML = '<h4>Atalhos</h4>';
       box.append(listaDeAtalhos());
       return;
     }
     const titulo = document.createElement('h4');
-    titulo.textContent = { video: 'Vídeo', imagem: 'Imagem', audio: 'Áudio', texto: 'Texto', legenda: 'Legenda', bloco: `Efeito: ${item.componente}`, ajuste: 'Camada de ajuste' }[item.tipo];
+    titulo.textContent = { video: 'Vídeo', imagem: 'Imagem', audio: 'Áudio', texto: 'Texto', legenda: 'Legenda', bloco: `Efeito: ${item.componente}`, ajuste: 'Camada de ajuste', aninhada: 'Sequência aninhada' }[item.tipo];
     if (item.tipo === 'ajuste') {
       const dica = document.createElement('div');
       dica.className = 'tl-inspetor-tempo';
@@ -4739,6 +4930,8 @@ const TL = (() => {
       },
       alvos.length > 1 && !vinculados && { rotulo: 'Vincular', acao: () => vincular(ids), desativado: travada },
       vinculados && { rotulo: 'Desvincular', acao: () => desvincular(ids), desativado: travada },
+      { rotulo: 'Aninhar (sequência aninhada)', atalho: teclaDe('aninhar'), acao: aninhar, desativado: travada || !visuais.length },
+      alvos.length === 1 && alvos[0].tipo === 'aninhada' && { rotulo: 'Desaninhar', acao: () => desaninhar(alvos[0]), desativado: travada },
       'sep',
       visuais.length && { rotulo: 'Adicionar efeito', sub: menuEfeitos, desativado: travada },
       visuais.length && { rotulo: 'Predefinição Lumetri', sub: PRESETS_LUMETRI.map(([n]) => ({ rotulo: n, acao: () => aplicarPreset(ids, n) })), desativado: travada || !cabe('cor') },
@@ -4793,6 +4986,7 @@ const TL = (() => {
       { rotulo: audio ? 'Nova faixa de vídeo (no topo)' : 'Nova faixa de áudio (no fim)', acao: () => alterar(() => (audio ? novaFaixa('video', { acimaDeTudo: true }) : novaFaixa('audio'))), desativado: travada },
       'sep',
       { rotulo: `Fechar os vãos de ${codigoDe(trilha)}`, acao: () => fecharVaos(trilha), desativado: travada || !vaosDe(trilha) },
+      { rotulo: `Renomear ${codigoDe(trilha)}`, acao: () => { const el = [...document.querySelectorAll('.tl-cab')].find((c) => c.querySelector('.tl-codigo')?.textContent === codigoDe(trilha))?.querySelector('.tl-nome'); if (el) renomearFaixa(trilha, el); }, desativado: travada },
       { rotulo: `Excluir a faixa ${codigoDe(trilha)}`, acao: () => excluirFaixa(trilha), desativado: travada || s.t.trilhas.filter((x) => ehAudio(x) === audio).length < 2 },
     ];
   }
@@ -4959,7 +5153,9 @@ const TL = (() => {
   // ---------- ciclo de vida ----------
 
   const pausa = (ms) => new Promise((r) => setTimeout(r, ms));
-  const emOrdemNaTimeline = () => [...todosItens()].sort((a, b) => a.inicio - b.inicio).map((i) => i.arquivo).filter(Boolean);
+  // Inclui o que está dentro das sequências aninhadas (a prévia precisa das cópias leves delas também).
+  const itensProfundos = (trilhas = s.t.trilhas) => trilhas.flatMap((tr) => tr.itens.flatMap((i) => (i.tipo === 'aninhada' ? [i, ...itensProfundos(i.trilhas ?? [])] : [i])));
+  const emOrdemNaTimeline = () => [...itensProfundos()].sort((a, b) => a.inicio - b.inicio).map((i) => i.arquivo).filter(Boolean);
   // Trabalho de fundo espera a prévia parar de tocar, para ela não engasgar.
   const esperarPrevia = async (id) => {
     while (s.tocando && s.id === id) await pausa(500);

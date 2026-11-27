@@ -11,6 +11,7 @@ import { motivosSemFfmpeg, planoFfmpeg, prepararAuxiliares, trechosDeExportacao,
 import { entradaDoRender } from './pacote-remotion.mjs';
 import { pararSegundoPlano } from './segundo-plano.mjs';
 import { otimizadasProntas } from './otimizada.mjs';
+import { itensProfundos } from './aninhada-nucleo.mjs';
 
 // Progresso vem como "123/900" (frames) ou "45%" nas linhas dos CLIs.
 function lerProgresso(linha) {
@@ -125,7 +126,8 @@ export async function pastaPublica(id, t, destino, opts = {}) {
   const codigo = fs.existsSync(blocos) ? fs.readFileSync(blocos, 'utf8') : '';
   const porArquivo = new Map();
   const usados = new Set();
-  for (const i of t.trilhas.flatMap((tr) => tr.itens)) {
+  // Inclui o que está dentro das sequências aninhadas.
+  for (const i of itensProfundos(t)) {
     if (i.arquivo) usados.add(i.arquivo);
     if (i.tipo !== 'video') continue;
     if (!porArquivo.has(i.arquivo)) porArquivo.set(i.arquivo, []);
@@ -509,7 +511,7 @@ export async function preRenderizarTrechos(id, { sinal, onLinha } = {}) {
   const projeto = lerProjeto(id);
   if (projeto.engine !== 'remotion' || !projeto.timeline || (s.renderMotor ?? 'rapido') !== 'rapido' || !s.renderCodec) return false;
   const t = lerTimeline(id);
-  if (motivosSemFfmpeg(t).length || t.trilhas.some((tr) => tr.itens.some((i) => i.tipo === 'ajuste'))) return false;
+  if (motivosSemFfmpeg(t).length || t.trilhas.some((tr) => tr.itens.some((i) => i.tipo === 'ajuste' || i.tipo === 'aninhada'))) return false;
   const { codec, formato } = normalizarSaida({ codec: s.renderCodec, formato: s.renderFormato });
   const encoderId = await encoderGpu();
   const modo = ENCODERS_GPU[encoderId] ? s.renderModo : 'cpu';
@@ -650,7 +652,8 @@ async function executarRender(id, { modo, formato, codec, motor: motorPedido, fp
 
   let motor = 'remotion';
   // Camada de ajuste só existe no app (o OTIO não leva): com ela o vídeo sai pelo Remotion, que a desenha.
-  const temAjuste = projeto.timeline && lerTimeline(id).trilhas.some((tr) => tr.itens.some((i) => i.tipo === 'ajuste'));
+  // Também a sequência aninhada com movimento ou efeito próprio (a que só agrupa já veio desmontada): o OTIO não leva.
+  const temAjuste = projeto.timeline && lerTimeline(id).trilhas.some((tr) => tr.itens.some((i) => i.tipo === 'ajuste' || i.tipo === 'aninhada'));
   // Rápido: ffmpeg direto; o que ele não cobre vai para o Filmcraft (e, sem ele, para o Remotion).
   let motorVez = motorPedido;
   if (projeto.engine === 'remotion' && projeto.timeline && motorPedido === 'rapido') {
@@ -672,7 +675,7 @@ async function executarRender(id, { modo, formato, codec, motor: motorPedido, fp
     } else onEvento?.({ log: `Modo rápido não cobre ${motivos.join(', ')}: exportando pelo Filmcraft.` });
     motorVez = 'filmcraft';
   }
-  if (temAjuste && motorVez === 'filmcraft' && motor !== 'rapido') onEvento?.({ log: 'A timeline tem camada de ajuste: exportando pelo Remotion, que é quem a desenha.' });
+  if (temAjuste && motorVez === 'filmcraft' && motor !== 'rapido') onEvento?.({ log: 'A timeline tem camada de ajuste ou sequência aninhada com movimento ou efeito: exportando pelo Remotion, que é quem as desenha.' });
   if (motor !== 'rapido' && projeto.engine === 'remotion' && projeto.timeline && motorVez === 'filmcraft' && !temAjuste) {
     const { filmcraftDisponivel } = await import('./filmcraft.mjs');
     if (filmcraftDisponivel()) {

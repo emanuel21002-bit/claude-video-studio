@@ -13,6 +13,7 @@ import { pastaPublica } from './render.mjs';
 import { infoVideo } from './transcodificar.mjs';
 import { entradaDoRender } from './pacote-remotion.mjs';
 import { graficosDaParte, CAMADAS_MESCLA } from './exportar-ffmpeg.mjs';
+import { achatarAninhadas, aplicarSolo } from './aninhada-nucleo.mjs';
 
 // Ponte com o Filmcraft (editor nativo, à parte). O app gera um projeto a partir de timeline.json,
 // o usuário edita e salva lá, e "Trazer de volta" lê o que foi salvo.
@@ -217,11 +218,13 @@ function marcarSincronizado(id) {
 export async function prepararProjetoFilmcraft(id, destino, onLinha) {
   const projeto = lerProjeto(id);
   escreverModelo(projeto);
-  const t = semDesativados(lerTimeline(id));
+  const desmontadas = [];
+  const t = aplicarSolo(achatarAninhadas(semDesativados(lerTimeline(id)), { todas: true, avisos: desmontadas }));
   fs.mkdirSync(pasta(id), { recursive: true });
   const { frente: camada, fundo: camadaFundo, mescla: camadasMescla } = await renderizarCamadas(id, t, onLinha, { mov: true });
   const comTam = await comTamanhos(projeto, t);
   const { otio, avisos } = paraOtio(t, comTam, { assets: caminhoAssets(id), camada, camadaFundo, camadasMescla, hdr: comTam.hdr });
+  avisos.unshift(...desmontadas);
   const arqOtio = path.join(pasta(id), 'ida.otio');
   fs.writeFileSync(arqOtio, JSON.stringify(otio, null, 1));
   fs.rmSync(destino, { force: true });
@@ -233,11 +236,13 @@ export async function prepararProjetoFilmcraft(id, destino, onLinha) {
 // (textos, legendas, selos) já renderizadas por cima. Devolve { otio, avisos, largura, altura, fps }.
 export async function otioDaTimeline(id, onLinha) {
   const projeto = lerProjeto(id);
-  const t = semDesativados(lerTimeline(id));
+  const desmontadas = [];
+  const t = aplicarSolo(achatarAninhadas(semDesativados(lerTimeline(id)), { todas: true, avisos: desmontadas }));
   fs.mkdirSync(pasta(id), { recursive: true });
   const { frente: camada, fundo: camadaFundo, mescla: camadasMescla } = await renderizarCamadas(id, t, onLinha, { mov: true });
   const comTam = await comTamanhos(projeto, t);
   const { otio, avisos } = paraOtio(t, comTam, { assets: caminhoAssets(id), camada, camadaFundo, camadasMescla, hdr: comTam.hdr });
+  avisos.unshift(...desmontadas);
   return { otio, avisos, largura: t.largura, altura: t.altura, fps: t.fps };
 }
 
@@ -246,11 +251,13 @@ export async function abrirNoFilmcraft(id, { descartar = false } = {}, onLinha) 
   if (!descartar && editadoLa(id)) return { pendente: true };
   const projeto = lerProjeto(id);
   escreverModelo(projeto);
-  const t = lerTimeline(id);
+  const desmontadas = [];
+  const t = achatarAninhadas(lerTimeline(id), { todas: true, avisos: desmontadas });
   fs.mkdirSync(pasta(id), { recursive: true });
   const { frente: camada, fundo: camadaFundo, mescla: camadasMescla } = await renderizarCamadas(id, t, onLinha, { mov: true });
   const comTam = await comTamanhos(projeto, t);
   const { otio, avisos } = paraOtio(t, comTam, { assets: caminhoAssets(id), camada, camadaFundo, camadasMescla, hdr: comTam.hdr });
+  avisos.unshift(...desmontadas);
   const arqOtio = path.join(pasta(id), 'ida.otio');
   fs.writeFileSync(arqOtio, JSON.stringify(otio, null, 1));
   onLinha?.('Preparando o projeto do Filmcraft…');

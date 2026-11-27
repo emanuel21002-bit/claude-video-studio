@@ -10,6 +10,7 @@ import { infoVideo, duracaoGuardada, TONEMAP, TONEMAP_GPU, ENCODERS_GPU, encoder
 import { ajustarAoArquivo, ajustarAGrade } from './limites-fonte.mjs';
 import { FORMATOS } from './presets.mjs';
 import { garantirFontes } from './fontes.mjs';
+import { achatarAninhadas, ehAninhada, aplicarSolo } from './aninhada-nucleo.mjs';
 
 const aqui = path.dirname(fileURLToPath(import.meta.url));
 const MODELO = ['index.ts', 'Root.tsx', 'TimelineVideo.tsx', 'lut.tsx', 'blocos.tsx', 'previa.tsx'];
@@ -17,7 +18,8 @@ const MODELO = ['index.ts', 'Root.tsx', 'TimelineVideo.tsx', 'lut.tsx', 'blocos.
 // Como no Filmcraft e no CapCut, só há faixas de vídeo (V1, V2…, a de cima cobre a de baixo) e de áudio (A1, A2…).
 // Qualquer item visual cabe em qualquer faixa de vídeo.
 // ajuste: camada de ajuste (sem arquivo); os efeitos dela valem para tudo o que está nas faixas de vídeo abaixo.
-const VISUAIS = ['video', 'imagem', 'texto', 'bloco', 'legenda', 'ajuste'];
+// aninhada: sequência aninhada (ver aninhada-nucleo.mjs), com as próprias faixas dentro.
+const VISUAIS = ['video', 'imagem', 'texto', 'bloco', 'legenda', 'ajuste', 'aninhada'];
 const TIPOS_POR_TRILHA = { video: VISUAIS, audio: ['audio'] };
 // Tipos antigos de faixa, convertidos ao ler a timeline.
 const TIPOS_ANTIGOS = { sobreposicao: 'video', legenda: 'video' };
@@ -87,7 +89,9 @@ export const semDesativados = (t) =>
   t?.trilhas?.some((tr) => tr.itens?.some((i) => i.desativado))
     ? { ...t, trilhas: t.trilhas.map((tr) => ({ ...tr, itens: tr.itens.filter((i) => !i.desativado) })) }
     : t;
-export const lerTimelineDoRender = (id) => semDesativados(lerTimeline(id));
+// Para o render: sem os itens desativados e com as aninhadas que só agrupam já desmontadas (as que têm movimento ou
+// efeito próprio ficam; o Remotion desenha).
+export const lerTimelineDoRender = (id) => aplicarSolo(achatarAninhadas(semDesativados(lerTimeline(id))));
 
 export function lerTimeline(id) {
   const t = JSON.parse(fs.readFileSync(arquivoTimeline(id), 'utf8'));
@@ -140,6 +144,10 @@ export function validarTimeline(id, t) {
       const lut = i.efeitos?.cor?.lut;
       if (lut && !fs.existsSync(path.join(assets, lut))) erros.push(`${nome}: LUT "${lut}" não está em assets/.`);
       if (i.mesclagem && !MESCLAGENS.includes(i.mesclagem)) erros.push(`${nome}: mesclagem "${i.mesclagem}" não existe (use ${MESCLAGENS.join(', ')}).`);
+      if (ehAninhada(i)) {
+        if (!Array.isArray(i.trilhas)) erros.push(`${nome}: sequência aninhada precisa de "trilhas" (lista).`);
+        else for (const e of validarTimeline(id, { ...t, trilhas: i.trilhas })) erros.push(`${nome} › ${e}`);
+      }
       for (const [param, kfs] of Object.entries(i.keyframes ?? {})) {
         if (!Array.isArray(kfs) || kfs.some((k) => !(k.t >= 0) || typeof k.v !== 'number')) erros.push(`${nome}: keyframes de "${param}" precisam de t >= 0 e v numérico.`);
         else if (kfs.some((k) => k.curva && !CURVAS.includes(k.curva))) erros.push(`${nome}: curva de "${param}" não existe (use ${CURVAS.join(', ')}).`);

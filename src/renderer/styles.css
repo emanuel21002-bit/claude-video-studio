@@ -1359,7 +1359,37 @@ body.arrastando-valor, body.arrastando-valor * { cursor: ew-resize !important; u
 .tl-barra .tl-tocar { width: 30px; }
 .tl-barra .segmentado button { padding: 2px 6px; }
 .tl-regua-linha { height: 20px; }
-.tl-cab, .tl-canto { width: 112px; }
+.tl-cab, .tl-canto { width: 150px; }
 .tl-barra input[type="range"] { width: 90px; }
 .tl-cab { font-size: 11.5px; }
 .tl-codigo { min-width: 22px; height: 18px; font-size: 10.5px; }
+
+/* ---------- Cabeçalho das faixas como no Premiere: destino, bloquear, olho / M / S, nome ---------- */
+.tl-cab { gap: 3px; padding: 0 4px 0 4px; }
+.tl-cab .tl-codigo { border: none; cursor: pointer; padding: 0 4px; background: #2f6bdf; color: #fff; font-size: 10.5px; }
+.tl-cab .tl-codigo.sem-alvo { background: transparent; color: var(--fraco); box-shadow: inset 0 0 0 1px #4b4b4b; }
+.tl-cab .tl-chave { flex: none; width: 18px; height: 18px; padding: 0; border: 1px solid transparent; border-radius: 3px; background: transparent; color: #8a8a8a; font-size: 11px; line-height: 16px; text-align: center; }
+.tl-cab .tl-chave:hover:not(:disabled) { background: #2f2f2f; color: var(--texto); border-color: #444; }
+.tl-cab .chave-bloqueada { font-size: 10px; opacity: 0.55; }
+.tl-cab .chave-bloqueada.ligada { opacity: 1; }
+.tl-cab .chave-oculta.ligada { color: var(--erro); }
+.tl-cab .chave-muda, .tl-cab .chave-solo { font-weight: 700; font-family: "Segoe UI", sans-serif; }
+.tl-cab .chave-muda.ligada { background: #2f6bdf; color: #fff; }
+.tl-cab .chave-solo.ligada { background: #d4a72c; color: #1a1a1a; }
+.tl-cab .tl-nome { margin-left: 2px; }
+.tl-nome-campo { flex: 1; min-width: 0; height: 18px; padding: 0 4px; font-size: 11.5px; }
+/* Faixa bloqueada: listras, como no Premiere. */
+.tl-linha.travada .tl-pista { background-image: repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.05) 0 6px, transparent 6px 12px); }
+.tl-linha.travada .tl-item { cursor: not-allowed; opacity: 0.75; }
+/* Sequência aninhada */
+.item-aninhada { background: #2f6b4f; }
+/* Propriedades com vários itens */
+.pr-varios { margin: 0 0 6px; padding: 5px 7px; border-radius: 4px; background: #1f2b3d; color: #b9cdf0; font-size: 11.5px; }
+
+/* Abas das timelines dentro do cabeçalho do painel Timeline (ver levarAbasDasTimelines em dock.js). */
+.dock-abas #ed-abas.no-painel { display: flex; align-items: center; flex-wrap: nowrap; gap: 3px; margin: 0 0 0 6px; padding-left: 8px; border-left: 1px solid #333; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.dock-abas #ed-abas.no-painel .aba-timeline, .dock-abas #ed-abas.no-painel .aba-acao { padding: 0 9px; height: 19px; line-height: 17px; font-size: 11px; border-radius: 3px; flex: none; cursor: pointer; }
+.dock-abas #ed-abas.no-painel .aba-timeline { background: #262626; border-color: #3a3a3a; color: var(--fraco); }
+.dock-abas #ed-abas.no-painel .aba-timeline.ativo { background: #2f6bdf; border-color: #2f6bdf; color: #fff; }
+.dock-abas #ed-abas.no-painel .aba-renomear { height: 19px; padding: 0 6px; font-size: 11px; width: 160px; }
+.tl-cab .chave-bloqueada { filter: grayscale(1); }

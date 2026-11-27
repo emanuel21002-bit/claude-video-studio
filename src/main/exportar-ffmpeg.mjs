@@ -67,6 +67,7 @@ export function motivosSemFfmpeg(t) {
     if (tr.oculta) continue;
     for (const i of tr.itens) {
       if (i.tipo === 'ajuste') m.add('camada de ajuste');
+      if (i.tipo === 'aninhada') m.add('sequência aninhada com movimento ou efeito');
       if (ehAudio(tr) || !MIDIA.has(i.tipo)) continue;
       if (Object.keys(i.keyframes ?? {}).length) m.add('keyframes em clipe');
       if (i.entrada?.tipo || i.saida?.tipo) m.add('animação de entrada/saída em clipe');

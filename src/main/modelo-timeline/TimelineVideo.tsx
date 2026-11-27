@@ -554,6 +554,13 @@ function Item({ item, fps, url, volumeTrilha, proxies, atraso = 0, ajustes = [] 
       </Caixa>
     );
   }
+  if (item.tipo === 'aninhada') {
+    return (
+      <Caixa item={item} durFrames={durFrames} atraso={atraso} ajustes={ajustes}>
+        <Aninhada item={item} fps={fps} url={url} proxies={proxies} volumeFora={volumeTrilha} />
+      </Caixa>
+    );
+  }
   if (item.tipo === 'bloco') {
     const Bloco = blocos[item.componente];
     if (!Bloco) return null;
@@ -625,6 +632,25 @@ const ItensDaTrilha = React.memo(({ trilha, fps, url, proxies, itens, plano, aju
 });
 
 // Fontes que o usuário adicionou no app: "fontes" na timeline mapeia a família para o arquivo em assets/. O render espera o carregamento.
+// Sequência aninhada: as faixas de dentro, desenhadas como a timeline de fora, a partir do corte de dentro
+// (corteInicio). Movimento, opacidade e efeitos da aninhada valem para tudo (Caixa em volta).
+function Aninhada({ item, fps, url, proxies, volumeFora }: { item: any; fps: number; url: (a: string) => string; proxies?: Record<string, string | null>; volumeFora: number }) {
+  const trilhas = useMemo(() => {
+    const lista = (item.trilhas ?? []).map((tr: any) => ({ ...tr, itens: (tr.itens ?? []).filter((i: any) => !i.desativado) }));
+    const solo = lista.some((tr: any) => tr.tipo === 'audio' && tr.solo);
+    return lista.map((tr: any) => (tr.tipo === 'audio' && (!volumeFora || (solo && !tr.solo)) ? { ...tr, muda: true } : tr));
+  }, [item.trilhas, volumeFora]);
+  const ajustesAcima = useMemo(() => {
+    const visiveis = trilhas.map((tr: any) => (tr.tipo !== 'audio' && !tr.oculta ? tr.itens.filter((i: any) => i.tipo === 'ajuste' && i.efeitos) : []));
+    return trilhas.map((_: any, k: number) => visiveis.slice(k + 1).flat());
+  }, [trilhas]);
+  return (
+    <Sequence from={-Math.round((item.corteInicio ?? 0) * fps)} name={`Aninhada: ${item.nome ?? item.id}`}>
+      {trilhas.map((tr: any, k: number) => (tr.oculta ? null : <Trilha key={tr.id} trilha={tr} fps={fps} url={url} proxies={proxies} ajustes={tr.tipo === 'audio' ? undefined : ajustesAcima[k]} />))}
+    </Sequence>
+  );
+}
+
 const fontesRegistradas = new Set<string>();
 function useFontesDoUsuario(fontes: Record<string, string> | undefined, url: (a: string) => string) {
   const chave = JSON.stringify(fontes ?? {});
@@ -647,7 +673,12 @@ function useFontesDoUsuario(fontes: Record<string, string> | undefined, url: (a:
 
 export const TimelineVideo: React.FC<{ timeline: any; baseAssets?: string; proxies?: Record<string, string | null>; janela?: boolean }> = ({ timeline: bruta, baseAssets, proxies, janela }) => {
   // Clipe desativado (V na timeline) continua no arquivo, mas não aparece nem toca.
-  const timeline = useMemo(() => semDesativados(bruta), [bruta]);
+  // Solo numa faixa de áudio (S no cabeçalho): as outras faixas de áudio ficam mudas.
+  const timeline = useMemo(() => {
+    const t = semDesativados(bruta);
+    if (!t.trilhas.some((tr: any) => tr.tipo === 'audio' && tr.solo)) return t;
+    return { ...t, trilhas: t.trilhas.map((tr: any) => (tr.tipo === 'audio' && !tr.solo ? { ...tr, muda: true } : tr)) };
+  }, [bruta]);
   const { fps } = useVideoConfig();
   const Componente = janela ? TrilhaNaJanela : Trilha;
   const url = useMemo(

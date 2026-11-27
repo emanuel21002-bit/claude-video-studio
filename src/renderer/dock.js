@@ -161,6 +161,9 @@ const Dock = (() => {
       const el = p.el();
       if (el && el.parentElement !== deposito) deposito.append(el);
     }
+    // As abas das timelines moram no cabeçalho do painel Timeline, que vai ser refeito: voltam para casa antes.
+    const abas = document.querySelector('#ed-abas');
+    if (abas?.casa && abas.parentElement !== abas.casa) abas.casa.append(abas);
     box.replaceChildren(desenharNo(raiz));
     aplicarVisibilidade();
   }
@@ -237,6 +240,19 @@ const Dock = (() => {
         c.classList.toggle('dock-oculto', !(vis[n + 1] && vis.slice(0, n + 1).some(Boolean)));
       });
     });
+    levarAbasDasTimelines(box);
+  }
+
+  // Como as abas de sequência do Premiere: as timelines do projeto ficam no cabeçalho do painel Timeline, logo depois
+  // do nome dele. Sem o painel à vista (projeto sem timeline, ou outra aba na frente), voltam para o cabeçalho do editor.
+  function levarAbasDasTimelines(box) {
+    const abas = document.querySelector('#ed-abas');
+    if (!abas) return;
+    abas.casa ??= abas.parentElement;
+    const grupo = disponivel('timeline') && [...box.querySelectorAll('.dock-grupo')].find((el) => el.no.ativo === 'timeline');
+    const destino = grupo ? grupo.querySelector('.dock-abas') : abas.casa;
+    abas.classList.toggle('no-painel', !!grupo);
+    if (abas.parentElement !== destino) destino.append(abas);
   }
 
   function divisor(no, n) {
